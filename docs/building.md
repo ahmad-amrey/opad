@@ -11,8 +11,8 @@ minute and a half; `-DOPAD_DWG=OFF` skips it).
 | Linux (Ubuntu 24.04) | `sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev libqt6opengl6-dev nlohmann-json3-dev libfreetype-dev libfontconfig-dev libharfbuzz-dev libzstd-dev libgl-dev libglu1-mesa-dev libx11-dev libxext-dev libxi-dev rapidjson-dev pybind11-dev python3-dev libeigen3-dev calculix-ccx`, plus `xvfb` for the GUI benches; no OCCT package (see [Linux](#linux)) | `cmake --workflow --preset linux` |
 | macOS | `xcode-select --install`, then `brew install cmake ninja opencascade qt nlohmann-json pybind11 python` | `cmake --workflow --preset macos` |
 
-The macOS preset is written but has not been run yet; Windows and Ubuntu 24.04 are the platforms that are built and
-tested.
+All three are built and tested: Windows (MSYS2), Ubuntu 24.04 and macOS (Apple silicon, Homebrew's OCCT 7.9 and Qt 6;
+the first configure builds Chrono and Netgen, a few minutes, once).
 
 The three steps can also be run one by one: `cmake --preset <os>`, `cmake --build --preset <os>`,
 `ctest --preset <os>`. `ctest --preset windows-gui` adds the desktop safety net: in-app benches that drive
@@ -91,8 +91,9 @@ tests/corpus/fetch.py` downloads it), and tests that need it skip without it.
 run the OS-package build and bundle its libraries; `cmake --build --preset <os>-single` runs just the packaging step.
 `cmake/bundle_stage.cmake` then writes `THIRD-PARTY-NOTICES.txt` from the bundled libraries' Debian packages or
 Homebrew formulae (into the bundle, where Help > Third-party licences reads it, and beside it) and stops on GPL
-FFmpeg, codec, FreeImage or OpenVR libraries as the portable target does. These two targets are written but have not
-been run yet.
+FFmpeg, codec, FreeImage or OpenVR libraries as the portable target does. The dmg is built and runs with every library
+inside the bundle (ad-hoc signed, not notarised; it carries neither opad-cli nor the DWG converters); the AppImage target
+is written but has not been run yet.
 
 ## Builds on GitHub and releases
 

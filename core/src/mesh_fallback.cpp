@@ -193,7 +193,7 @@ std::vector<std::array<int, 3>> cut_by_grid(Points& pts, const std::vector<std::
   };
   std::vector<std::array<int, 3>> out;
   for (const auto& t : tris) {
-    const UV &a = pts[t[0]], &b = pts[t[1]], &c = pts[t[2]];
+    const UV a = pts[t[0]], b = pts[t[1]], c = pts[t[2]];  // copies: id() below adds points, which may move pts.uv
     const double lo_u = std::min({a.u, b.u, c.u}), hi_u = std::max({a.u, b.u, c.u}), lo_v = std::min({a.v, b.v, c.v}), hi_v = std::max({a.v, b.v, c.v});
     const int i0 = std::clamp(int((lo_u - a0) / (a1 - a0) * nu), 0, nu - 1), i1 = std::clamp(int((hi_u - a0) / (a1 - a0) * nu), 0, nu - 1);
     const int k0 = std::clamp(int((lo_v - b0) / (b1 - b0) * nv), 0, nv - 1), k1 = std::clamp(int((hi_v - b0) / (b1 - b0) * nv), 0, nv - 1);

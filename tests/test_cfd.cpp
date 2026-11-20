@@ -374,7 +374,7 @@ TEST(vent_estimate_of_a_sealed_box_and_a_grille) {
   CHECK_EQ(e["limited_by"].get<std::string>(), "vents");
   CHECK_NEAR(e["flow_m3h"].get<double>(), 0, 1e-12);
   for (int i = 0; i < 10; ++i)
-    for (int j = 0; j < 10; ++j) cut(doc, enclosure, {20 + 5 * i, 8 + 4.5 * j, 36}, 2, 2, 5);
+    for (int j = 0; j < 10; ++j) cut(doc, enclosure, {20.0 + 5 * i, 8 + 4.5 * j, 36}, 2, 2, 5);
   const auto t0 = std::chrono::steady_clock::now();
   int calls = 0;
   e = sim::vent_estimate(doc, resolve(doc), {enclosure}, {load}, 5, 25, [&](int, int) { return ++calls > 0; });
@@ -466,7 +466,7 @@ TEST(vent_estimate_of_a_blower_behind_a_perforated_panel_and_a_grille) {
   cut(g, e2, {-1, 5, 5}, 5, 8, 30);  // the intake opening, beside where the blower sits
   const std::string plate = box(g, {6, 14, 4}, 2, 32, 32, "Grille");
   for (int i = 0; i < 3; ++i)
-    for (int j = 0; j < 3; ++j) round_hole(g, plate, {5, 22 + 8 * i, 12 + 8 * j}, {1, 0, 0}, 3, 4);
+    for (int j = 0; j < 3; ++j) round_hole(g, plate, {5, 22.0 + 8 * i, 12.0 + 8 * j}, {1, 0, 0}, 3, 4);
   const std::string b2 = box(g, {10, 15, 5}, 20, 30, 30, "Blower");
   load["inlet"] = face_along(g, b2, {-1, 0, 0});
   load["outlet"] = face_along(g, b2, {0, 0, 1});

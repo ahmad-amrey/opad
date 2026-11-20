@@ -14,6 +14,7 @@
 #include <Bnd_Box.hxx>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -411,7 +412,21 @@ TEST(view_export_draws_a_part_with_hidden_lines_and_exact_circles) {
   import_file(mesh, f.dir / "mesh.obj");
   CHECK_THROWS(commands::run("export", {{"format", "dxf"}, {"out", (f.dir / "mesh.dxf").string()}}, &mesh));
   r = commands::run("export", {{"format", "dxf"}, {"out", (f.dir / "mesh.dxf").string()}, {"view", "front"}}, &mesh);
-  CHECK(r["layers"]["Visible"].get<int>() >= 3);
+  {
+    // The front view's outline, a right triangle with 10 mm legs, drawn whole: its visible length, however the edges were
+    // chained into polylines (the count differs between standard libraries).
+    double drawn = 0;
+    for (const auto& e : entities_of(pairs_of(read_text_file(f.dir / "mesh.dxf")))) {
+      if (e.layer != "Visible" || e.type != "LWPOLYLINE") continue;
+      std::vector<std::array<double, 2>> pts;
+      for (const auto& g : e.groups) {
+        if (g.code == 10) pts.push_back({std::stod(g.value), 0});
+        if (g.code == 20 && !pts.empty()) pts.back()[1] = std::stod(g.value);
+      }
+      for (size_t i = 1; i < pts.size(); ++i) drawn += std::hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    }
+    CHECK(r["layers"]["Visible"].get<int>() >= 1 && drawn > (20 + 10 * std::sqrt(2.0)) * 0.98);
+  }
   // A cancelled view stops.
   ExportOptions o;
   o.format = "dxf";

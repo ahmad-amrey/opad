@@ -85,7 +85,7 @@ TEST(alternate_keys) {
   QSettings s;s.clear();
   QAction redo;init(redo,"edit.redo",redoKey);
   CHECK(redo.shortcuts()==QList<QKeySequence>({QKeySequence(redoKey),QKeySequence(redoAlt)}));
-  CHECK(redo.toolTip().contains(redoAlt));
+  CHECK(redo.toolTip().contains(keys::plain(QKeySequence(redoAlt))));  // as the platform names it (⌘Y on macOS)
   QAction other;init(other,"view.fit","F");
   shortcuts::settleAlternates({&redo,&other});CHECK(redo.shortcuts().size()==2);
   other.setShortcut(QKeySequence(redoAlt));

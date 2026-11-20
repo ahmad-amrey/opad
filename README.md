@@ -366,11 +366,12 @@ their animated clips are translated, and Arabic text in drawings is shaped corre
 |---|---|
 | **Windows** (x64) | Built and tested. MSYS2 / MinGW-w64 toolchain. |
 | **Ubuntu 24.04** (also under WSL) | Built and tested. Wayland desktops run through XWayland. |
-| **macOS** (Apple Silicon) | New: its first builds are being made now; expect rough edges, and please report them. |
+| **macOS** (Apple silicon) | Built and tested. Homebrew packages; Intel Macs are not built. |
 
 Ready-made downloads for all three are under [Download](#download), built and tested by GitHub Actions for every
 release. Building from source is described under [Installation](#installation); besides the normal build there is a
-portable Windows folder (settings and cache kept beside the program) and the single-file Windows executable.
+portable Windows folder (settings and cache kept beside the program), the single-file Windows executable and the macOS
+dmg.
 
 ## Installation
 

@@ -416,7 +416,7 @@ OPAD_BENCH(OPAD_BENCH_READOUT, readout) {
     if (!shown || !readout) return QCoreApplication::exit(2);
     auto numbers = [readout] {  // X, Y (and Z) as shown
       QList<double> out;
-      static const QRegularExpression number("-?[0-9]+(\.[0-9]+)?");
+      static const QRegularExpression number("-?[0-9]+(\\.[0-9]+)?");
       const QString text = readout->text();
       for (auto it = number.globalMatch(text.mid(std::max<qsizetype>(0, text.indexOf("X ")))); it.hasNext();) out << it.next().captured(0).toDouble();  // after the tag
       return out;

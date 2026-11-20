@@ -66,6 +66,9 @@
 #include <signal.h>
 #include <unistd.h>
 extern char** environ;
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 namespace opad {
@@ -171,11 +174,34 @@ std::filesystem::path executable_dir() {
   if (n == 0 || n >= buffer.size()) return {};
   buffer.resize(n);
   return std::filesystem::path(buffer).parent_path();
+#elif defined(__APPLE__)
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);
+  std::string buffer(size, '\0');
+  if (size == 0 || _NSGetExecutablePath(buffer.data(), &size) != 0) return {};
+  std::error_code error;
+  const auto self = std::filesystem::canonical(buffer.c_str(), error);
+  return error ? std::filesystem::path() : self.parent_path();
 #else
   std::error_code error;
   const auto self = std::filesystem::read_symlink("/proc/self/exe", error);
   return error ? std::filesystem::path() : self.parent_path();
 #endif
+}
+
+// Where the converters are looked for first: beside the program, and on macOS also beside the app bundle that holds it
+// (the build puts them in bin/, next to bin/opad.app; opad-cli sits in bin/ itself).
+std::vector<std::filesystem::path> program_dirs() {
+  std::vector<std::filesystem::path> dirs;
+  const auto dir = executable_dir();
+  if (dir.empty()) return dirs;
+  dirs.push_back(dir);
+#ifdef __APPLE__
+  if (dir.filename() == "MacOS" && dir.parent_path().filename() == "Contents" &&
+      dir.parent_path().parent_path().extension() == ".app")
+    dirs.push_back(dir.parent_path().parent_path().parent_path());
+#endif
+  return dirs;
 }
 
 std::atomic<bool> g_use_oda{false};
@@ -244,14 +270,17 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
   bool tried = overridden || !oda.empty();
   if (!overridden) {
     std::error_code error;
+    for (const auto& dir : program_dirs()) {
 #ifdef _WIN32
-    const auto beside = executable_dir() / (name + ".exe");
+      const auto beside = dir / (name + ".exe");
 #else
-    const auto beside = executable_dir() / name;
+      const auto beside = dir / name;
 #endif
-    if (!executable_dir().empty() && std::filesystem::exists(beside, error)) {
-      tried = true;
-      if (libre(beside)) return;
+      if (std::filesystem::exists(beside, error)) {
+        tried = true;
+        if (libre(beside)) return;
+        break;
+      }
     }
     if (libre(name)) return;  // on PATH
   }
@@ -895,7 +924,7 @@ bool dwg_converter(bool toDwg) {
   const char separator=':';
   std::string dirs=path?path:"";
 #endif
-  if(!executable_dir().empty() && std::filesystem::is_regular_file(executable_dir()/name,error)) return true;
+  for(const auto& dir : program_dirs()) if(std::filesystem::is_regular_file(dir/name,error)) return true;
   for(size_t at=0;at<=dirs.size();) {  // on PATH
     const size_t end=std::min(dirs.find(separator,at),dirs.size());
     if(end>at && std::filesystem::is_regular_file(std::filesystem::path(dirs.substr(at,end-at))/name,error)) return true;

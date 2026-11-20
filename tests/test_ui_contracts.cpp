@@ -151,10 +151,10 @@ TEST(panel_footer) {
     QWidget panel;
     panel.setLayoutDirection(direction);
     auto* footer = new PanelFooter(&panel);
-    CHECK(footer->cancelText() == "Cancel" && PanelFooter::key(footer->cancel()) == "Esc" && footer->primaryText() == "OK" &&
-          PanelFooter::key(footer->primary()) == "Enter" && footer->primary()->objectName() == "primary");
+    CHECK(footer->cancelText() == "Cancel" && PanelFooter::key(footer->cancel()) == keys::spec("esc") && footer->primaryText() == "OK" &&
+          PanelFooter::key(footer->primary()) == keys::spec("enter") && footer->primary()->objectName() == "primary");
     footer->setPrimary(PanelFooter::Primary::Stay);
-    CHECK(footer->primaryText() == "Apply" && PanelFooter::key(footer->primary()) == "Enter");
+    CHECK(footer->primaryText() == "Apply" && PanelFooter::key(footer->primary()) == keys::spec("enter"));
     CHECK(!footer->back()->isVisibleTo(footer) && !footer->hint()->isVisibleTo(footer));  // only in flows that set them
     QPushButton* copy = footer->addSecondary("Copy");
     QPushButton* undo = footer->addSecondary("Undo point", "Ctrl+Z");
@@ -163,7 +163,7 @@ TEST(panel_footer) {
     CHECK(back == footer->back() && PanelFooter::text(back) == "Back" && PanelFooter::key(back) == "Alt+Left" && footer->hint()->text() == "Pick a face");
     footer->setCancel("Clear");
     footer->setPrimary("Pin to document", "P");
-    CHECK(footer->cancelText() == "Clear" && PanelFooter::key(footer->cancel()) == "Esc" && PanelFooter::text(undo) == "Undo point" &&
+    CHECK(footer->cancelText() == "Clear" && PanelFooter::key(footer->cancel()) == keys::spec("esc") && PanelFooter::text(undo) == "Undo point" &&
           PanelFooter::key(undo) == "Ctrl+Z" && PanelFooter::key(copy).isEmpty() && footer->primary()->toolTip() == "Pin to document  (P)");
     const int width = footer->minimumSizeHint().width() + 40;  // a panel takes at least the footer's minimum (ToolStepsPanel)
     footer->setGeometry(0, 0, width, 44);
@@ -200,7 +200,8 @@ TEST(panel_footer) {
     keys::setLookup([&pin](const QString& id) { return id == "inspect.pin" ? &pin : nullptr; });
     footer->setPrimary("Pin to document", "inspect.pin");
     QPushButton* next = footer->addSecondary("Next", "vcs.nextChange");  // no such command here: no key
-    CHECK(PanelFooter::key(footer->primary()) == "Ctrl+Alt+P" && footer->primary()->toolTip() == "Pin to document  (Ctrl+Alt+P)" && PanelFooter::key(next).isEmpty());
+    const QString pinKey = keys::plain(QKeySequence("Ctrl+Alt+P"));  // as the platform names it (⌥⌘P on macOS)
+    CHECK(PanelFooter::key(footer->primary()) == pinKey && footer->primary()->toolTip() == "Pin to document  (" + pinKey + ")" && PanelFooter::key(next).isEmpty());
     pin.setShortcut(QKeySequence("P"));
     keys::announce();
     CHECK(PanelFooter::key(footer->primary()) == "P" && PanelFooter::text(footer->primary()) == "Pin to document");

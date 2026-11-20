@@ -20,6 +20,7 @@ class QKeyEvent;
 
 namespace keys {
 enum class Style { Native, Pc, Mac };  // Native: Mac on macOS, Pc elsewhere
+void setNativeStyle(Style style);       // tests: what Native stands for (Native again: the platform's, the default)
 
 class Notifier : public QObject {
   Q_OBJECT
