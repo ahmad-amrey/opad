@@ -29,6 +29,16 @@ if(NOT _rc EQUAL 0)
   message(FATAL_ERROR "windeployqt failed (${_rc}):\n${_out}")
 endif()
 
+# HTTPS for the update check (UpdateCheck.hpp): Windows' own Schannel TLS backend, not the OpenSSL one (it needs OpenSSL's
+# DLLs), so that one plugin is staged by hand.
+get_filename_component(_qt_bin "${OPAD_WINDEPLOYQT}" DIRECTORY)
+foreach(_tls "${_qt_bin}/../share/qt6/plugins/tls/qschannelbackend.dll" "${_qt_bin}/../plugins/tls/qschannelbackend.dll")
+  if(EXISTS "${_tls}")
+    file(COPY "${_tls}" DESTINATION "${OPAD_STAGE}/tls")
+    break()
+  endif()
+endforeach()
+
 # Everything else (OCCT toolkits, freetype, tbb, the compiler runtime, what the Qt plugins pull in): walk the import
 # tables. Windows' own DLLs are left out; whatever is not found in the toolchain is reported, not ignored.
 file(GLOB_RECURSE _plugins "${OPAD_STAGE}/*.dll")

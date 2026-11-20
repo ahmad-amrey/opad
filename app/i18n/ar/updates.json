@@ -1,0 +1,21 @@
+{
+ "Check for &updates…": "التحقق من وجود &تحديثات…",
+ "Check for updates automatically": "التحقق من التحديثات تلقائيًا",
+ "update": "تحديث",
+ "new version": "نسخة جديدة",
+ "upgrade": "ترقية",
+ "release": "إصدار",
+ "notify": "إشعار",
+ "OPAD %1 is the newest version.": "OPAD %1 هو أحدث نسخة.",
+ "Could not check for updates: %1": "تعذّر التحقق من وجود تحديثات: %1",
+ "Updates": "التحديثات",
+ "OPAD %1 is available": "صدرت النسخة %1 من OPAD",
+ "You have %1.": "لديك النسخة %1.",
+ "What's new": "ما الجديد",
+ "Download": "تنزيل",
+ "Skip this version": "تخطي هذه النسخة",
+ "Later": "لاحقًا",
+ "What's new in %1": "ما الجديد في %1",
+ "No notes were published with this release.": "لم تُنشر ملاحظات مع هذا الإصدار.",
+ "GitHub's answer was not a release": "لم يكن رد GitHub إصدارًا"
+}

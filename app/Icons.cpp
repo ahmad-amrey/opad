@@ -23,6 +23,7 @@ QHash<QString, QString>& table() {
       {"import", R"(<path d="M12 3v11M8 10l4 4 4-4M4 17v3h16v-3"/>)"},
       {"save", R"(<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3M8 21v-6h8v6"/>)"},
       {"export", R"(<path d="M12 14V3M8 7l4-4 4 4M4 17v3h16v-3"/>)"},
+      {"download", R"(<path d="M12 3v11M8 10l4 4 4-4M4 17v3h16v-3"/>)"},
       {"fit", R"(<path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5"/><rect x="8" y="8" width="8" height="8"/>)"},
       {"home", R"(<path d="M3 11l9-8 9 8M5 10v10h14V10"/>)"},
       {"ortho", R"(<path d="M4 8h12v12H4zM4 8l4-4h12v12l-4 4M16 8l4-4"/>)"},
