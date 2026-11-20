@@ -94,18 +94,27 @@ jobs:
       - id: gcc
         run: echo "version=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
       - name: Cache the static OCCT
-        uses: actions/cache@v4
+        id: deps
+        uses: actions/cache/restore@v4
         with:
           path: build/windows-static-ucrt64/occt/install
           key: occt-static-windows-ucrt64-gcc${{ steps.gcc.outputs.version }}-${{ hashFiles('cmake/occt_static.cmake', 'cmake/occt_source.cmake') }}
       - name: Cache ccache
-        uses: actions/cache@v4
+        id: ccache
+        uses: actions/cache/restore@v4
         with:
           path: .ccache
           key: ccache-windows-${{ github.sha }}
           restore-keys: ccache-windows-
       - name: Configure
         run: cmake --preset windows-static-ucrt64
+      # Saved now, whatever the steps after it do: a failing test must not throw away what the configure built.
+      - name: Save the static OCCT
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/windows-static-ucrt64/occt/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}
       - name: Build
         run: cmake --build --preset windows-static-ucrt64
       - name: Test
@@ -121,6 +130,12 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           & $iscc "/DAppVersion=${{ needs.version.outputs.version }}" "/DSourceDir=../build/windows-static-ucrt64/single" "/DOutputDir=../build/windows-static-ucrt64/installer" installer/opad.iss
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Save ccache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -160,18 +175,27 @@ jobs:
       - id: gcc
         run: echo "version=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
       - name: Cache OCCT
-        uses: actions/cache@v4
+        id: deps
+        uses: actions/cache/restore@v4
         with:
           path: build/linux/occt/install
           key: occt-linux-gcc${{ steps.gcc.outputs.version }}-${{ hashFiles('cmake/occt_bundled.cmake', 'cmake/occt_source.cmake') }}
       - name: Cache ccache
-        uses: actions/cache@v4
+        id: ccache
+        uses: actions/cache/restore@v4
         with:
           path: .ccache
           key: ccache-linux-${{ github.sha }}
           restore-keys: ccache-linux-
       - name: Configure
         run: cmake --preset linux -DOPAD_CHRONO=OFF -DOPAD_NETGEN=OFF -DOPAD_BUILD_PYTHON=OFF -DOPAD_BUILD_PLUGINS=OFF
+      # Saved now, whatever the steps after it do: a failing test must not throw away what the configure built.
+      - name: Save OCCT
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/linux/occt/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}
       - name: Build
         run: cmake --build --preset linux
       - name: Test
@@ -181,6 +205,12 @@ jobs:
         run: cmake --build --preset linux-single
       - name: Debian package
         run: cmake --build --preset linux --target opad-deb
+      - name: Save ccache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -211,7 +241,8 @@ jobs:
       - id: cc
         run: echo "version=$(clang -dumpversion)" >> "$GITHUB_OUTPUT"
       - name: Cache the simulation engines
-        uses: actions/cache@v4
+        id: deps
+        uses: actions/cache/restore@v4
         with:
           path: |
             build/macos/eigen
@@ -219,13 +250,24 @@ jobs:
             build/macos/netgen/install
           key: sim-engines-macos-clang${{ steps.cc.outputs.version }}-${{ hashFiles('cmake/sim_engines.cmake') }}
       - name: Cache ccache
-        uses: actions/cache@v4
+        id: ccache
+        uses: actions/cache/restore@v4
         with:
           path: .ccache
           key: ccache-macos-${{ github.sha }}
           restore-keys: ccache-macos-
       - name: Configure
         run: cmake --preset macos
+      # Saved now, whatever the steps after it do: a failing test must not throw away what the configure built.
+      - name: Save the simulation engines
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/macos/eigen
+            build/macos/chrono/install
+            build/macos/netgen/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}
       - name: Build
         run: cmake --build --preset macos
       - name: Test
@@ -233,6 +275,12 @@ jobs:
         run: QT_QPA_PLATFORM=offscreen ctest --preset macos
       - name: dmg
         run: cmake --build --preset macos-single
+      - name: Save ccache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         with:
           name: macos
