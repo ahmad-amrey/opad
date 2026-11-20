@@ -3,6 +3,7 @@
 #include "I18n.hpp"
 #include "SketchBackdrop.hpp"
 #include "Theme.hpp"
+#include "PanelFooter.hpp"
 #include "ToolValues.hpp"
 #include "Units.hpp"
 #include "opad/design/expr.hpp"
@@ -74,18 +75,13 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
   m_status->setObjectName("secondary");
   layout->addWidget(m_status);
   layout->addStretch();
-  auto* footer = new QHBoxLayout;
-  auto* backButton = new QPushButton(tr("Back"), body);
-  backButton->setToolTip(tr("Choose another plane"));
-  m_place = new QPushButton(tr("Place"), body);
-  m_place->setObjectName("primary");
-  m_place->setToolTip(tr("Import the drawing here"));
-  auto* cancelButton = new QPushButton(tr("Cancel"), body);
-  footer->addWidget(backButton);
-  footer->addStretch();
-  footer->addWidget(m_place);
-  footer->addWidget(cancelButton);
-  layout->addLayout(footer);
+  // Back, Cancel (Esc) and Place (Enter): Place imports and closes; Shift held places another after it (a tool used once).
+  auto* footer = new PanelFooter(body);
+  footer->setBack(tr("Back"))->setToolTip(tr("Choose another plane"));
+  footer->setPrimary(tr("Place"));
+  footer->setShiftKeeps(true);
+  m_place = footer->primary();
+  layout->addWidget(footer);
   m_panel = new ToolPanel("drawing-place", "drawing", &Tokens::sel, tr("Place drawing"), body, 420, window);
   m_panel->setEscapeHandler([this] { escape(); });
   connect(m_panel, &ToolPanel::visibilityChanged, this, [this](bool on) { if (!on && m_active) cancel(); });
@@ -111,7 +107,7 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
     m_values->input()->setProblem(key, problem);
     if (mm) setOffset(key == "x" ? *mm : m_du, key == "y" ? *mm : m_dv);
   };
-  m_values->commit = [this] { if (m_loaded) m_place->click(); };
+  m_values->commit = [this] { place(m_values->shift); };
   m_values->escape = [this] { escape(); };
   connect(m_u, &QLineEdit::editingFinished, this, typed);
   connect(m_v, &QLineEdit::editingFinished, this, typed);
@@ -128,14 +124,9 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
     refresh();
   });
   connect(reset, &QPushButton::clicked, this, [this] { setOffset(0, 0); });
-  connect(backButton, &QPushButton::clicked, this, [this] { stop(); if (back) back(); });
-  connect(m_place, &QPushButton::clicked, this, [this] {
-    if (!m_loaded) return;
-    const opad::Mat4 m = placement();
-    stop();
-    if (placed) placed(m);
-  });
-  connect(cancelButton, &QPushButton::clicked, this, &DrawingPlacer::cancel);
+  connect(footer, &PanelFooter::backRequested, this, [this] { stop(); if (back) back(); });
+  connect(footer, &PanelFooter::accepted, this, [this, footer] { place(footer->shiftAccepted()); });
+  connect(footer, &PanelFooter::cancelled, this, &DrawingPlacer::cancel);
   connect(units::notifier(), &units::Notifier::changed, this, [this] { if (m_active) refresh(); });
   view->installEventFilter(this);
   // The guide of placing a drawing, under the hint: the tool guide's clip for this panel too (its "?", Help for this tool).
@@ -159,7 +150,6 @@ void DrawingPlacer::start(const QString& file, const opad::Frame& plane, std::fu
   m_panel->setHeader(m_image ? "canvas" : "drawing", m_image ? tr("Place canvas") : tr("Place drawing"));
   m_hint->setText(m_image ? tr("The picture sits on the chosen plane, centred on its origin. Drag it, type an offset or a width, or snap a corner onto a vertex.")
                           : tr("The drawing sits on the chosen plane with its own origin at the plane's. Drag it, type an offset, or snap one of its vertices onto another vertex."));
-  m_place->setToolTip(m_image ? tr("Import the picture here") : tr("Import the drawing here"));
   m_oldFilter = m_view->selectionFilter();
   refresh();
   open(m_panel);
@@ -264,6 +254,14 @@ void DrawingPlacer::cancel() {
   if (!m_active) return;
   stop();
   emit cancelled();
+}
+
+void DrawingPlacer::place(bool keep) {
+  if (!m_loaded) return;
+  m_keep = keep;
+  const opad::Mat4 m = placement();
+  stop();
+  if (placed) placed(m);
 }
 
 void DrawingPlacer::escape() {

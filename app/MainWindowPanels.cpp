@@ -46,6 +46,7 @@ void MainWindow::buildDocks() {
   connect(m_checks, &CheckPanel::keepRequested, this, &MainWindow::keepCheck);
   connect(m_toolSteps, &ToolStepsPanel::contentSizeChanged, m_toolPanel, &ToolPanel::requestContentFit);
   connect(m_checks, &CheckPanel::contentResized, m_toolPanel, &ToolPanel::requestContentFit);
+  for (ToolPanel* p : {m_propsPanel, m_annotationsPanel, m_sectionPanel}) p->setPersistent(true);  // a tool never closes them
   m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel};
   // What a card lit up goes with the panel, and with any change of the document (its ordinals may name other faces).
   connect(m_annotationsPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
@@ -114,24 +115,34 @@ void MainWindow::bindPanel(QAction* a, ToolPanel* panel) {
 }
 
 void MainWindow::openPanel(ToolPanel* panel) {
-  int top = 186;  // below the view cube; pinned panels already there push it down, 8 px apart
+  // Two kinds of panel: a tool's, and those that show the document (ToolPanel::persistent). Opening one hides the
+  // unpinned others of its own kind only, so using a tool never closes Properties, Annotations, Section and the like:
+  // they stay until the user closes them. A panel of the other kind still shown is beside it (the new one to its left,
+  // 8 px apart); a pinned one of its own kind is above it (below the view cube, 8 px apart).
+  int top = 186, right = 8;
   for (ToolPanel* o : m_panels) {
     if (o == panel || !o->isVisible()) continue;
-    if (!o->pinned()) o->hide();
-    else if (!o->userPlaced()) top = std::max(top, o->bottom() + 8);
+    if (!o->pinned() && o->persistent() == panel->persistent()) o->hide();
+    else if (o->userPlaced()) continue;
+    else if (o->persistent() != panel->persistent()) right = std::max(right, o->leftFromRight() + 8);
+    else top = std::max(top, o->bottom() + 8);
   }
-  if (!panel->isVisible()) panel->setDefaultTop(top);
+  if (!panel->isVisible()) {
+    panel->setDefaultTop(top);
+    panel->setDefaultRight(right);
+  }
   panel->anchorTo(QRect(m_viewport->mapToGlobal(QPoint(0, 0)), m_viewport->size()));
   panel->show();
   panel->raise();
 }
 
 bool MainWindow::closeTopPanel() {
-  for (ToolPanel* p : m_panels)
-    if (p->isVisible() && !p->pinned()) {
-      p->hide();
-      return true;
-    }
+  for (const bool persistent : {false, true})  // a tool's panel first: the document's panels stay beside it (openPanel)
+    for (ToolPanel* p : m_panels)
+      if (p->isVisible() && !p->pinned() && p->persistent() == persistent) {
+        p->hide();
+        return true;
+      }
   return false;
 }
 

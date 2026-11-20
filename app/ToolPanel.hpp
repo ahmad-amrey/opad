@@ -12,6 +12,7 @@
 #include "Theme.hpp"
 
 class QLabel;
+class PanelFooter;
 
 // ---------------------------------------------------------------- floating tool panel
 // Replaces the fixed right dock (handoff: "Floating tool panel"). A frameless tool window owned by the main
@@ -42,6 +43,12 @@ class ToolPanel : public QWidget {
   bool userPlaced() const { return m_userPlaced; }
   void setDefaultTop(int top) { if (!m_userPlaced) m_offset.setY(top); }
   int bottom() const { return m_offset.y() + height() - 2 * kMargin; }  // in viewport coordinates
+  void setDefaultRight(int right) { if (!m_userPlaced) m_offset.setX(right); }  // from the viewport's right edge (8 by default)
+  int leftFromRight() const { return m_offset.x() + width() - 2 * kMargin; }  // its left edge, from the viewport's right edge
+  // A panel that shows the document (Properties, Annotations, Section, Version, Parameters, Layers) rather than a tool's
+  // inputs: using a tool never closes it, it stays beside the tool's panel until the user closes it (MainWindow::openPanel).
+  void setPersistent(bool on) { m_persistent = on; }
+  bool persistent() const { return m_persistent; }
   void anchorTo(const QRect& viewportGlobal);
   // Back at its default place and size, forgetting the saved ones: a double-click on the header, Reset layout.
   void restoreDefaultPlace();
@@ -55,6 +62,9 @@ class ToolPanel : public QWidget {
   // click is done, so digits, Esc and the tools' keys go on reaching the tool, never a window shortcut through the panel.
   static void setKeyboardHome(QWidget* home);
   static bool keepsKeyboard(const QWidget* widget);  // a text field or a list, or a part of one: it types into its panel
+  // Its footer when that footer's primary button says Enter and nothing that takes Enter itself has the keyboard (Enter and
+  // Shift+Enter press it: keyPressEvent, MainWindow::repeatOnEnter); null otherwise.
+  PanelFooter* enterFooter() const;
   bool takesKeyboardAt(const QPoint& global) const;  // a click there activates the panel
  signals:
   void visibilityChanged(bool visible);
@@ -89,6 +99,7 @@ class ToolPanel : public QWidget {
   std::function<QSize(int)> m_contentSizeHint;
   bool m_contentFitPending = false;
   bool m_userPlaced = false;
+  bool m_persistent = false;
   bool m_dragging = false;
   bool m_resizing = false;
   QPoint m_dragFrom, m_posFrom;

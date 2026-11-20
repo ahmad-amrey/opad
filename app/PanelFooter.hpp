@@ -47,6 +47,10 @@ class PanelFooter : public QWidget {
   // open for another use, and the footer says so (its hint unless the panel set one, and OK's tooltip).
   void setShiftKeeps(bool on);
   bool shiftAccepted() const { return m_shiftAccepted; }  // while accepted() is emitted: the click on OK had Shift held
+  // The key the primary button shows pressed (Enter, Shift+Enter: shift): accepted() as its click would, when it is shown,
+  // enabled and its key is Enter. False otherwise (nothing done).
+  bool entersPrimary() const;
+  bool pressPrimary(bool shift);
   QPushButton* primary() const { return m_primary; }
   QPushButton* cancel() const { return m_cancel; }
   QPushButton* back() const { return m_back; }

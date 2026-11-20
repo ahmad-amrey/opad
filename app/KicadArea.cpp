@@ -236,6 +236,7 @@ void KicadArea::buildPanel() {
   layout->addWidget(m_list, 1);
   m_footer = new PanelFooter(body);
   m_footer->setPrimary(tr("Sync"));
+  m_footer->setShiftKeeps(true);  // Sync closes the preview; Shift held shows it again afterwards
   connect(m_footer, &PanelFooter::accepted, this, &KicadArea::sync);
   connect(m_footer, &PanelFooter::cancelled, this, &KicadArea::closePreview);
   layout->addWidget(m_footer);
@@ -472,12 +473,14 @@ void KicadArea::fillAffected() {
 
 void KicadArea::sync() {
   const std::string import = m_import;
+  const bool again = m_footer && m_footer->shiftAccepted();  // Shift held (a tool used once kept open): the preview again after it
   std::shared_ptr<opad::design::Plan> plan = std::exchange(m_plan, nullptr);
   closePreview();
   AssetsArea* a = assets();
   if (!a || import.empty()) return;
   if (plan) a->syncPlanned(import, std::move(*plan), m_planRevision);
   else a->sync({import});
+  if (again) QTimer::singleShot(0, this, [this, import] { preview(import, 1); });  // waits while the sync is busy
 }
 
 void KicadArea::closePreview() {

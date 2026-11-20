@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QLabel>
 #include <QFile>
+#include <QGuiApplication>
 #include <QMenu>
 #include <QWidgetAction>
 
@@ -75,7 +76,8 @@ void MainWindow::onViewportSelection() {
     if (seen.insert(r.body).second) ids.push_back(r.body);
   m_browser->setSelectedIds(ids);
   if (m_section && m_section->picking() && !refs.empty() && refs.front().kind == opad::Ref::Kind::Face) {  // one face: Pick face is done
-    m_section->endPick();
+    // ... unless Shift was held with the click (a tool used once kept open): it waits for another face (toolPicksChanged).
+    if (!QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier)) m_section->endPick();
     sectionFromFace(refs.front());
   }
   m_selRows.clear();

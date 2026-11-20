@@ -37,6 +37,9 @@ class DrawingPlacer : public QObject {
   void setOffset(double u, double v);
   bool snap(const opad::Vec3& from, const opad::Vec3& to);  // move so `from` (on the drawing) lands on `to`
   std::function<void(const opad::Mat4&)> placed;  // Place: import with this placement
+  // That Place had Shift held (Shift+Enter, Shift+click): the caller places another once this one is in (a tool used once
+  // kept open). Read in `placed`.
+  bool keepOpen() const { return m_keep; }
   std::function<void()> back;                     // choose another plane
  signals:
   void cancelled();
@@ -51,6 +54,7 @@ class DrawingPlacer : public QObject {
   bool nearestVertex(const QPointF& at, opad::Vec3& world) const;  // of the drawing, within a few pixels
   std::optional<double> length(const QString& text, QString* problem) const;  // typed, in the shown unit; parameters work
   void escape();  // Esc: the snap given up, else the placing
+  void place(bool keep);  // Place (keep: Shift held)
   AppDocument* m_doc;
   ToolValues* m_values = nullptr;
   Viewport* m_view;
@@ -62,7 +66,7 @@ class DrawingPlacer : public QObject {
   bool m_image = false;
   double m_imageW = 0, m_imageH = 0, m_width = 0;
   QPushButton *m_snap, *m_place;
-  bool m_active = false, m_dragging = false, m_loaded = false;
+  bool m_active = false, m_dragging = false, m_loaded = false, m_keep = false;
   int m_snapStage = 0;  // 1: pick a vertex of the drawing, 2: pick where it goes
   opad::Vec3 m_snapFrom{};
   int m_serial = 0;

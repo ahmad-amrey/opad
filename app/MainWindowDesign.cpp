@@ -170,7 +170,7 @@ void MainWindow::buildDesign() {
   });
   auto* parameters=m_design->parametersWidget();
   auto* parametersPanel=new ToolPanel("parameters","fx",&Tokens::sel,tr("Parameters"),parameters,480,this);
-  m_panels<<parametersPanel;m_design->setParametersPanel(parametersPanel);
+  parametersPanel->setPersistent(true);m_panels<<parametersPanel;m_design->setParametersPanel(parametersPanel);
   connect(parameters,&ParametersDialog::closeRequested,parametersPanel,&ToolPanel::hide);
   auto* sketchContent=new SketchPanel(m_design->sketch(),this);
   auto* sketchPanel=new ToolPanel("sketch","sketch",&Tokens::sel,tr("Sketch tools"),sketchContent,620,this);

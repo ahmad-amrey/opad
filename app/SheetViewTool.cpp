@@ -1,6 +1,8 @@
 #include "SheetViewTool.hpp"
 
+#include <QGuiApplication>
 #include <QKeyEvent>
+#include <QTimer>
 #include <QMouseEvent>
 #include <QRegularExpression>
 
@@ -8,6 +10,7 @@
 
 #include "AppDocument.hpp"
 #include "I18n.hpp"
+#include "KeyText.hpp"
 #include "SheetValueCard.hpp"
 #include "Theme.hpp"
 
@@ -165,6 +168,8 @@ void SheetViewTool::promptForStage() {
   }
   if (m_measuring) text = tr("Measuring the view…");
   else if (!inputKeys().empty()) text += QString::fromUtf8(" · ") + tr("or type the values, Tab to the next, Enter");
+  // A view tool is used once: it ends with its last click or Enter; Shift held with it starts the same tool again (commit).
+  if (!text.isEmpty() && !m_measuring && m_tool != Tool::Uncut) text += QString::fromUtf8(" · ") + tr("%1 held: another after it").arg(keys::fixedText("shift"));
   setPrompt(text.isEmpty() ? text : text + QString::fromUtf8(" · ") + esc);
   syncInputs();
 }
@@ -496,11 +501,15 @@ void SheetViewTool::commit() {
     args = {{"target", m_view}, {"set", set}};
   }
   const std::string view = m_view;
+  const Tool tool = m_tool;
+  // Its last click or Enter with Shift held (a tool used once kept open): the same tool again on the same view.
+  const bool again = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
   QPointer<SheetViewTool> self(this);
   cancel();
-  m_runner(command, args, [self, command, view](const opad::json& out) {
+  m_runner(command, args, [self, command, view, tool, again](const opad::json& out) {
     if (!self || out.is_null()) return;
     emit self->added(command == "sheet_view" ? out.value("id", "") : view);
+    if (again) QTimer::singleShot(0, self.data(), [self, tool, view] { if (self && !self->active()) self->start(tool, view); });
   });
 }
 

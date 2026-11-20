@@ -588,7 +588,11 @@ void CanvasArea::insert(const QString& given) {
 void CanvasArea::placeOn(const QString& file, const opad::Frame& plane, double u, double v, bool link) {
   m_placer->placed = [this, file, plane, link](const opad::Mat4& placement) {
     const opad::json options = {{"plane", plane.to_json()}, {"width", m_placer->imageWidth()}, {"center", true}};
-    if (link) return services().importPlaced(file, placement, options, link, [this] { afterInsert(); });  // a linked picture: an asset's read
+    // Placed with Shift held (a tool used once kept open): once it is in, the same picture again on the same plane,
+    // instead of its edit panel.
+    std::function<void()> again;
+    if (m_placer->keepOpen()) again = [this, file, plane, link] { placeOn(file, plane, 0, 0, link); };
+    if (link) return services().importPlaced(file, placement, options, link, [this, again] { if (again) again(); else afterInsert(); });  // a linked picture: an asset's read
     // A copy: read on a worker without the document (a big model is never copied for it), committed as one undo step.
     opad::ImportOptions o;
     o.placement = placement;
@@ -604,10 +608,10 @@ void CanvasArea::placeOn(const QString& file, const opad::Frame& plane, double u
     const std::filesystem::path path(file.toStdU16String());
     QPointer<CanvasArea> self(this);
     services().jobs()->async(tr("Reading %1").arg(QFileInfo(file).fileName()), [plan, path, o](Progress) { *plan = opad::plan_canvas_import(path, o); },
-                             [self, plan](bool ok, const QString& error) {
+                             [self, plan, again](bool ok, const QString& error) {
                                if (!self) return;
                                if (!ok) return self->toast(i18n::t(error));
-                               self->commitInsert(plan);
+                               self->commitInsert(plan, 0, again);
                              });
   };
   m_placer->back = [this, file] { QTimer::singleShot(0, this, [this, file] { insert(file); }); };
@@ -615,10 +619,10 @@ void CanvasArea::placeOn(const QString& file, const opad::Frame& plane, double u
   if (u != 0 || v != 0) m_placer->setOffset(u, v);
 }
 
-void CanvasArea::commitInsert(std::shared_ptr<opad::design::Plan> plan, int waited) {
+void CanvasArea::commitInsert(std::shared_ptr<opad::design::Plan> plan, int waited, std::function<void()> then) {
   AppDocument* doc = services().document();
   if (doc->designBusy || doc->loading || doc->snapshotBusy()) {  // a change being planned against the document as it is: after it
-    if (waited < 300) QTimer::singleShot(100, this, [this, plan, waited] { commitInsert(plan, waited + 1); });
+    if (waited < 300) QTimer::singleShot(100, this, [this, plan, waited, then] { commitInsert(plan, waited + 1, then); });
     else toast(tr("The document is busy; try again in a moment."));
     return;
   }
@@ -628,6 +632,7 @@ void CanvasArea::commitInsert(std::shared_ptr<opad::design::Plan> plan, int wait
   } catch (const std::exception& e) {
     return toast(i18n::t(QString::fromUtf8(e.what())));
   }
+  if (then) return then();
   edit(canvas);
 }
 

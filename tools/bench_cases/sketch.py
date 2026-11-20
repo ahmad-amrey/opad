@@ -54,6 +54,10 @@ CASES = [
     # the Move feature (OK, Shift+click on OK, Shift+Enter in the view and in its panel, Enter).
     ("sketch-oneshot", "empty", {"OPAD_BENCH_SKETCH_ONESHOT": "{prefix}"}),
     ("feature-oneshot", "box", {"OPAD_BENCH_FEATURE_ONESHOT": "1"}),
+    # Using a tool never closes Section (it stays beside Distance's and a feature's panel, not over them); the Note
+    # editor's Shift+Enter is a new line in its text, else Save and another note (never Repeat); a footer that says Enter
+    # is pressed by Enter and Shift+Enter in the view, and no plain Enter there is Repeat while a tool's panel is shown.
+    ("panels-stay", "box", {"OPAD_BENCH_PANELS_STAY": "1"}),
     # Tool panels hand the keyboard back to the view after a click on a button or the slider; Esc in a panel is its (UI-05).
     ("panel-focus", "box", {"OPAD_BENCH_PANEL_FOCUS": "1"}),
     # The Section panel's Pick face takes one face, then the view selects as before; Exit section is its main button.

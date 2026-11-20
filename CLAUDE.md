@@ -153,8 +153,13 @@ padding the spine range beyond 2%. State: 33 of 1036 solids invalid in the 196-f
 Properties, Annotations and Section are `ToolPanel`s (`app/Panels.hpp`): frameless tool windows owned by the main
 window, anchored to the viewport's top-right corner (right 8, top 186; `positionOverlays` re-anchors them), dragged
 by the 32 px header, resized by the corner grip (width 280-480), place/size/pin persisted under `panels/<id>`;
-double-click on the header restores the default place. `MainWindow::openPanel` hides the other unpinned panels;
-Esc closes an unpinned panel before it clears the measurement. Properties opens only from the context menu
+double-click on the header restores the default place. Two kinds: a tool's panel and the document's (`setPersistent`:
+Properties, Annotations, Section, Version, Parameters, Layers); `MainWindow::openPanel` hides the unpinned others of its
+own kind only, a shown one of the other kind is beside it (the new one to its left, `setDefaultRight`), a pinned one of
+its kind above it. Esc closes an unpinned panel (a tool's first) before it clears the measurement. A footer whose
+primary says Enter (`PanelFooter::entersPrimary`: Canvas OK, KiCad Sync) is pressed by Enter / Shift+Enter in its panel
+(`ToolPanel::enterFooter`) and in the view (`MainWindowView.cpp` `panelEnter`); while a tool's panel shows, a plain
+Enter in the view is never Repeat. Properties opens only from the context menu
 (`inspect.properties`, Ctrl+P) for the current selection (`m_selRefs`); a new selection closes it
 (`selectionMoved`), unless pinned, in which case it follows the selection. Nothing is inspected while it is closed.
 
@@ -266,7 +271,13 @@ back to Select; a failed Apply keeps the tool. The sketch panel's page the user 
 only, not edits or Align sketch); Shift comes from `PanelFooter::shiftAccepted` (OK clicked), `ToolValues::shift` /
 `DimensionHandle::accepted(bool)` (`DynamicInput::committed(bool)`), the view's eventFilter and a `KeyHook` on the panel.
 Shift+Enter is also `edit.repeat`: the tool takes it only while it has an Apply ready (`keepsOnShiftEnter`, a feature
-open), Repeat everywhere else. `PanelFooter::setShiftKeeps` shows the hint. Benches sketch-oneshot, feature-oneshot.
+open), Repeat everywhere else. `PanelFooter::setShiftKeeps` shows the hint. Elsewhere through the footer's
+`shiftAccepted` / `DrawingPlacer::keepOpen`: Mesh to solid and Drawing to sketch open again (their panels lose their
+objectName on the way out, so the command makes a new one), drawing placement and Canvas insert place the same file again
+on the same plane, KiCad Sync shows its preview again; Note / Hand drawing (`AnnotationEditor::anotherRequested`;
+Shift+Enter in its text is a new line), Section's Pick face (a Shift-click keeps picking) and the Drawings view tools
+(`SheetViewTool::commit` reads the keyboard's Shift) start again. Guided measuring tools, sheet annotations, Explode's
+Save as view and Canvas editing stay open anyway. Benches sketch-oneshot, feature-oneshot, panels-stay.
 
 ## Guided tools (`app/GuidedTool.hpp`, flow in `MainWindow` "guided tools")
 

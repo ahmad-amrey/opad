@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QKeyEvent>
 #include <QPainter>
+#include <QPointer>
 #include <utility>
 
 #include "KeyText.hpp"
@@ -46,8 +47,9 @@ PanelFooter::PanelFooter(QWidget* parent) : QWidget(parent) {
   m_primary->installEventFilter(this);
   connect(m_primary, &QPushButton::clicked, this, [this] {
     m_shiftAccepted = std::exchange(m_primaryShift, false);  // read by the receivers while accepted() runs
+    const QPointer<PanelFooter> self(this);
     emit accepted();
-    m_shiftAccepted = false;
+    if (self) m_shiftAccepted = false;  // an accept may close (and delete) the panel
   });
   connect(m_back, &QPushButton::clicked, this, &PanelFooter::backRequested);
   connect(keys::notifier(), &keys::Notifier::changed, this, &PanelFooter::rekey);
@@ -123,6 +125,19 @@ void PanelFooter::setShiftKeeps(bool on) {
   m_shiftKeeps = on;
   showHint();
   relabel(m_primary, text(m_primary), m_primary->property("footerKey").toString());
+}
+
+bool PanelFooter::entersPrimary() const {
+  return m_primary->isVisibleTo(window()) && m_primary->isEnabled() && m_primary->property("footerKey").toString() == QLatin1String("enter");
+}
+
+bool PanelFooter::pressPrimary(bool shift) {
+  if (!entersPrimary()) return false;
+  m_shiftAccepted = shift;
+  const QPointer<PanelFooter> self(this);
+  emit accepted();
+  if (self) m_shiftAccepted = false;
+  return true;
 }
 
 bool PanelFooter::eventFilter(QObject* watched, QEvent* event) {
