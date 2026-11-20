@@ -73,6 +73,11 @@ pass. Tags are not affected: pushing `vX.Y.Z` stays possible.
    downloads table with first-start notes (`tools/release_downloads.md`), GitHub's list of the merged pull requests, and
    the packages with `SHA256SUMS.txt` and the third-party notices.
 
+The packages are published under names without the version (`OPAD-windows-x64-setup.exe`, `OPAD-windows-x64.exe`,
+`opad-cli-windows-x64.exe`, `OPAD-macos.dmg`, `OPAD-linux-x86_64.AppImage`): the README's Download section links to
+`https://github.com/ahmad-amrey/opad/releases/latest/download/<name>`, which always reaches the newest published
+release. Renaming a package means changing those links in README.md and README.ar.md too.
+
 A failed release run publishes nothing. To try again with the same version: delete the tag (`git push origin
 :refs/tags/vX.Y.Z` and `git tag -d vX.Y.Z`), fix, tag again. Once a release has been downloaded, fix forward with a new
 patch version instead of replacing it.

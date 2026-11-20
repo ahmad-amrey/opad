@@ -252,6 +252,12 @@ jobs:
           mkdir dist
           # An artifact keeps the folders below its paths' common root: found by name.
           find artifacts -type f \( -name '*.exe' -o -name '*.AppImage' -o -name '*.dmg' \) -exec cp {} dist/ \;
+          # Names without the version (OPAD-0.2.0-macos.dmg -> OPAD-macos.dmg): the README links to
+          # releases/latest/download/<name>, which then always reaches the newest release.
+          for f in dist/*; do
+            fixed="${f/-$VERSION/}"
+            [ "$f" = "$fixed" ] || mv "$f" "$fixed"
+          done
           for os in windows linux macos; do
             notice=$(find "artifacts/$os" -name THIRD-PARTY-NOTICES.txt | head -1)
             cp "$notice" "dist/THIRD-PARTY-NOTICES-$os.txt"
