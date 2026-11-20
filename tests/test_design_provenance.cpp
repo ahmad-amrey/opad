@@ -191,7 +191,7 @@ TEST(a_chain_of_features) {
   const std::string body = base["body_ids"][0];
   auto on = [&](json in) {
     in["operation"] = in.value("operation", "join");
-    in["targets"] = {body_ref(body)};
+    in["targets"] = json::array({body_ref(body)});  // not {x}: Apple clang (Xcode 16) takes one braced json as a copy
     return in;
   };
   const std::string boss = feature_cmd(doc, "cylinder", on({{"plane", on_plane(-20, 0, 12)}, {"diameter", "16 mm"}, {"height", "10 mm"}}), "Boss")["feature_id"];
