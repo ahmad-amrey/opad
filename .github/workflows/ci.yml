@@ -805,6 +805,13 @@ jobs:
                 echo "Removing $old"
                 gh release delete "$old" --cleanup-tag --yes
               done
+          # The first development build was tagged dev-<build> before the SemVer names: removed.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.prerelease and (.tag_name | test("^dev-[0-9]+$"))) | .tag_name' \
+            | while read -r old; do
+                echo "Removing $old (old naming)"
+                gh release delete "$old" --cleanup-tag --yes
+              done
       - name: Publish the release
         if: env.DEV != 'true'
         run: |

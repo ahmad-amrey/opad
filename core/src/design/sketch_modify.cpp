@@ -525,6 +525,49 @@ bool fillet_geometry(const Sketch& sk,int point,double r,FilletCorner& out) {
   return std::isfinite(best);
 }
 
+FilletProblem fillet_problem(const Sketch& sk,int point,double r) {
+  FilletProblem out;
+  FilletCorner f;
+  if(fillet_geometry(sk,point,r,f))return out;
+  // The curves ending there, as corner_sides counts them (construction ones left out when two others end there).
+  int all=0,drawn=0;
+  for(const auto& e:sk.entities) {
+    if(e.p.empty())continue;
+    if(e.type==SkEntity::Type::Spline && (e.p.front()==point || e.p.back()==point)){out.kind=FilletProblem::Spline;return out;}
+    const bool line=e.type==SkEntity::Type::Line;
+    if(!line && e.type!=SkEntity::Type::Arc)continue;
+    const int a=line?e.p[0]:e.p[1],b=line?e.p[1]:e.p[2];
+    if(a!=point && b!=point)continue;
+    ++all;
+    drawn+=!e.construction;
+  }
+  const int ending=drawn==2?2:all;
+  if(ending<2){out.kind=FilletProblem::TooFew;out.curves=ending;return out;}
+  if(ending>2){out.kind=FilletProblem::TooMany;out.curves=ending;return out;}
+  Side side[2];
+  if(corner_sides(sk,point,side)) {
+    // The way each curve leaves the corner: opposite ways = one runs on into the other (tangent, no corner).
+    auto leaving=[](const Side& s,double& x,double& y) {
+      if(s.line){x=s.dx;y=s.dy;return;}
+      const double rx=s.px-s.cx,ry=s.py-s.cy,k=s.start?1.0:-1.0;  // counter-clockwise from its start
+      x=-ry*k/s.R;y=rx*k/s.R;
+    };
+    double ax,ay,bx,by;
+    leaving(side[0],ax,ay);
+    leaving(side[1],bx,by);
+    if(ax*bx+ay*by<-1+1e-9){out.kind=FilletProblem::Tangent;return out;}
+  }
+  out.kind=FilletProblem::TooBig;
+  double low=0,high=r;  // the largest radius that fits, by halving: never past r
+  for(int i=0;i<40 && low==0;++i)if(fillet_geometry(sk,point,high/=2,f))low=high;
+  if(low>0) {
+    high=std::min(r,low*2);
+    for(int i=0;i<30;++i){const double mid=(low+high)/2;(fillet_geometry(sk,point,mid,f)?low:high)=mid;}
+  }
+  out.largest=low;
+  return out;
+}
+
 namespace {
 // A corner rounded or cut (fillet, chamfer): curves `first` and `second` now end at `ta` and `tb` instead of `point`. The
 // sides are shorter now. What measured a whole line (a polygon's "equal"s, a length, a midpoint) moves to a construction line

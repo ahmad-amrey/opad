@@ -22,13 +22,14 @@
 #include "GuidedTool.hpp"
 #include "FileLocation.hpp"
 #include "I18n.hpp"
+#include "DesignController.hpp"
 #include "Preferences.hpp"
 #include "Icons.hpp"
 #include "opad/design/feature.hpp"
 
 void MainWindow::buildToolsActions() {
   addAction("tools.commands", tr("Search commands"), "search", QKeySequence("S"), [this] {
-    CommandPalette p(m_actions, this);
+    CommandPalette p(m_actions, this, m_design && m_design->sketchActive());  // a sketch's tools first while one is open
     p.adjustSize();
     p.move(mapToGlobal(QPoint((width() - p.width()) / 2, 180)));
     p.exec();

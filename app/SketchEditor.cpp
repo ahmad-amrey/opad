@@ -498,7 +498,9 @@ bool SketchEditor::end_change(const QString& what) {
     m_sk = m_before;  // never leave the sketch over-constrained: the change is refused
     m_plane=m_beforePlane;m_frame=m_beforeFrame;
     QStringList ids;for(int id:r.failed)ids<<QString::number(id);
-    emit status(tr("%1 conflicts with constraints %2. Edit or remove them, or switch a dimension to reference.").arg(what,ids.join(", ")));
+    const QString why=tr("%1 conflicts with constraints %2. Edit or remove them, or switch a dimension to reference.").arg(what,ids.join(", "));
+    emit status(why);
+    emit refused(why);  // a toast too: on the status line alone the refusal went unseen
     rebuild();
     return false;
   }

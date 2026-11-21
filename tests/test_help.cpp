@@ -1387,6 +1387,37 @@ TEST(palette_ranks_whole_words_first) {
   CHECK_EQ(first("f2").value(0), QString("x.rename"));
 }
 
+// The palette follows where one works: in a sketch its tools come before the 3D commands of the same name ("fillet": Sketch
+// fillet first, Fillet after), outside it the 3D ones first; a word match still comes before letters scattered through a
+// name, wherever the command works ("save" in a sketch: Save first). Every command stays listed.
+TEST(palette_ranks_by_context) {
+  help::load("en");
+  QSettings().remove("palette/recent");
+  QAction sketchFillet("Sketch fillet"), fillet("Fillet"), measure("Measure"), distance("Distance"), save("Save"), scattered("Snap and view edges");
+  sketchFillet.setObjectName("sketch.fillet");
+  fillet.setObjectName("design.fillet");
+  measure.setObjectName("sketch.measure");
+  distance.setObjectName("inspect.distance");
+  distance.setProperty("commandKeywords", QStringList{"measure"});
+  save.setObjectName("file.save");
+  scattered.setObjectName("sketch.snapview");
+  const QList<QAction*> all{&sketchFillet, &fillet, &measure, &distance, &save, &scattered};
+  auto order = [&all](bool sketching, const QString& query) {
+    CommandPalette palette(all, nullptr, sketching);
+    palette.findChild<QLineEdit*>("paletteInput")->setText(query);
+    auto* list = palette.findChild<QListWidget*>("paletteList");
+    QStringList ids;
+    for (int i = 0; i < list->count(); ++i) ids << static_cast<QAction*>(list->item(i)->data(Qt::UserRole).value<void*>())->objectName();
+    return ids;
+  };
+  CHECK_EQ(order(true, "fillet"), QStringList({"sketch.fillet", "design.fillet"}));
+  CHECK_EQ(order(false, "fillet"), QStringList({"design.fillet", "sketch.fillet"}));
+  CHECK_EQ(order(true, "measure").value(0), QString("sketch.measure"));
+  CHECK_EQ(order(false, "measure").value(0), QString("inspect.distance"));
+  const QStringList saving = order(true, "save");
+  CHECK(saving.value(0) == "file.save" && saving.contains("sketch.snapview"));  // a word before scattered letters, all listed
+}
+
 // Commands are listed by area (the palette's group column, the reference's headings), every area named once.
 TEST(command_areas) {
   help::load("en");

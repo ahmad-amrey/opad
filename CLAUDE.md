@@ -250,6 +250,12 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   or a dimension's value hovered (`Hit::Dimension`): `hoverTip` puts `constraintTip` in the status bar's hover text at once
   and a QToolTip after 500 ms, also in Trim/Extend/Split (`tipTarget`: their clicks take the curve, `constraintAt` names the
   badge). Bench `sketch-measure`.
+- A refused sketch change says why where the user looks: `SketchEditor::refused` (a toast, through `DesignController::notice`)
+  besides the status line (a solve refused in `end_change`, a Sketch fillet that does not fit). Sketch fillet names its
+  reason (`fillet_problem`: fewer or more than two curves ending at the point, a spline, a tangent join, a radius too big with
+  the largest that fits). `ctest -R sketch-fillet`, bench sketch-fillet. The command palette follows the context
+  (`CommandPalette(..., sketching)`): within each tier (an exact key, a word match, letters scattered) a sketch's tools come
+  first while one is open, the 3D commands outside ("fillet": Sketch fillet or Fillet first).
 - Least movement (`SolveOptions::moves`, solver.cpp `movement_stages`): a constraint added (`applyConstraint`: last pick
   first, then the other picks) or a dimension changed (`commitDimensionEdit`) solves with only that geometry movable (the
   held variables' column scale 0, so they keep their values exactly), then with the curves sharing its points, then with

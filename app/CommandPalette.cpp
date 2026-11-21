@@ -152,7 +152,8 @@ class PaletteDelegate : public QStyledItemDelegate {
 };
 }  // namespace
 
-CommandPalette::CommandPalette(const QList<QAction*>& actions, QWidget* parent) : QDialog(parent, Qt::Popup | Qt::FramelessWindowHint), m_actions(actions) {
+CommandPalette::CommandPalette(const QList<QAction*>& actions, QWidget* parent, bool sketching)
+    : QDialog(parent, Qt::Popup | Qt::FramelessWindowHint), m_actions(actions), m_sketching(sketching) {
   setObjectName("overlay");
   setAttribute(Qt::WA_StyledBackground);
   // The list, and beside it the current command's card (UI-107): summary, keys, its clip, what it needs.
@@ -248,8 +249,16 @@ void CommandPalette::refill(const QString& filter) {
     }
     if (s > 0) scored << qMakePair(s, a);
   }
-  // Best match first; among equals (all of them with nothing typed) the recent commands, newest first.
-  std::stable_sort(scored.begin(), scored.end(), [&rank](const auto& x, const auto& y) { return x.first != y.first ? x.first > y.first : rank(x.second) < rank(y.second); });
+  // A key typed exactly first, then the query as a word of a name or keyword, then letters scattered through a name; within
+  // each, the commands of where one works (a sketch's tools in a sketch, the 3D ones outside: "fillet" there is Sketch fillet,
+  // here Fillet), then the best match; among equals (all of them with nothing typed) the recent commands, newest first.
+  auto tier = [](int s) { return s >= 2 * kWordHit ? 2 : s >= kWordHit / 2 ? 1 : 0; };
+  auto here = [this](const QAction* a) { return a->objectName().startsWith("sketch.") == m_sketching; };
+  std::stable_sort(scored.begin(), scored.end(), [&](const auto& x, const auto& y) {
+    if (tier(x.first) != tier(y.first)) return tier(x.first) > tier(y.first);
+    if (here(x.second) != here(y.second)) return here(x.second);
+    return x.first != y.first ? x.first > y.first : rank(x.second) < rank(y.second);
+  });
   for (const auto& [s, a] : scored) {
     auto* it = new QListWidgetItem(m_list);
     it->setData(Qt::UserRole, QVariant::fromValue(static_cast<void*>(a)));

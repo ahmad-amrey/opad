@@ -245,6 +245,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(m_form, &FeaturePanel::cancelled, this, &DesignController::endFeature);
   connect(m_form, &FeaturePanel::escapePressed, this, [this] { escape(); });  // one step back, as in the view
   connect(m_sketch, &SketchEditor::status, this, &DesignController::status);
+  connect(m_sketch, &SketchEditor::refused, this, &DesignController::notice);  // the status line alone went unseen
   connect(m_sketch, &SketchEditor::changed, this, &DesignController::stateChanged);
   connect(m_sketch, &SketchEditor::toolChanged, this, &DesignController::stateChanged);
   m_viewport->installEventFilter(this);
