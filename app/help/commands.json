@@ -2561,9 +2561,9 @@
   {
    "id": "tools.ai",
    "title": "AI integration",
-   "summary": "Sets up local AI agent access to this window: the connection, what an agent may change and its activity.",
-   "details": "Enable local agent access, choose whether an agent may make design edits and exports, and copy the MCP server configuration for your AI client. The status bar's AI chip opens the same dialog.",
-   "keywords": ["agent", "MCP", "assistant", "AI"]
+   "summary": "Connects an AI client to this window step by step, and sets what an agent may change and follows its activity.",
+   "details": "Connect an AI client registers OPAD in Claude Code, Claude Desktop or Codex with one click, shows each client's state (connected, not connected, registered for another OPAD, its program missing) and lists the four steps: connect, restart the client, allow access, ask. Choose whether an agent may make design edits and exports, or copy the MCP configuration for another client. The status bar's AI chip opens the same dialog, on Connect an AI client while no client is connected.",
+   "keywords": ["agent", "MCP", "assistant", "AI", "Claude", "Claude Code", "Claude Desktop", "Codex", "connect"]
   },
   {
    "id": "tools.agentActivity",

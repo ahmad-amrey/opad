@@ -401,6 +401,20 @@ shade), no pixels read; a launch where the start page stays on screen shows here
 Benches launch-frames and start-cover; `OPAD_BENCH_OFFSCREEN` draws a bench window off the screen. Never capture the
 screen or run Add-Type scripts on the user's desktop: it set off their antivirus.
 
+## AI clients (`app/AgentSettings.cpp`, `AgentClients.*`, `AgentClientConfig.*`)
+
+Settings > AI integration opens on Connect an AI client while no client is bound (`AgentBridge::settings(-1)`; the status bar's
+AI chip too): rows for Claude Code, Claude Desktop and Codex (`AgentClientRow`), each with its state against this copy
+(`agentclients::classify`: connected; not connected; not found; registered but its program missing; registered for another
+OPAD or an old data folder = another opad-cli or a discovery folder other than `AgentBridge::m_directory`) and the action that
+fits (Connect, Point it at this OPAD = the "opad" entry removed and added, Remove; another live OPAD's entry is never removed).
+Claude Code: state read from `$CLAUDE_CONFIG_DIR/.claude.json` or `~/.claude.json` (`mcpServers.opad`, user scope), changed by
+`claude mcp add/remove opad --scope user`; Codex: `codex mcp list --json`, `codex mcp add/remove opad`; both asynchronous
+QProcess, no shell, 15 s. Claude Desktop: its claude_desktop_config.json rewritten in place (`writeServer`: only
+mcpServers.opad, key order kept, <file>.bak first, QSaveFile, nothing written when unchanged). `ctest -R agent-clients`,
+gui case agent-connect (APPDATA / HOME / XDG_CONFIG_HOME / CLAUDE_CONFIG_DIR pointed at the case's folders),
+tools/test_mcp_feedback.py with a real Codex.
+
 ## Command help (`app/help/*.json`, `tests/test_help.cpp`)
 
 Every registered command has a record in `commands.json` + `commands.ar.json` (summary one sentence, details 2-4, keys

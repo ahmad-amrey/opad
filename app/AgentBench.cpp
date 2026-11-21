@@ -2,7 +2,7 @@
 #include "DesignController.hpp"
 #include "Viewport.hpp"
 #include "RecoveryManager.hpp"
-#include "AgentRegistration.hpp"
+#include "AgentClients.hpp"
 #include <QFile>
 #include <QSaveFile>
 #include <QDir>
@@ -50,21 +50,23 @@ void AgentBridge::bench(){
       else if(action=="access")setAccess(data.value("enabled",true),data.value("edit",true));
       else if(action=="stop")stop();
       else if(action=="disconnect")disconnectClients();
-      else if(action=="registration") {
-        AgentRegistration* registration=nullptr;
-        for(auto* widget:m_window->findChildren<QWidget*>())if(auto* found=dynamic_cast<AgentRegistration*>(widget)){registration=found;break;}
-        if(!registration){settings();for(auto* widget:m_window->findChildren<QWidget*>())if(auto* found=dynamic_cast<AgentRegistration*>(widget)){registration=found;break;}}
+      else if(action=="registration") {  // a client's row on Connect an AI client: "client" codex (default), claude-code, claude-desktop
+        const auto client=data.value("client","codex");
+        const QString row=client=="claude-code"?"agentClientClaudeCode":client=="claude-desktop"?"agentClientClaudeDesktop":"agentClientCodex";
+        auto* registration=m_window->findChild<AgentClientRow*>(row);
+        if(!registration){settings(0);registration=m_window->findChild<AgentClientRow*>(row);}
         if(!registration)throw opad::Error("Registration widget unavailable");
-        if(data.contains("executable"))registration->findChild<QLineEdit*>("codexExecutable")->setText(QString::fromStdString(data["executable"].get<std::string>()));
+        if(data.contains("executable"))registration->setProgram(QString::fromStdString(data["executable"].get<std::string>()));
         const auto operation=data.value("operation","status");
-        if(operation=="connect")registration->registerClient();else if(operation=="remove")registration->unregisterClient();else if(operation=="check")registration->refresh();
+        if(operation=="connect")registration->connectClient();else if(operation=="remove")registration->removeClient();
+        else if(operation=="point")registration->pointHere();else if(operation=="check")registration->refresh();
         result={{"status",registration->report().toStdString()}};
       }
       else if(action=="delay")m_benchDelay=std::clamp(data.value("ms",0),0,5000);
       else if(action=="settings"){
-        settings();const auto tab=data.value("tab",0);
-        for(auto* dialog:m_window->findChildren<QDialog*>())if(dialog->windowTitle()==tr("AI integration"))dialog->findChild<QTabWidget*>()->setCurrentIndex(tab);
-        QTimer::singleShot(300,this,[this,directory,tab]{for(auto* dialog:m_window->findChildren<QDialog*>())if(dialog->windowTitle()==tr("AI integration")){dialog->grab().save(directory+(tab==1?"/settings-client.png":"/settings.png"));dialog->close();}});
+        // tab: 0 Access and activity, 1 Client setup (as before), 2 Connect an AI client.
+        const auto tab=data.value("tab",0);settings(tab==1?2:tab==2?0:1);
+        QTimer::singleShot(300,this,[this,directory,tab]{for(auto* dialog:m_window->findChildren<QDialog*>("agentSettings")){dialog->grab().save(directory+(tab==1?"/settings-client.png":tab==2?"/settings-connect.png":"/settings.png"));dialog->close();}});
       }
       else if(action=="new")m_doc->newDocument();
       else if(action=="save")m_doc->saveAs(QString::fromStdString(data.at("path").get<std::string>()));
