@@ -12,10 +12,11 @@
 // bench and the tests).
 //
 // The development channel (setting updates/channel = "development", Help > Offer development builds) reads the list of
-// releases instead (OPAD_UPDATE_LIST_URL for tests): stable vX.Y.Z releases and the dev-N prereleases every push to the dev
-// branch publishes, each keyed by (version, build) from the marker CI writes in its notes,
-// <!-- opad-build: N; opad-version: X.Y.Z --> (a stable release without one is (X.Y.Z, 0); a dev-N without one is left
-// out). The greatest key above this copy's (version, build) is offered (a local build is build 0); a stable release and
+// releases instead (OPAD_UPDATE_LIST_URL for tests): stable vX.Y.Z releases and the prereleases every push to the dev branch
+// publishes, tagged vA.B.C-dev.N (a development build; A.B.C the next patch) or vX.Y.Z-rc.N (the release candidate of X.Y.Z,
+// not released yet), each keyed by (version, build) from the marker CI writes in its notes (the version the binary says),
+// <!-- opad-build: N; opad-version: X.Y.Z --> (a stable release without one is (X.Y.Z, 0); a prerelease without one, with
+// another tag, or whose tag's N is not the marker's, is left out). The greatest key above this copy's (version, build) is offered (a local build is build 0); a stable release and
 // the release candidate it was promoted from share their key, and the stable one is offered. When the API refuses, the
 // stable check answers.
 #include <QDateTime>
@@ -43,8 +44,8 @@ struct Release {
   QString download;  // this computer's installer in that release; empty when none fits (Download opens the page then)
   QDateTime published;
   int build = 0;             // CI's build number (the marker); 0 for a stable release without one
-  bool development = false;  // a dev-N prerelease (the development channel)
-  bool candidate = false;    // ... whose version is not released yet: the release candidate of it
+  bool development = false;  // a prerelease vA.B.C-dev.N or vX.Y.Z-rc.N (the development channel)
+  bool candidate = false;    // ... tagged -rc.N: the release candidate of its version
 };
 
 // The release in GitHub's "latest release" answer; empty when it is not one (a draft, a prerelease, no tag, not JSON).
@@ -57,7 +58,7 @@ std::optional<Release> parseLatest(const QByteArray& json, const QString& asset 
 QString summarize(const QString& notes, int maxChars = 220);
 // The marker CI writes in a release's notes, <!-- opad-build: N; opad-version: X.Y.Z -->: false when there is none.
 bool parseMarker(const QString& notes, int& build, QString& version);
-// The candidates in GitHub's list of releases (the development channel): stable vX.Y.Z releases and dev-N prereleases with
+// The candidates in GitHub's list of releases (the development channel): stable vX.Y.Z releases and -dev.N / -rc.N prereleases with
 // a marker; drafts and anything else left out. `asset` as for parseLatest (a release without it: its download address).
 std::vector<Release> parseList(const QByteArray& json, const QString& asset = QString());
 // <0, 0, >0 as (va, ba) is older than, the same as, or newer than (vb, bb): the version first, then the build.
@@ -92,7 +93,7 @@ QUrl safeReleaseUrl(const QString& url);
 // Settings: updates/autoCheck (default on), updates/lastCheck (the last check that got an answer), updates/skipVersion.
 inline constexpr const char* kAutoCheckKey = "updates/autoCheck";
 inline constexpr const char* kLastCheckKey = "updates/lastCheck";
-inline constexpr const char* kSkipKey = "updates/skipVersion";  // the version skipped; a development build's tag (dev-N)
+inline constexpr const char* kSkipKey = "updates/skipVersion";  // the version skipped; a prerelease's tag (v0.10.1-dev.20)
 inline constexpr const char* kChannelKey = "updates/channel";   // "stable" (default) or "development"
 
 // One check at a time, asynchronous (the UI thread never waits on the network).

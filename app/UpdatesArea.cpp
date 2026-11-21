@@ -125,7 +125,7 @@ class Updates : public AreaController {
     else QMessageBox::information(services().window(), QObject::tr("Updates"), text);
   }
   void offer(const updates::Release& r, bool asked) {
-    // A development build is skipped by its tag (dev-N), a release by its version.
+    // A development build is skipped by its tag (v0.10.1-dev.20), a release by its version.
     const QString skipAs = r.development ? r.tag : r.version;
     if (!asked && QSettings().value(updates::kSkipKey).toString() == skipAs) return;
     trace::log("updates: " + updates::displayVersion(r.version, r.build) + " is available (this is " + updates::displayVersion(m_checker->current(), m_checker->build()) + ")");
