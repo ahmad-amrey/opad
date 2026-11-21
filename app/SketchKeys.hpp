@@ -93,9 +93,12 @@ inline Enter enter(const State& s) {
   if (s.tool == "mirror" && s.mirrorSeeds && s.selection) return Enter::PickMirrorLine;
   return s.applies ? Enter::Apply : Enter::None;
 }
-// Shift+Enter applies and keeps the tool only where Enter would apply a tool that closes after it; anywhere else Shift+Enter
-// stays the window's Repeat last command.
-inline bool keepsOnShiftEnter(const State& s) { return enter(s) == Enter::Apply && closesAfterApply(s.tool); }
+// Shift+Enter applies and keeps the tool only where Enter would apply a tool that closes after it (also with a value typed:
+// Enter takes it and applies); anywhere else Shift+Enter stays the window's Repeat last command.
+inline bool keepsOnShiftEnter(const State& s) {
+  const Enter e = enter(s);
+  return closesAfterApply(s.tool) && (e == Enter::Apply || (e == Enter::UseTyped && s.applies));
+}
 
 inline Esc escape(const State& s) {
   if (s.boxSelecting) return Esc::CancelBox;

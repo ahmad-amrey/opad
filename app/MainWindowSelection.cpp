@@ -329,7 +329,7 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
       forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
       return;
     }
-    for(const char* id:{"sketch.construction","sketch.dimension","sketch.c.horizontal","sketch.c.vertical","sketch.c.coincident","sketch.c.tangent","sketch.c.fix","sketch.node","sketch.openEnds"})menu.addAction(action(id));
+    for(const char* id:{"sketch.construction","sketch.measure","sketch.dimension","sketch.c.horizontal","sketch.c.vertical","sketch.c.coincident","sketch.c.tangent","sketch.c.fix","sketch.node","sketch.openEnds"})menu.addAction(action(id));
     menu.addSeparator();menu.addAction(tr("Driving / reference"),m_design->sketch(),&SketchEditor::toggleReference);
     menu.addAction(tr("Delete"),m_design->sketch(),&SketchEditor::deleteSelection);
     forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });

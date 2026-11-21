@@ -104,6 +104,24 @@ void migrate(QSettings& settings) {
     }
     settings.setValue("shortcuts/highlightDefaultsVersion",1);
   }
+  if(settings.value("shortcuts/measureDefaultsVersion",0).toInt()<1) {
+    // D measures in a sketch (sketch.measure) as it does outside one, and a sketch dimension moved to Shift+D: a D the old
+    // editor saved for Dimension goes (it gets Shift+D). A key of the user's stays: another command of theirs already on D
+    // or Shift+D keeps it, and Measure or Dimension starts without a key.
+    if(QKeySequence(settings.value("shortcuts/sketch.dimension").toString(),QKeySequence::PortableText)==QKeySequence("D"))settings.remove("shortcuts/sketch.dimension");
+    QList<QPair<QString,QKeySequence>> taken;
+    for(const char* group:{"shortcuts","shortcutAlternates"}) {
+      settings.beginGroup(group);
+      for(const auto& id:settings.childKeys())taken.append({id,QKeySequence(settings.value(id).toString(),QKeySequence::PortableText)});
+      settings.endGroup();
+    }
+    for(const auto& [id,key]:QList<QPair<QString,QKeySequence>>{{"sketch.measure",QKeySequence("D")},{"sketch.dimension",QKeySequence("Shift+D")}}) {
+      if(settings.contains("shortcuts/"+id))continue;  // chosen by the user already
+      const bool used=std::any_of(taken.begin(),taken.end(),[&](const auto& other){return other.first!=id && overlaps(other.first,id) && conflicts(other.second,key);});
+      if(used)settings.setValue("shortcuts/"+id,QString());
+    }
+    settings.setValue("shortcuts/measureDefaultsVersion",1);
+  }
   if(settings.value("shortcuts/viewDefaultsVersion",0).toInt()>=1)return;
   // The old editor saved every row, including untouched defaults. Keep actual custom bindings.
   const QList<QPair<QString,QString>> old{{"view.top","Ctrl+Alt+1"},{"view.front","Ctrl+Alt+2"},

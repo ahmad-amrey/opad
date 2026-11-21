@@ -33,6 +33,7 @@
 #include <QFontMetricsF>
 #include <QPainterPath>
 #include <QCursor>
+#include <QToolTip>
 #include <cmath>
 
 #include "I18n.hpp"
@@ -311,6 +312,13 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     sketchsnap::track(m_tracked, m_dwellPoint);
     resnap();
   });
+  // A constraint's badge or a dimension's value rested on: its tooltip says what it is (hoverTip, SketchMeasure.cpp).
+  m_tipTimer.setSingleShot(true);
+  m_tipTimer.setInterval(500);
+  connect(&m_tipTimer, &QTimer::timeout, this, [this] {
+    if (!m_active || !m_inView || !m_tipShown || m_hover.kind != Hit::Dimension || m_hover.id != m_tipShown) return;
+    QToolTip::showText(QCursor::pos() + QPoint(14, 18), constraintTip(m_tipShown), m_viewport, QRect(), 8000);
+  });
   m_relayoutTimer.setSingleShot(true);
   m_relayoutTimer.setInterval(250);
   connect(&m_relayoutTimer,&QTimer::timeout,this,[this]{if(m_active && !m_geometryJob)rebuild();});
@@ -411,7 +419,8 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 
 void SketchEditor::end() {
   if (!m_active) return;
-  m_toolPreviewTimer.stop();m_dwellTimer.stop();m_relayoutTimer.stop();m_dimensionHandle->hide();forgetTyped();m_input->setFields({});m_input->hide();
+  m_toolPreviewTimer.stop();m_dwellTimer.stop();m_relayoutTimer.stop();m_dimensionHandle->hide();
+  m_hover = Hit{};hoverTip();forgetTyped();m_input->setFields({});m_input->hide();
   m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
   ++m_geometryRevision;++m_fillRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   m_viewport->setEdgeHover(false);
@@ -1193,6 +1202,7 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   const bool redraw = h.kind != m_hover.kind || h.id != m_hover.id || m_tool != "select" || m_placingDim;
   const bool dimensionHover=h.kind==Hit::Dimension||m_hover.kind==Hit::Dimension;
   m_hover = h;
+  hoverTip();
   m_pointer = s;
   m_cursor = typedPoint(s);  // typed values hold it
   m_haveCursor = true;
@@ -1216,6 +1226,7 @@ void SketchEditor::sketchLeave() {
   }
   const bool dimension = m_hover.kind == Hit::Dimension;
   m_hover = Hit{};
+  hoverTip();
   if (dimension) rebuild();
   else updateTransient();
 }
@@ -2084,6 +2095,16 @@ void SketchEditor::updateTransient() {
       for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
     }
   }
+  // Measure (SketchMeasure.cpp): what it picked in amber, dashed what the distance runs between, its values beside it.
+  if(const auto measure=measureResult()) {
+    for(int id:m_picked) {
+      if(const auto* e=m_sk.entity(id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.amber});}
+      else if(const auto* p=m_geometry->point(m_sk,id))d.bigPoints.push_back({W(p->x,p->y),t.amber});
+    }
+    if(measure->segment){d.dashed.push_back({W(measure->au,measure->av),W(measure->bu,measure->bv),t.amber});++m_rubberKinds["measure"];}
+    for(int i=0;i<measure->lines.size();++i)
+      d.texts.push_back({W(measure->lu-i*18*ux,measure->lv-i*18*uy),measure->lines[i],i==0?t.amber:t.fg2,true});
+  } else if(m_tool=="measure")for(int id:m_picked)if(const auto* p=m_geometry->point(m_sk,id))d.bigPoints.push_back({W(p->x,p->y),t.amber});
   // Rubber band of the running tool (also from typed values alone: drawing by the keyboard, the pointer not in the view).
   if ((m_haveCursor || !m_typedValues.empty()) && m_tool != "select") {
     const QColor rb = t.hov;

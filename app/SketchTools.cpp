@@ -20,6 +20,7 @@
 #include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QInputDialog>
+#include <QScopeGuard>
 #include <QLineEdit>
 #include <QKeyEvent>
 #include <QSettings>
@@ -175,6 +176,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   const Hit hit = hitTest(s.u, s.v);
   if (m_tool.startsWith("c:")) return constraintClick(hit);
   if (m_tool == "dimension") return dimensionClick(hit, s.u, s.v);
+  if (m_tool == "measure") return measureClick(hit);
   if (m_tool == "offset" || m_tool == "node") {
     const Hit h=hitTest(s.u,s.v);
     if(h.kind!=Hit::None) {
@@ -633,6 +635,9 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
     return false;
   }
   const QString name = i18n::t(QString::fromLatin1(SkConstraint::type_name(type)));
+  // Least movement: what was picked last gives way first, then the other picks; the rest of the sketch keeps its place.
+  m_moves = ids.size() > 1 ? std::vector<std::vector<int>>{{ids.back()}, {ids.begin(), ids.end() - 1}} : std::vector<std::vector<int>>{ids};
+  const auto clearMoves = qScopeGuard([this] { m_moves.clear(); });
   return end_change(name.left(1).toUpper() + name.mid(1));
 }
 
@@ -945,6 +950,10 @@ void SketchEditor::commitDimensionEdit() {
   c->reference = reference;
   if (c->reference) c->expr.clear();
   m_panelFieldsDirty = true;
+  // Least movement: an offset's copies move (its chain stays), any other dimension's last reference first, then the rest.
+  if (offset) m_moves = {{c->refs.begin() + std::min<std::ptrdiff_t>(c->sources, std::ptrdiff_t(c->refs.size())), c->refs.end()}};
+  else if (!c->refs.empty()) m_moves = {{c->refs.back()}, {c->refs.begin(), c->refs.end()}};
+  const auto clearMoves = qScopeGuard([this] { m_moves.clear(); });
   if(end_change(offset ? tr("Offset distance") : tr("Dimension"))) {
     if(m_dimFresh && m_undo.size()>1)m_undo.pop_back(); // placement and its value are one user edit
     m_dimFresh=false;m_dimEditing=0;

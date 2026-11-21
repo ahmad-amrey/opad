@@ -170,6 +170,12 @@ struct SolveOptions {
   std::vector<Drag> drags;
   int max_iterations = 100;
   double tolerance = 1e-8;  // on each constraint residual (mm or rad)
+  // Least movement (a constraint added, a dimension changed): the points and curves the change names, in groups in the
+  // order they should give way (the second pick first). Each group is tried alone, then with the curves that share a point
+  // with it, then with what the constraints on those hold; then the next group joins. Everything outside the group being
+  // tried keeps its place exactly. Only when none of these satisfies every constraint does the whole sketch move (the
+  // plain least-squares step, which spreads the change over every free point). Empty: the whole sketch at once.
+  std::vector<std::vector<int>> moves;
 };
 
 struct SolveResult {

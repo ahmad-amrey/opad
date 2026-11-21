@@ -48,6 +48,7 @@ QList<SketchPanel::Tool> SketchPanel::tools() {
     {QObject::tr("Modify"),"union",QObject::tr("Region union")}, {QObject::tr("Modify"),"subtract",QObject::tr("Region subtract")},
     {QObject::tr("Modify"),"intersect",QObject::tr("Region intersection")}, {QObject::tr("Modify"),"heal",QObject::tr("Heal endpoints")},
     {QObject::tr("Modify"),"explode",QObject::tr("Explode pattern")},
+    {QObject::tr("Inspect"),"measure",QObject::tr("Measure")},
     {QObject::tr("Constrain"),"dimension",QObject::tr("Dimension")},
     {QObject::tr("Constrain"),"c:horizontal",QObject::tr("Horizontal")}, {QObject::tr("Constrain"),"c:vertical",QObject::tr("Vertical")},
     {QObject::tr("Constrain"),"c:coincident",QObject::tr("Coincident")}, {QObject::tr("Constrain"),"c:collinear",QObject::tr("Collinear")},

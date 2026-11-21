@@ -241,6 +241,17 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   offset when value != built (the side read off the curves, so a mirrored copy keeps its side; same curves = points moved
   in place, ids kept; else replaced). Its label follows the curves (`offsetLeader`, `pos` unused), double-click edits it
   (the box shows the distance; a plain number keeps the side). Saved in `more_constraints`. `ctest -R sketch-offset`.
+- Measure (`sketch.measure`, D in a sketch; Distance keeps D outside it, the scopes never overlap) adds nothing; Dimension is
+  Shift+D (migration `shortcuts/measureDefaultsVersion`). `SketchMeasure.cpp`: picks in `m_picked` as Dimension's (Esc and
+  Backspace step back alike), `measureResult()` drawn in `updateTransient` and written in the steps. A constraint's badge
+  or a dimension's value hovered (`Hit::Dimension`): `hoverTip` puts `constraintTip` in the status bar's hover text at once
+  and a QToolTip after 500 ms. Bench `sketch-measure`.
+- Least movement (`SolveOptions::moves`, solver.cpp `movement_stages`): a constraint added (`applyConstraint`: last pick
+  first, then the other picks) or a dimension changed (`commitDimensionEdit`) solves with only that geometry movable (the
+  held variables' column scale 0, so they keep their values exactly), then with the curves sharing its points, then with
+  what the constraints on those hold; the whole sketch (the plain least-squares step, which spread a new constraint over
+  every free point) only when no stage satisfies everything. `SketchEditor::m_moves` feeds `solveOptions()` for that one
+  change. `ctest -R sketch-movement`.
 - Bench without input driving: `opad-cli new x.opad`, then `OPAD_BENCH_DESIGN=<png> [OPAD_BENCH_SKETCHSHOT=<png>]
   opad.exe x.opad --bench-select` draws a dimensioned rectangle + circle through the tool code, extrudes it through
   the panel's plan/commit path, edits the extrude rolled back, fillets, saves, quits; trace lines `bench: design:` /

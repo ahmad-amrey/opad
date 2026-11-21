@@ -1480,7 +1480,7 @@
    "id": "inspect.distance",
    "title": "Distance",
    "summary": "Measures the distance between two picks: the shortest, centre to centre or the largest.",
-   "details": "Pick two faces, edges, vertices or bodies; the result shows the distance, its X, Y and Z parts and the measured points. Started from the Bodies filter it picks faces until it ends: select bodies first, or choose Bodies while it runs, to measure whole bodies. Minimum, Centre to centre and Maximum in the panel choose which distance. A dashed preview line follows the cursor after the first pick, and Pin ({key:inspect.pin}) keeps the result in the document.",
+   "details": "Pick two faces, edges, vertices or bodies; the result shows the distance, its X, Y and Z parts and the measured points. Started from the Bodies filter it picks faces until it ends: select bodies first, or choose Bodies while it runs, to measure whole bodies. Minimum, Centre to centre and Maximum in the panel choose which distance. A dashed preview line follows the cursor after the first pick, and Pin ({key:inspect.pin}) keeps the result in the document; in a sketch, Measure ({key:sketch.measure}) measures its points and curves.",
    "keywords": ["measure", "length", "gap", "clearance", "dimension"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -2916,10 +2916,18 @@
    "requires": "Only while a sketch is open: start one with New sketch."
   },
   {
+   "id": "sketch.measure",
+   "title": "Measure",
+   "summary": "Measures points and curves of the sketch without adding a dimension.",
+   "details": "Pick a point or a curve to read its position or sizes: a line's length, run and angle, a circle's diameter, an arc's radius and length. Pick a second one to read the distance between them (square to a line, between centres, or the nearest points) and the angle of two lines. Nothing is added to the sketch; a third pick starts again and {fixed:esc} clears. Dimension ({key:sketch.dimension}) is the tool that adds a driving dimension.",
+   "keywords": ["distance", "length", "size", "angle", "inspect"],
+   "requires": "Only while a sketch is open: start one with New sketch."
+  },
+  {
    "id": "sketch.dimension",
    "title": "Dimension",
    "summary": "Adds a driving dimension: pick geometry, place the value, type it.",
-   "details": "Pick a line, a circle, an arc or two points, click where the label goes, then type a value or an expression. The geometry resizes to match; a dimension the solver cannot satisfy is refused.",
+   "details": "Pick a line, a circle, an arc or two points, click where the label goes, then type a value or an expression. The geometry resizes to match; a dimension the solver cannot satisfy is refused. To read a size without adding a dimension, use Measure ({key:sketch.measure}).",
    "keywords": ["measure", "size", "length", "driving dimension"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },

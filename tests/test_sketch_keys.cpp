@@ -115,7 +115,7 @@ TEST(every_apply_tool_takes_enter_once_its_picks_are_complete) {
   for (const char* name : {"mirror", "project", "intersect_body", "silhouette", "include3d", "break_link", "image_insert", "image_calibrate", "image_edit",
                            "break", "union", "subtract", "intersect", "explode", "heal", "node", "chamfer", "offset", "move", "rotate", "polar_pattern"})
     CHECK(entersApply(name));
-  for (const char* name : {"select", "line", "rect", "trim", "fillet", "split", "extend", "dimension", "c:horizontal", "paste", "copybase"}) CHECK(!entersApply(name));
+  for (const char* name : {"select", "line", "rect", "trim", "fillet", "split", "extend", "dimension", "measure", "c:horizontal", "paste", "copybase"}) CHECK(!entersApply(name));
   CHECK(referenceTool("project") && referenceTool("intersect_body") && referenceTool("silhouette") && referenceTool("include3d") && !referenceTool("break_link"));
   State m = tool("mirror");  // the curves chosen and the line picked: Enter keeps the mirror image
   m.mirrorAxis = true;
@@ -205,7 +205,7 @@ TEST(one_shot_tools_close_after_apply_and_shift_enter_keeps_them) {
   for (const char* name : {"offset", "move", "copy", "rotate", "scale", "align", "mirror", "chamfer", "rect_pattern", "polar_pattern", "node", "break",
                            "union", "subtract", "intersect", "explode", "heal", "simplify", "project", "break_link", "image_edit", "vector_export"})
     CHECK(closesAfterApply(name) && entersApply(name));
-  for (const char* name : {"select", "line", "spline", "control_spline", "rect", "circle", "trim", "extend", "split", "fillet", "dimension", "c:rigid",
+  for (const char* name : {"select", "line", "spline", "control_spline", "rect", "circle", "trim", "extend", "split", "fillet", "dimension", "measure", "c:rigid",
                            "c:horizontal", "paste", "copybase", "text"})
     CHECK(!closesAfterApply(name));
   for (const char* name : {"offset", "mirror", "project", "image_remove", "vector_import"}) CHECK(afterApply(name) == AfterApply::Close);
@@ -214,7 +214,9 @@ TEST(one_shot_tools_close_after_apply_and_shift_enter_keeps_them) {
   o.selection = true;
   o.applies = true;
   CHECK(enter(o) == Enter::Apply && keepsOnShiftEnter(o));
-  o.typed = true;  // values typed: Enter uses them first
+  o.typed = true;  // values typed: Enter takes them and applies, so Shift+Enter keeps the tool too
+  CHECK(enter(o) == Enter::UseTyped && keepsOnShiftEnter(o));
+  o.applies = false;  // ... unless nothing is there to apply them to (the value waits)
   CHECK(!keepsOnShiftEnter(o));
   State r = tool("c:rigid");  // a tool that stays anyway: Shift+Enter is not the sketch's
   r.picks = 2;

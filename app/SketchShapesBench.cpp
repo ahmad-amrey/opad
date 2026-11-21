@@ -505,11 +505,12 @@ void SketchEditor::benchShapes() {
     check(option("chamferMode") == "angle" && m_input->key(1) == "chamferAngle" && option("first") == "4" && option("chamferAngle") == "30",
           "4<30: the distance 4, then ('<') the angle 30 to the first line");
     m_input->shot().save(prefix + ".chamfer-input.png");
-    enter();
+    send(Qt::Key_Return, Qt::ShiftModifier);  // Shift keeps the tool (a chamfer closes after Enter): its panel is read next
   });
   step([=] {
     const double b = 4 * std::sin(30 * degree) / std::sin(120 * degree);
-    check(lineBetween(14, 35, 10, 35 - b) && !pointAtXY(10, 35), QString("Enter cuts it 4 along the top and at 30 degrees to it, %1 down the side").arg(b));
+    check(lineBetween(14, 35, 10, 35 - b) && !pointAtXY(10, 35), QString("Shift+Enter cuts it 4 along the top and at 30 degrees to it, %1 down the side, the tool stays").arg(b) + (m_tool == "chamfer" ? "" : " (closed)"));
+    check(m_tool == "chamfer", "the chamfer stays for another (Shift held)");
     const auto modes = window->findChildren<QComboBox*>("sketchOption-chamferMode");  // the newest: the panel's fields now
     QComboBox* mode = modes.isEmpty() ? nullptr : modes.last();
     check(mode && mode->currentData().toString() == "angle", "the sketch panel shows it chamfers by a distance and an angle");
@@ -534,13 +535,13 @@ void SketchEditor::benchShapes() {
     check(option("moveMode") == "polar" && m_input->key(0) == "moveDistance" && option("moveDistance") == "15" && option("moveAngle") == "90" && option("copies") == "3",
           "15<90 Tab 3: a distance of 15 at 90 degrees, three copies");
     m_input->shot().save(prefix + ".copy-input.png");
-    enter();
+    send(Qt::Key_Return, Qt::ShiftModifier);  // Shift keeps the tool (Copy closes after Enter): its switch is read next
   });
   step([=] {
     int copies = 0;
     for (const auto& e : m_sk.entities)
       if (e.type == SkEntity::Type::Circle && same(e.r, 10) && (at(e.p[0], 0, 75) || at(e.p[0], 0, 90) || at(e.p[0], 0, 105))) ++copies;
-    check(copies == 3, "Enter makes three copies, 15, 30 and 45 above it");
+    check(copies == 3 && m_tool == "copy", "Shift+Enter makes three copies, 15, 30 and 45 above it, and keeps the tool");
     if (QToolButton* c = chip()) c->click();
     check(option("moveMode") == "xy" && m_input->key(0) == "dx" && std::abs(option("dx").remove(" mm").toDouble()) < 1e-9 && option("dy") == "15 mm",
           "the switch back to ΔX and ΔY keeps the offset: " + option("dx") + ", " + option("dy"));

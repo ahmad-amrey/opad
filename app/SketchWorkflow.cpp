@@ -30,6 +30,7 @@ SolveOptions SketchEditor::solveOptions() const {
   SolveOptions out;
   out.tolerance=m_settings.tolerance;
   out.max_iterations=m_settings.iterations;
+  out.moves=m_moves;
   return out;
 }
 
@@ -48,20 +49,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
     return s == "-0" ? QStringLiteral("0") : s;
   };
   auto at = [&](double u, double v) { return number(u) + ", " + number(v); };
-  auto name = [&](int id) {
-    if (m_sk.point(id)) return tr("Point %1").arg(id);
-    const SkEntity* e = m_sk.entity(id);
-    if (!e) return QString::number(id);
-    switch (e->type) {
-      case SkEntity::Type::Line: return tr("Line %1").arg(id);
-      case SkEntity::Type::Circle: return tr("Circle %1").arg(id);
-      case SkEntity::Type::Arc: return tr("Arc %1").arg(id);
-      case SkEntity::Type::Ellipse: return tr("Ellipse %1").arg(id);
-      case SkEntity::Type::Spline: return tr("Spline %1").arg(id);
-      case SkEntity::Type::Point: break;
-    }
-    return tr("Point %1").arg(id);
-  };
+  auto name = [&](int id) { return entityName(id); };
   auto names = [&](const std::vector<int>& ids) { QStringList n; for (int id : ids) n << name(id); return n.join(", "); };
   auto selection = [&] {
     int curves = 0;
@@ -88,6 +76,10 @@ QList<ToolStep> SketchEditor::toolSteps() const {
     const QString to = option("alignTo", "vertical");
     if (!m_picked.empty() && (to == "vertical" || to == "horizontal")) done(1, to == "vertical" ? tr("Vertical") : tr("Horizontal"));
     else if (m_picked.size() >= 2) done(1, name(m_picked[1]));
+  } else if (t == "measure") {  // what each pick measures alone or with the other, beside its name
+    if (!m_picked.empty()) done(0, name(m_picked[0]));
+    if (m_picked.size() >= 2) done(1, name(m_picked[1]));
+    if (const auto m = measureResult(); m && !m->lines.isEmpty()) done(m_picked.size() >= 2 ? 1 : 0, name(m_picked[m_picked.size() >= 2 ? 1 : 0]) + " · " + m->lines.join(" · "));
   } else if (t == "extend" || t == "tangent_circle" || t.startsWith("c:")) {
     for (size_t i = 0; i < m_picked.size(); ++i) done(int(i), name(m_picked[i]));
   } else if (t == "tangent_arc") {
@@ -310,7 +302,7 @@ bool SketchEditor::done(bool keep) {
   if(!m_active || m_editJob)return false;
   switch(sketchkeys::enter(keyState())) {
     case sketchkeys::Enter::None:return false;
-    case sketchkeys::Enter::UseTyped:return useTyped();
+    case sketchkeys::Enter::UseTyped:return useTyped(nullptr,keep);
     case sketchkeys::Enter::EndChain:if(m_tool=="control_spline")finishPrimitive();else finishChain();break;
     case sketchkeys::Enter::PickMirrorLine:m_options["mirrorStage"]="axis";toolPrompt();break;  // the curves are chosen: now the line
     case sketchkeys::Enter::Apply:applyTool(keep);break;
