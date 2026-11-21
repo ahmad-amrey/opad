@@ -38,7 +38,8 @@ ccache (as the compiler launcher) and LLD (as MinGW's linker) are used when they
 
 `cmake --workflow --preset windows-single` writes `build/windows-static/single/OPAD-<version>-windows-x64.exe` (and
 `opad-cli-<version>-windows-x64.exe`): one exe with Qt, OCCT and everything else linked in, nothing to unpack, no MSYS2
-on the target machine. It keeps its settings and cache in an `opad-data` folder beside itself. The build needs
+on the target machine. It keeps its settings and data in the user's folders like any build, or in a `data` folder
+beside itself when an `opad.portable` file sits there (docs/releasing.md). The build needs
 `pacman -S mingw-w64-x86_64-{qt6-static,rapidjson,pkgconf}` on top of the packages above; the first configure
 downloads the OCCT source and builds its toolkits statically into `build/windows-static/occt` (once, about 15
 minutes; the OS packages ship OCCT as DLLs only). The target fails if the exe imports anything but Windows' own DLLs.
@@ -115,9 +116,9 @@ release, the changelog and the protection of `main`: [releasing.md](releasing.md
 `iscc /DAppVersion=<version> installer\opad.iss` after `cmake --workflow --preset windows-single` writes it to
 `build/windows-static/installer`. It installs per user, without administrator rights, into
 `%LOCALAPPDATA%\Programs\OPAD`, with a Start menu entry, an optional desktop icon and an uninstaller in Settings > Apps;
-an open OPAD is offered to be closed first. The settings, cache and recovery snapshots live in the `opad-data` folder
-the exe makes beside itself: the installer never installs, replaces or deletes anything there, so updates keep them and
-uninstalling leaves them. The script's `AppId` must never change (Windows would take the next version for another
+an open OPAD is offered to be closed first. The settings, cache and recovery snapshots live in the user's own folders
+(the registry and `%LOCALAPPDATA%\opad`): the installer never installs, replaces or deletes anything there, so updates
+keep them and uninstalling leaves them. The script's `AppId` must never change (Windows would take the next version for another
 program and install it beside the first).
 
 ## Options

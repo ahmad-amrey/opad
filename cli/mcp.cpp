@@ -27,11 +27,7 @@ int opad_mcp() {
   using opad::json;
   bool initialized = false;
 #ifdef OPAD_GIT_TOOLS
-#ifdef OPAD_SINGLE_FILE
-  gitagent::useAppSettings(QFileInfo(git::selfFile()).absolutePath(), true);
-#else
-  gitagent::useAppSettings(QFileInfo(git::selfFile()).absolutePath(), false);
-#endif
+  gitagent::useAppSettings(QFileInfo(git::selfFile()).absolutePath());
 #endif
   std::string line;
   while (std::getline(std::cin, line)) {

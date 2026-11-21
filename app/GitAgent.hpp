@@ -38,10 +38,10 @@ struct Policy {
   opad::json to_json() const;
 };
 
-// QSettings for a process that is not the app (opad-cli): OPAD's organisation and application names and its portable
-// places, as app/main.cpp sets them: <exe dir>/data beside an opad.portable marker, <exe dir>/opad-data in a single-file
-// build, OPAD_BENCH_SETTINGS (tests and benches) first.
-void useAppSettings(const QString& programDir, bool singleFile);
+// QSettings for a process that is not the app (opad-cli): OPAD's organisation and application names and its places, as
+// app/main.cpp sets them (AppData.hpp: the user's folders, <exe dir>/data beside an opad.portable marker,
+// OPAD_BENCH_SETTINGS first).
+void useAppSettings(const QString& programDir);
 
 // A refusal or failure an agent can act on: code (protected_branch, uncommitted_changes, nothing_to_commit, ...), the
 // sentence, and what to call next.

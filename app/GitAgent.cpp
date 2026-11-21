@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <set>
 
+#include "AppData.hpp"
 #include "Git.hpp"
 #include "opad/commands.hpp"
 #include "opad/diff.hpp"
@@ -69,16 +70,10 @@ json Policy::to_json() const {
           {"set_in", "OPAD Preferences > Version control > Branch protection (the user's to change)"}};
 }
 
-void useAppSettings(const QString& programDir, bool singleFile) {
+void useAppSettings(const QString& programDir) {
   QCoreApplication::setOrganizationName("opad");
   QCoreApplication::setApplicationName("OPAD");
-  QString data;
-  if (singleFile) data = programDir + "/opad-data";
-  if (QFile::exists(programDir + "/opad.portable")) data = programDir + "/data";
-  if (!qEnvironmentVariableIsEmpty("OPAD_BENCH_SETTINGS")) data = qEnvironmentVariable("OPAD_BENCH_SETTINGS");
-  if (data.isEmpty()) return;
-  QSettings::setDefaultFormat(QSettings::IniFormat);
-  QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, data);
+  appdata::start(programDir);  // the same settings as the app, an older single-file build's adopted as it would
 }
 
 Refused::Refused(std::string c, const QString& message, std::string n) : std::runtime_error(message.toStdString()), code(std::move(c)), next(std::move(n)) {}

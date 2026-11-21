@@ -2,8 +2,9 @@
 // automatically (setting updates/autoCheck, on by default; the check runs about 20 s after start, at most once a day).
 // A newer release is offered in a notice (a toast over the view; a message box when the user asked from the start page)
 // that says in a line or two what it brings (the notes' opening paragraph or first entries, updates::summarize):
-// What's new shows its notes (the release's CHANGELOG.md section), Download opens its page, Skip this version stays
-// quiet about that version (the automatic check only). Step 1 of updates: nothing is downloaded or installed here.
+// What's new shows its notes (the release's CHANGELOG.md section), Skip this version stays
+// quiet about that version (the automatic check only). Download hands this computer's installer (or the release page)
+// to the browser; the user installs it.
 #include <QAction>
 #include <QApplication>
 #include <QDesktopServices>
@@ -13,6 +14,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPointer>
 #include <QProcessEnvironment>
 #include <QPushButton>
 #include <QSettings>
@@ -46,8 +48,13 @@ class Updates : public AreaController {
 
   void buildActions() override {
     m_checker = new updates::Checker(QApplication::applicationVersion(), this);
-    QObject::connect(m_checker, &updates::Checker::available, this, [this](const updates::Release& r, bool asked) { offer(r, asked); });
+    // Only a check that got an answer counts for the daily one: offline, it is tried again at the next start or hour.
+    QObject::connect(m_checker, &updates::Checker::available, this, [this](const updates::Release& r, bool asked) {
+      QSettings().setValue(updates::kLastCheckKey, QDateTime::currentDateTimeUtc());
+      offer(r, asked);
+    });
     QObject::connect(m_checker, &updates::Checker::upToDate, this, [this](const QString& current, bool asked) {
+      QSettings().setValue(updates::kLastCheckKey, QDateTime::currentDateTimeUtc());
       if (asked) tell(QObject::tr("OPAD %1 is the newest version.").arg(current));
     });
     QObject::connect(m_checker, &updates::Checker::failed, this, [this](const QString& why, bool asked) {
@@ -74,13 +81,15 @@ class Updates : public AreaController {
   }
 
   void ready() override {
-    QSettings settings;
-    if (!m_auto->isChecked() || !automaticCheckAllowed()) return;
-    if (!updates::dueForCheck(settings.value(updates::kLastCheckKey).toDateTime(), QDateTime::currentDateTimeUtc())) return;
-    QTimer::singleShot(20000, this, [this] {  // not in the way of the start
-      QSettings().setValue(updates::kLastCheckKey, QDateTime::currentDateTimeUtc());
-      m_checker->check(false);
-    });
+    if (!automaticCheckAllowed()) return;
+    QTimer::singleShot(20000, this, [this] { checkIfDue(); });  // not in the way of the start
+    auto* hourly = new QTimer(this);  // a window left open for days still hears of a release
+    QObject::connect(hourly, &QTimer::timeout, this, [this] { checkIfDue(); });
+    hourly->start(3600 * 1000);
+  }
+  void checkIfDue() {
+    if (!m_auto->isChecked() || m_checker->running()) return;
+    if (updates::dueForCheck(QSettings().value(updates::kLastCheckKey).toDateTime(), QDateTime::currentDateTimeUtc())) m_checker->check(false);
   }
 
   void documentChanged(bool) override {  // the start page had no view for the notice: now there is one
@@ -108,12 +117,19 @@ class Updates : public AreaController {
     // What it brings, then what one has: enough to decide without opening What's new.
     const QString have = QObject::tr("You have %1.").arg(m_checker->current());
     const QString detail = r.summary.isEmpty() ? have : r.summary + QChar(10) + have;
-    auto notes = [this, r] { showNotes(r); };
-    auto download = [r] { QDesktopServices::openUrl(QUrl(r.page)); };
+    // Without notes (only the release page answered) What's new is that page. Download is this computer's installer when
+    // the release has one, else its page; either opens only GitHub's release addresses of OPAD (safeReleaseUrl).
+    auto notes = [this, r] {
+      if (r.notes.isEmpty()) QDesktopServices::openUrl(updates::safeReleaseUrl(r.page));
+      else showNotes(r);
+    };
+    auto download = [r] { QDesktopServices::openUrl(updates::safeReleaseUrl(r.download.isEmpty() ? r.page : r.download)); };
     auto skip = [r] { QSettings().setValue(updates::kSkipKey, r.version); };
     if (hasView()) {
-      services().toasts()->ask(text, detail,
-                               {{QObject::tr("What's new"), notes}, {QObject::tr("Download"), download}, {QObject::tr("Skip this version"), skip}}, 0);
+      // One notice at a time: the daily check while the window stays open, or the user asking again, replaces it.
+      if (m_notice) m_notice->dismiss();
+      m_notice = services().toasts()->ask(
+          text, detail, {{QObject::tr("What's new"), notes}, {QObject::tr("Download"), download}, {QObject::tr("Skip this version"), skip}}, 0);
       return;
     }
     if (!asked) {  // the start page: shown when a document opens
@@ -145,7 +161,8 @@ class Updates : public AreaController {
     auto* buttons = new QDialogButtonBox(dialog);
     QPushButton* get = buttons->addButton(QObject::tr("Download"), QDialogButtonBox::AcceptRole);
     buttons->addButton(QDialogButtonBox::Close);
-    QObject::connect(get, &QPushButton::clicked, dialog, [dialog, page = r.page] { QDesktopServices::openUrl(QUrl(page)); dialog->accept(); });
+    const QUrl url = updates::safeReleaseUrl(r.download.isEmpty() ? r.page : r.download);
+    QObject::connect(get, &QPushButton::clicked, dialog, [dialog, url] { QDesktopServices::openUrl(url); dialog->accept(); });
     QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
     layout->addWidget(buttons);
     dialog->resize(560, 480);
@@ -156,6 +173,7 @@ class Updates : public AreaController {
   QAction* m_check = nullptr;
   QAction* m_auto = nullptr;
   std::optional<updates::Release> m_pending;
+  QPointer<Toast> m_notice;  // the notice offering a release, while it shows
 };
 
 }  // namespace

@@ -17,5 +17,7 @@
  "Later": "لاحقًا",
  "What's new in %1": "ما الجديد في %1",
  "No notes were published with this release.": "لم تُنشر ملاحظات مع هذا الإصدار.",
- "GitHub's answer was not a release": "لم يكن رد GitHub إصدارًا"
+ "GitHub's answer was not a release": "لم يكن رد GitHub إصدارًا",
+ "GitHub is limiting update checks from your network right now.": "يحدّ GitHub حاليًا من عمليات التحقق من التحديثات القادمة من شبكتك.",
+ "Try again after %1.": "حاول مجددًا بعد %1."
 }

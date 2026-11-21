@@ -1,16 +1,16 @@
 ; Windows installer for OPAD (Inno Setup 6): OPAD-<version>-windows-x64-setup.exe from the single-file exes of the
-; windows-static preset (build/windows-static/single, `cmake --workflow --preset windows-single`).
+; windows-static presets (build/windows-static/single, `cmake --workflow --preset windows-single`; CI:
+; windows-static-ucrt64).
 ;
 ;   iscc /DAppVersion=0.9.0 installer\opad.iss
 ;
 ; Per user, no administrator: the program goes to %LOCALAPPDATA%\Programs\OPAD, a Start menu entry (and, if ticked, a
 ; desktop icon) and an uninstaller in Settings > Apps.
 ;
-; The user's settings are never touched. The single-file exe keeps them, with its cache, recovery snapshots and
-; templates, in the `opad-data` folder it creates beside itself on first start (app/main.cpp); this script installs
-; only the exes and the notices, so an update replaces those files and nothing else, and the uninstaller removes only
-; what it installed (opad-data stays; delete it by hand to start afresh). That is also why the install is per user: in
-; Program Files the exe could not write opad-data.
+; The user's settings are never touched. OPAD keeps them, with its cache, recovery snapshots and templates, in the
+; user's own folders (the registry, HKCU\Software\opad\OPAD, %LOCALAPPDATA%\opad and %APPDATA%\opad: app/AppData.hpp), never beside
+; the program; this script installs only the exes and the notices, so an update replaces those files and nothing else,
+; and the uninstaller removes only what it installed. The Build workflow checks both (install, update, uninstall).
 ;
 ; AppId names this program to Windows across versions: never change it, or an update installs a second copy beside the
 ; first instead of updating it.
@@ -71,4 +71,4 @@ Name: "{autodesktop}\OPAD"; Filename: "{app}\OPAD.exe"; Tasks: desktopicon
 [Run]
 Filename: "{app}\OPAD.exe"; Description: "{cm:LaunchProgram,OPAD}"; Flags: nowait postinstall skipifsilent
 
-; No [UninstallDelete] and no [InstallDelete]: opad-data (the user's settings) is never removed or replaced.
+; No [UninstallDelete] and no [InstallDelete]: nothing of the user's is ever removed or replaced.

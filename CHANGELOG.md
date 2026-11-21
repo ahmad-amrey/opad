@@ -1,10 +1,11 @@
 # Changelog
 
 What changed in each release of OPAD, newest first. The section of a version is published as that version's release
-notes (the Build workflow reads it when the tag `vX.Y.Z` is pushed), so write it before tagging: see
-[docs/releasing.md](docs/releasing.md). Entries are written for the people using OPAD, not as a commit log.
+notes when the pull request that raises the version in `CMakeLists.txt` is merged: see
+[docs/releasing.md](docs/releasing.md). Changes merged between releases go under `## [Unreleased]`. Entries are written
+for the people using OPAD, not as a commit log.
 
-## [0.9.0] - unreleased
+## [0.9.0] - 2026-11-22
 
 First public release: an open-source parametric CAD program whose design files git can diff and merge.
 
@@ -35,12 +36,17 @@ First public release: an open-source parametric CAD program whose design files g
   without installing.
 - macOS 15 or later (Apple silicon): a dmg.
 - Linux: a Debian package for Ubuntu and Debian (24.04 or newer), and an AppImage for other distributions.
+- Your settings, templates and recovery snapshots live in your own user folders, never beside the program: installing,
+  updating and uninstalling leave them as they are, and each new version keeps a copy of your settings before it
+  changes any. On Windows, for a portable copy that keeps everything beside it, put an empty file named
+  `opad.portable` next to the exe.
 
 ### Known limitations
 
 - The packages are not code-signed yet: Windows and macOS warn on the first start (see *First start* below).
 - Dynamic, static and modal simulation studies need the Chrono and Netgen engines, which the Windows and Linux
   packages leave out; joints and motion studies work there.
-- The Python module, the plugin interface and the command-line tool on macOS and Linux are not in the packages; build
+- The Python module and the plugin interface are not in the packages, and the command-line tool `opad-cli` comes
+  with the Windows downloads and the Debian package only (not the dmg or the AppImage); build
   from source for them.
 - macOS: Apple silicon (M1 or newer) with macOS 15 or later; the app bundles libraries built for macOS 15.
