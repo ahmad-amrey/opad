@@ -19,6 +19,7 @@
 #include "CompareMode.hpp"
 #include "DiskSync.hpp"
 #include "GitWatch.hpp"
+#include "I18n.hpp"
 #include "Icons.hpp"
 #include "OpProvenance.hpp"
 #include "RecoveryManager.hpp"
@@ -155,6 +156,8 @@ class Vcs : public AreaController {
     m_git = new GitWatch(services().jobs(), services().window(), services().viewport());
     connect(m_git, &GitWatch::openRequested, this, [this](const QString& file) { services().open(file); });
     connect(m_git, &GitWatch::compareRequested, this, [this] { if (m_compare) m_compare->open(); });
+    m_git->setMover([this](const QString& file, std::function<void(bool, const QString&)> done) { moveDocument(file, std::move(done)); },
+                    [this] { return services().document()->isDirty(); });
     services().addStatusChip(m_git->chip());
   }
   void ready() override {
@@ -204,6 +207,14 @@ class Vcs : public AreaController {
   void documentChanged(bool replaced) override { m_compare->documentChanged(replaced); }
 
  private:
+  // Set up repository's "Move into its own folder" (GitWatch::askOwnFolder): AppDocument::moveTo; its note (linked files left
+  // behind, an old file that stayed) as a toast.
+  void moveDocument(const QString& file, std::function<void(bool, const QString&)> done) {
+    services().document()->moveTo(services().jobs(), file, [this, done](bool ok, const QString& text) {
+      if (ok && !text.isEmpty()) services().toast(text, {}, {}, 10000);
+      done(ok, ok ? QString() : i18n::t(text));
+    });
+  }
   GitWatch* m_git = nullptr;
   CompareMode* m_compare = nullptr;
   VersionControl* m_version = nullptr;

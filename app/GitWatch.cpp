@@ -45,6 +45,7 @@
 #include "Banner.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
+#include "OwnFolder.hpp"
 #include "Theme.hpp"
 
 namespace {
@@ -409,7 +410,63 @@ Job* GitWatch::job(const QString& title, std::function<void(const git::Context&,
 void GitWatch::setUp() {
   using S = git::Repo::State;
   if (m_file.isEmpty() || (m_repo.state != S::NotRepo && m_repo.state != S::Ready)) return;
-  const bool fresh = m_repo.state == S::NotRepo;
+  if (m_repo.state == S::NotRepo && m_mover) {  // a new repository takes the whole folder: the document's own, or ask
+    const ownfolder::Plan plan = ownfolder::plan(m_file);
+    if (plan.needed) return askOwnFolder(m_file, plan.others, plan.file);
+  }
+  setUpDialog();
+}
+
+// "Create the repository in its own folder?": a repository in a shared folder would see every other file in it (and a later
+// git add . would take them in). Move: the document goes into a new folder beside it (the mover saves it there, so linked files'
+// paths follow it; the other files stay as they are), then the Set up repository dialog for that folder. Use this folder:
+// the dialog for the folder as it is. Cancel: nothing.
+void GitWatch::askOwnFolder(const QString& file, const QStringList& others, const QString& target) {
+  const QFileInfo doc(file);
+  // Names kept left to right inside a right-to-left sentence (Arabic). LRE .. PDF,
+  // as property values are.
+  auto ltr = [](const QString& text) { return QChar(0x202A) + text + QChar(0x202C); };
+  auto* box = new QMessageBox(QMessageBox::Question, tr("Set up version control"), tr("Create the repository in its own folder?"), QMessageBox::NoButton, m_window);
+  box->setObjectName("gitOwnFolder");
+  box->setAttribute(Qt::WA_DeleteOnClose);
+  QStringList named;
+  for (const QString& name : others.mid(0, 3)) named << name;
+  const QString list = others.size() > 3 ? tr("%1 and %n more", nullptr, int(others.size() - 3)).arg(named.join(QStringLiteral(", "))) : named.join(QStringLiteral(", "));
+  QString text = tr("%1 shares its folder with other files (%2), and a repository takes in the whole folder. OPAD can move %1 into a new "
+                    "folder “%3” next to it and start version control there; the other files stay where they are.")
+                     .arg(ltr(doc.fileName()), ltr(list), ltr(QFileInfo(QFileInfo(target).absolutePath()).fileName()));
+  if (m_unsaved && m_unsaved()) text += QStringLiteral("\n\n") + tr("Its unsaved changes are saved with it.");
+  box->setInformativeText(text);
+  QPushButton* move = box->addButton(tr("Move into its own folder (recommended)"), QMessageBox::AcceptRole);
+  move->setObjectName("gitOwnFolderMove");
+  QPushButton* here = box->addButton(tr("Use this folder"), QMessageBox::ActionRole);
+  here->setObjectName("gitOwnFolderHere");
+  QPushButton* cancel = box->addButton(QMessageBox::Cancel);
+  cancel->setObjectName("gitOwnFolderCancel");
+  box->setDefaultButton(move);
+  box->setEscapeButton(cancel);
+  connect(box, &QMessageBox::buttonClicked, this, [this, box, move, here, file, target](QAbstractButton* clicked) {
+    if (clicked == here) return setUpDialog();
+    if (clicked != move || QFileInfo(m_file) != QFileInfo(file)) return;  // Cancel, or another document by now
+    ++m_busy;
+    m_mover(target, [self = QPointer<GitWatch>(this), target](bool ok, const QString& error) {
+      if (!self) return;
+      --self->m_busy;
+      if (!ok) return self->failed(tr("Could not move the document"), error);
+      self->status(tr("Moved to %1").arg(QDir::toNativeSeparators(target)));
+      // The document's path changed (setFile from the window's pathChanged): the dialog asks about the new folder once its
+      // state is read, which says it is not a repository yet.
+      if (QFileInfo(self->m_file) != QFileInfo(target)) self->setFile(target);
+      self->setUpDialog();
+    });
+  });
+  box->open();
+}
+
+void GitWatch::setUpDialog() {
+  using S = git::Repo::State;
+  if (m_file.isEmpty()) return;
+  const bool fresh = m_repo.state != S::Ready;
   auto* d = new QDialog(m_window);
   d->setObjectName("gitSetup");
   d->setAttribute(Qt::WA_DeleteOnClose);
@@ -417,6 +474,7 @@ void GitWatch::setUp() {
   auto* col = new QVBoxLayout(d);
   auto folder = std::make_shared<QString>(fresh ? QFileInfo(m_file).absolutePath() : m_repo.top);
   auto* where = new QLabel(d);
+  where->setObjectName("gitSetupWhere");
   where->setWordWrap(true);
   const QString branch = QSettings().value("git/initialBranch", QStringLiteral("main")).toString().trimmed();  // Preferences > Version control
   auto describe = [where, folder, fresh, branch] {

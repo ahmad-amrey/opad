@@ -39,7 +39,8 @@
 namespace {
 // Benches run in a hidden main window while the user works on the same desktop: their other top-level windows (tool
 // panels, menus, message boxes) are kept off the screen, and a message box is logged and dismissed instead of waiting
-// for a click that never comes.
+// for a click that never comes; except the boxes named in OPAD_BENCH_KEEP_BOX (object names, comma separated), which the
+// bench answers itself.
 class BenchQuiet : public QObject {
  public:
   BenchQuiet(QWidget* main, QObject* parent) : QObject(parent), m_main(main) {}
@@ -48,7 +49,7 @@ class BenchQuiet : public QObject {
     if (!w || w == m_main || !w->isWindow()) return false;
     if (e->type() == QEvent::Polish) w->setAttribute(Qt::WA_DontShowOnScreen);
     if (e->type() == QEvent::Show)
-      if (auto* box = qobject_cast<QMessageBox*>(w)) {
+      if (auto* box = qobject_cast<QMessageBox*>(w); box && !m_keep.contains(box->objectName())) {
         trace::log(QStringLiteral("bench: message box dismissed: %1: %2").arg(box->windowTitle(), box->text()));
         QTimer::singleShot(0, box, [box] { box->done(QMessageBox::Cancel); });
       }
@@ -56,6 +57,7 @@ class BenchQuiet : public QObject {
   }
  private:
   QWidget* m_main;
+  const QStringList m_keep = qEnvironmentVariable("OPAD_BENCH_KEEP_BOX").split(',', Qt::SkipEmptyParts);
 };
 }  // namespace
 

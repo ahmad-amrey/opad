@@ -82,6 +82,12 @@ class AppDocument : public QObject {
   // Before saving at `destination`: linked files' saved paths follow it as one undo step (opad::asset_path_edits), unsaved
   // ones are rewritten (opad::rebase_asset_paths). True when it appended that step.
   bool followAssetPaths(const QString& destination);
+  // Moves the document's file to `file` in a folder made for it (Set up repository's Move, an agent's git_init with
+  // own_folder): saved there by saveAsync (linked files' paths follow it, unsaved changes go along), then its <name>.opad.*
+  // sidecars move along and the old file goes; documentMoved. done(ok, text): the error, or on success a note for the user
+  // (linked files that stayed behind, an old file that could not be removed), else empty. Refused: read-only, viewer mode, no
+  // file yet, the folder there already. Nothing else is touched; the trusted folders are left alone.
+  void moveTo(JobRunner* jobs, const QString& file, std::function<void(bool ok, const QString& text)> done);
   opad::json run(const std::string& command, opad::json args, const QString& label = {});  // label: the undo step's, else by command; a lock refusal comes back as lockedMessage
   // A change refused by a lock (UI-37) in the shown language: the node, what holds its lock and the change refused.
   static QString lockedMessage(const opad::LockedError& e);
@@ -254,6 +260,7 @@ class AppDocument : public QObject {
   void changed();
   void pathChanged();
   void saved();  // successful explicit Save / Save As, not an open or title change
+  void documentMoved(const QString& from, const QString& to);  // moveTo: the recent files entry follows
   // Save found the file changed on disk and wrote nothing. `retry`: the window's Save (or Save as), run again once the file
   // turns out unchanged; a save of another caller (saveAsync: an agent, Commit) failed for good.
   void saveBlocked(bool retry);

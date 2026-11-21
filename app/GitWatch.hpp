@@ -51,7 +51,14 @@ class GitWatch : public QObject {
   // The chip's actions by object name: git.compare, git.setup, git.driver, git.identity, git.trust, git.clone, git.locate,
   // git.refresh.
   QMenu* menu(QWidget* parent);
-  void setUp();        // the Set up repository dialog
+  // Set up repository: on a document that shares its folder with other files, first the question whether it moves into a
+  // folder of its own (ownfolder::plan, the mover set below); then the Set up repository dialog.
+  void setUp();
+  // Moves the open document to `file` (in a new folder beside it): `done(ok, error)` once it is saved there and the old file
+  // is gone (VcsArea: AppDocument::saveAsync, so linked files' paths follow it). `unsaved`: the document has unsaved changes
+  // (the question says they are saved with it). Without a mover Set up repository never offers the move.
+  using Mover = std::function<void(const QString& file, std::function<void(bool ok, const QString& error)> done)>;
+  void setMover(Mover mover, std::function<bool()> unsaved = {}) { m_mover = std::move(mover); m_unsaved = std::move(unsaved); }
   void setUpDriver();  // this clone's merge and diff driver (and LFS hooks when the attributes use LFS)
   void cloneRepository();  // the Clone repository dialog: an address and a folder, then clone, set up, openRequested
   void locateGit();    // a file dialog, then useProgram
@@ -75,6 +82,8 @@ class GitWatch : public QObject {
   void watch();
   void render();
   void runSetUp(const QString& folder, const git::SetupOptions& o);
+  void setUpDialog();  // the Set up repository dialog itself
+  void askOwnFolder(const QString& file, const QStringList& others, const QString& target);
   void runClone(const QString& url, const QString& folder);
   void chooseDocument(const QString& folder, const QStringList& documents);
   void updateBanner();
@@ -102,4 +111,6 @@ class GitWatch : public QObject {
   QSet<QString> m_later;     // tops whose Set up merging banner was closed this session
   QString m_lastFailure;     // the last error shown (benches)
   std::function<void(QMenu*)> m_extend;
+  Mover m_mover;
+  std::function<bool()> m_unsaved;
 };

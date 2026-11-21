@@ -727,5 +727,19 @@
  "%1 (shown as B)": "%1 (معروض بوصفه B)",
  "%1: click to show it as B": "%1: انقر لعرضه بوصفه B",
  "gone": "زال",
- "Compare files…": "مقارنة الملفات…"
+ "Compare files…": "مقارنة الملفات…",
+ "Create the repository in its own folder?": "أتريد إنشاء المستودع في مجلد خاص به؟",
+ "%1 and %n more": "%1 و%n غيرها",
+ "%1 shares its folder with other files (%2), and a repository takes in the whole folder. OPAD can move %1 into a new folder “%3” next to it and start version control there; the other files stay where they are.": "يشارك %1 مجلده ملفاتٍ أخرى (%2)، والمستودع يضم المجلد كله. يستطيع OPAD نقل %1 إلى مجلد جديد «%3» بجانبه وبدء التحكم في الإصدارات هناك؛ وتبقى الملفات الأخرى في مكانها.",
+ "Its unsaved changes are saved with it.": "تُحفظ تغييراته غير المحفوظة معه.",
+ "Move into its own folder (recommended)": "نقله إلى مجلد خاص به (موصى به)",
+ "Use this folder": "استخدام هذا المجلد",
+ "Could not move the document": "تعذّر نقل المستند",
+ "Moved to %1": "نُقل إلى %1",
+ "This document is open read-only: save a copy to put it under version control.": "هذا المستند مفتوح للقراءة فقط: احفظ نسخة منه لوضعها تحت التحكم في الإصدارات.",
+ "Could not make the folder %1.": "تعذّر إنشاء المجلد %1.",
+ "The document changed while it was being moved: it stays at %1, and a copy was saved at %2.": "تغيّر المستند أثناء نقله: يبقى في %1، وحُفظت نسخة منه في %2.",
+ "Save the document first.": "احفظ المستند أولًا.",
+ "The old %1 could not be removed.": "تعذّرت إزالة %1 القديم.",
+ "Its linked files stayed where they were; OPAD asks whether to trust those outside the new folder when it opens it next.": "بقيت ملفاته المرتبطة في أماكنها؛ وسيسألك OPAD عند فتحه في المرة القادمة هل تثق بما يقع منها خارج المجلد الجديد."
 }

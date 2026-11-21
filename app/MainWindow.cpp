@@ -135,6 +135,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     else updateViewerCard();
   });
   connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); updateViewerCard(); });
+  connect(m_doc, &AppDocument::documentMoved, this, [this](const QString& from, const QString& to) {
+    removeRecent(from);
+    addRecent(to);
+  });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_doc, &AppDocument::saved, this, [this] {
     const QFileInfo file(m_doc->path());

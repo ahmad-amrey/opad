@@ -1,8 +1,11 @@
 #include "AppDocument.hpp"
 #include "Jobs.hpp"
+#include "OwnFolder.hpp"
+#include "opad/assets.hpp"
 #include "opad/geometry.hpp"
 #include <QPointer>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QTemporaryFile>
@@ -86,6 +89,36 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
     }
     emit undoChanged();done(result->written,result->error);
   });timer->start();return job;
+}
+
+void AppDocument::moveTo(JobRunner* jobs, const QString& file, std::function<void(bool, const QString&)> done) {
+  if (!hasDocument || browse || doc.path.empty()) return done(false, tr("Save the document first."));
+  if (readOnly) return done(false, tr("This document is open read-only: save a copy to put it under version control."));
+  const QString old = path(), folder = QFileInfo(file).absolutePath();
+  if (QFileInfo::exists(folder) || !QDir().mkpath(folder)) return done(false, tr("Could not make the folder %1.").arg(QDir::toNativeSeparators(folder)));
+  const bool linked = opad::has_assets(doc);
+  QPointer<AppDocument> self(this);
+  try {
+    saveAsync(jobs, file, false, [self, old, folder, file, linked, done](bool saved, const QString& why) {
+      if (!self) return;
+      if (!saved) {
+        QDir().rmdir(folder);  // only when empty: the save left nothing there
+        return done(false, why);
+      }
+      if (QFileInfo(self->path()) != QFileInfo(file))  // changed meanwhile: it stays the old file's
+        return done(false, tr("The document changed while it was being moved: it stays at %1, and a copy was saved at %2.")
+                               .arg(QDir::toNativeSeparators(old), QDir::toNativeSeparators(file)));
+      ownfolder::moveSidecars(old, file);
+      QStringList notes;
+      if (!QFile::remove(old)) notes << tr("The old %1 could not be removed.").arg(QDir::toNativeSeparators(old));
+      if (linked) notes << tr("Its linked files stayed where they were; OPAD asks whether to trust those outside the new folder when it opens it next.");
+      emit self->documentMoved(old, file);
+      done(true, notes.join(' '));
+    });
+  } catch (const std::exception& e) {
+    QDir().rmdir(folder);
+    done(false, QString::fromUtf8(e.what()));
+  }
 }
 
 bool AppDocument::captureSnapshot(JobRunner* jobs, SnapshotCallback done, bool background) {
