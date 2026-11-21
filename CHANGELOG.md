@@ -5,7 +5,7 @@ notes when the pull request that raises the version in `CMakeLists.txt` is merge
 [docs/releasing.md](docs/releasing.md). Changes merged between releases go under `## [Unreleased]`. Entries are written
 for the people using OPAD, not as a commit log.
 
-## [0.9.0] - 2026-11-22
+## [0.9.0] - 2026-11-21
 
 First public release: an open-source parametric CAD program whose design files git can diff and merge.
 

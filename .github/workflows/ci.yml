@@ -253,7 +253,8 @@ jobs:
           path: build/windows-static-ucrt64/occt/install
           key: ${{ steps.deps.outputs.cache-primary-key }}
       - name: Build
-        run: set -o pipefail; cmake --build --preset windows-static-ucrt64 2>&1 | tee build.log
+        # -k 0: every compile error of the run at once, not just the first.
+        run: set -o pipefail; cmake --build --preset windows-static-ucrt64 -- -k 0 2>&1 | tee build.log
       - name: Test
         id: test
         run: ctest --preset windows-static-ucrt64
@@ -497,7 +498,8 @@ jobs:
           bad=0
           while IFS= read -r f; do
             file "$f" | grep -q Mach-O || continue
-            outside=$(otool -L "$f" | tail -n +2 | awk '{print $1}' | grep -v -E '^(@rpath|@executable_path|@loader_path)/|^/usr/lib/|^/System/' || true)
+            # The libraries it loads (LC_LOAD_DYLIB and kin), not its own install name (LC_ID_DYLIB, unused at run time).
+            outside=$(otool -l "$f" | awk '/cmd LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD|LOAD_UPWARD)_DYLIB$/{getline; getline; print $2}'               | grep -v -E '^(@rpath|@executable_path|@loader_path)/|^/usr/lib/|^/System/' || true)
             if [ -n "$outside" ]; then echo "::error::$f links outside the dmg: $outside"; bad=1; fi
             rpaths=$(otool -l "$f" | awk '/cmd LC_RPATH/{getline; getline; print $2}' | grep -v '^@' || true)
             if [ -n "$rpaths" ]; then echo "::warning::$f searches outside the dmg: $rpaths"; fi
