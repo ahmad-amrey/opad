@@ -253,6 +253,7 @@ void VersionControl::makePanel() {
   m_panel = new VersionPanel(this, window);
   m_tool = new ToolPanel("version", "git", &Tokens::sel, tr("Version control"), m_panel, 560, window);
   m_tool->setEscapeHandler([this] { m_tool->hide(); });
+  m_tool->setPersistent(true);  // a tool never closes it
   m_services.addPanel(m_tool);
   connect(m_panel, &VersionPanel::closeRequested, m_tool, &QWidget::hide);
   connect(m_tool, &ToolPanel::visibilityChanged, this, [this](bool on) {

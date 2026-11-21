@@ -55,5 +55,10 @@
   "pick the point to align it to": "اختر النقطة المراد المحاذاة إليها",
   "a point has no direction to turn by: align a line or a plane, or let it move": "ليس للنقطة اتجاه يُدار وفقه: حاذِ خطًا أو مستوى، أو اسمح لها بالانتقال",
   "pick the bodies or components to align": "اختر الأجسام أو المكونات المراد محاذاتها",
-  "pick the sketch to align": "اختر الرسم التخطيطي المراد محاذاته"
+  "pick the sketch to align": "اختر الرسم التخطيطي المراد محاذاته",
+  "%1 keeps it open": "%1 يبقيها مفتوحة",
+  "With %1 held (%2 or %1+click) the tool stays open for another use; with nothing to apply, %2 repeats the last command": "مع الضغط على %1 (%2 أو النقر مع %1) تبقى الأداة مفتوحة لاستخدام آخر؛ وحين لا يوجد ما يُطبَّق يكرر %2 آخر أمر",
+  "Saves and closes; with %1 held (%1+click, %2) another one starts at once": "يحفظ ويغلق؛ ومع الضغط على %1 (النقر مع %1، %2) يبدأ آخر فورًا",
+  "Select a planar face (with %1 held, another after it)": "حدد وجهًا مستويًا (مع الضغط على %1، وجهًا آخر بعده)",
+  "%1 held: another after it": "مع الضغط على %1: آخر بعده"
 }

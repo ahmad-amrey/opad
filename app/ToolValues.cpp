@@ -14,7 +14,8 @@ ToolValues::ToolValues(QWidget* view, QObject* parent) : QObject(parent), m_view
   connect(m_input, &DynamicInput::optionEdited, this, [this](const QString& key, const QString& value) {
     if (edited) edited(key, value);
   });
-  connect(m_input, &DynamicInput::committed, this, [this] {
+  connect(m_input, &DynamicInput::committed, this, [this](bool withShift) {
+    shift = withShift;
     m_input->used();  // the tool has the typed values already
     m_input->hide();
     if (commit) commit();

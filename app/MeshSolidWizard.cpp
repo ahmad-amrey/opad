@@ -6,7 +6,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialogButtonBox>
+
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QLabel>
@@ -23,6 +23,7 @@
 #include "DesignController.hpp"
 #include "I18n.hpp"
 #include "Jobs.hpp"
+#include "PanelFooter.hpp"
 #include "MainWindow.hpp"
 #include "Panels.hpp"
 #include "Theme.hpp"
@@ -150,10 +151,11 @@ void MainWindow::meshToSolid() {
   report->setMinimumHeight(report->fontMetrics().lineSpacing() * 7);
   report->setAlignment(Qt::AlignLeft | Qt::AlignTop);
   layout->addWidget(report, 1);
-  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
-  buttons->button(QDialogButtonBox::Ok)->setText(tr("Create solid"));
-  buttons->button(QDialogButtonBox::Ok)->setObjectName("primary");
-  layout->addWidget(buttons);
+  // Cancel (Esc) and Create solid (Enter): it commits and closes; Shift held keeps it for the next mesh (a tool used once).
+  auto* footer = new PanelFooter(dialog);
+  footer->setPrimary(tr("Create solid"));
+  footer->setShiftKeeps(true);
+  layout->addWidget(footer);
 
   struct State {
     int serial = 0;
@@ -167,7 +169,7 @@ void MainWindow::meshToSolid() {
   auto state = std::make_shared<State>();
   QPointer<QWidget> guard(dialog);
   auto ready = [=, this] {
-    buttons->button(QDialogButtonBox::Ok)->setEnabled(!state->applying && state->result && state->resultSerial == state->serial &&
+    footer->primary()->setEnabled(!state->applying && state->result && state->resultSerial == state->serial &&
                                                      state->ops == m_doc->doc.ops.size() && state->generation == m_doc->generation);
   };
   auto compute = [=, this] {
@@ -240,26 +242,29 @@ void MainWindow::meshToSolid() {
   connect(m_doc, &AppDocument::changed, dialog, [=] {
     if (!state->applying) changed();
   });
-  connect(buttons, &QDialogButtonBox::accepted, dialog, [=, this] {
+  connect(footer, &PanelFooter::accepted, dialog, [=, this] {
     ready();
-    if (!buttons->button(QDialogButtonBox::Ok)->isEnabled()) return;
+    if (!footer->primary()->isEnabled()) return;
+    const bool keep = footer->shiftAccepted();
     state->applying = true;
     ready();
     auto plan = std::make_shared<opad::design::Plan>(std::move(state->result->plan));
     state->result.reset();
     m_viewport->clearPreviewBodies();
-    m_design->commitPlanned(plan, tr("Mesh to solid"), [=](bool applied, const QString& failure) {
+    m_design->commitPlanned(plan, tr("Mesh to solid"), [=, this](bool applied, const QString& failure) {
       if (!guard || state->closed) return;
       state->applying = false;
       if (applied) {
         panel->hide();
+        // Shift held: the wizard again for the next mesh (its list read afresh; none left: it says so).
+        if (keep) QTimer::singleShot(0, this, [this] { guarded([this] { meshToSolid(); }); });
         return;
       }
       report->setText(QStringLiteral("<span style='color:%1'>%2</span>").arg(theme::css(theme::current().red), failure.toHtmlEscaped()));
       changed();
     });
   });
-  connect(buttons, &QDialogButtonBox::rejected, panel, &QWidget::hide);
+  connect(footer, &PanelFooter::cancelled, panel, &QWidget::hide);
   connect(panel, &ToolPanel::visibilityChanged, this, [=, this](bool on) {
     if (on || state->closed) return;
     state->closed = true;
@@ -268,6 +273,7 @@ void MainWindow::meshToSolid() {
     if (state->job) state->job->cancel();
     m_viewport->clearPreviewBodies();
     m_prompt->hide();
+    panel->setObjectName(QString());  // on its way out: Mesh to solid again opens a new one
     panel->deleteLater();
   });
   connect(m_doc, &AppDocument::aboutToReplace, panel, [=] { panel->hide(); });

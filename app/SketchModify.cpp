@@ -11,6 +11,7 @@
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/design/sketch_edit.hpp"
 #include "I18n.hpp"
+#include "Units.hpp"
 #include <cmath>
 #include <set>
 
@@ -35,7 +36,7 @@ void SketchEditor::benchHandles() {
         QApplication::sendEvent(m_dimensionHandle,&release);
         require(option("distance")!=before,"drag did not update distance");break;
       }
-      case 2:require(bool(m_toolPreview),"drag preview missing");m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".png");m_dimensionHandle->grab().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".field.png");applyTool();require(m_sk.entities.size()>4,"offset commit");sketchPress(40,15,Qt::NoModifier);require(!m_sel.empty(),"select another edge after offset");break;
+      case 2:require(bool(m_toolPreview),"drag preview missing");m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".png");m_dimensionHandle->grab().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".field.png");applyTool(true);require(m_sk.entities.size()>4 && m_tool=="offset","offset commit, the tool kept by Shift");sketchPress(40,15,Qt::NoModifier);require(!m_sel.empty(),"select another edge after offset");break;
       case 3:{require(bool(m_toolPreview),"second edge preview missing");
         for(int i=0;i<12;++i){sketchPress(20,0,Qt::NoModifier);sketchPress(40,15,Qt::NoModifier);previewTool();}
         undo();require(m_tool=="select" && m_sk.entities.size()==4,"active offset undo closes tool and restores original");
@@ -47,7 +48,29 @@ void SketchEditor::benchHandles() {
       }
       case 5:{require(bool(m_toolPreview),"numeric preview");applyTool();setTool("offset");sketchPress(20,0,Qt::NoModifier);
         auto* field=m_dimensionHandle->findChild<QLineEdit*>();field->setFocus();QKeyEvent undoKey(QEvent::KeyPress,Qt::Key_Z,Qt::ControlModifier);QApplication::sendEvent(field,&undoKey);break;}
-      case 6:require(m_tool=="select" && m_sk.entities.size()==4,"Ctrl+Z in numeric field must undo geometry and close tool");require(!m_dimensionHandle->isVisible(),"stale handle after undo");break;
+      case 6:require(m_tool=="select" && m_sk.entities.size()==4,"Ctrl+Z in numeric field must undo geometry and close tool");require(!m_dimensionHandle->isVisible(),"stale handle after undo");
+        // The offset relationship (the tool's default): 3 mm, sharp corners, then its label double-clicked and 1 typed.
+        setTool("offset");m_options["distance"]="3 mm";m_options["corners"]="sharp";sketchPress(20,0,Qt::NoModifier);break;
+      case 7:require(bool(m_toolPreview),"offset relationship preview");applyTool();require(m_tool=="select" && !m_dimensionHandle->isVisible(),"the offset tool closes after Apply");break;
+      case 8:{
+        const SkConstraint* rel=nullptr;for(const auto& c:m_sk.constraints)if(c.type==SkConstraint::Type::Offset)rel=&c;
+        require(rel && rel->sources==4 && rel->refs.size()==8 && std::fabs(std::fabs(rel->value)-3)<1e-9,"the offset is held by an offset relationship of 3 mm");
+        const int id=rel->id;const std::vector<int> made(rel->refs.begin()+4,rel->refs.end());
+        auto width=[&](bool offset){double lo=1e300,hi=-1e300;const SkConstraint* c=m_sk.constraint(id);
+          for(size_t i=offset?4:0;i<(offset?c->refs.size():4);++i)for(int p:m_sk.entity(c->refs[i])->p){lo=std::min(lo,m_sk.point(p)->x);hi=std::max(hi,m_sk.point(p)->x);}return hi-lo;};
+        require(std::fabs(std::fabs(width(true)-width(false))/2-3)<1e-6,"its curves lie 3 mm off the rectangle");
+        double lu=0,lv=0;labelPosition(*rel,lu,lv);
+        require(hitTest(lu,lv).kind==Hit::Dimension && hitTest(lu,lv).id==id,"its distance label is hit where it is drawn");
+        sketchDoubleClick(lu,lv);
+        require(m_dimEditing==id && m_dimEdit && m_dimEdit->isVisible() && m_dimEdit->text()==units::editable(units::Kind::Length,3),"a double-click on the label opens its distance (3 mm) for typing");
+        m_dimEdit->setText("1");m_options["expression"]="1";commitDimensionEdit();
+        const SkConstraint* now=m_sk.constraint(id);
+        require(now && std::fabs(std::fabs(now->value)-1)<1e-9 && std::vector<int>(now->refs.begin()+4,now->refs.end())==made,"typing 1 keeps the relationship and its curves");
+        require(std::fabs(std::fabs(width(true)-width(false))/2-1)<1e-6,"the offset is made again 1 mm off the rectangle");
+        require(dimensionText(*now)==units::compact(units::Kind::Length,1),"its label reads 1 mm");
+        trace::log("bench: sketch offset relationship: made by the tool, double-click edit 3 -> 1 mm PASS");
+        break;
+      }
       default:timer->stop();trace::log("bench: chain selection, automatic offset preview, drag handle, apply and undo PASS");QCoreApplication::exit(0);
     }
   }catch(const std::exception& e){timer->stop();trace::log(QString("bench: handles FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();

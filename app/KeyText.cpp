@@ -146,7 +146,7 @@ QString isolate(const QString& text) { return text.isEmpty() ? text : QChar(0x20
 QString text(const QKeySequence& key, Style style) { return isolate(plain(key, style)); }
 QString text(const QString& id, Style style) { return text(binding(id), style); }
 
-QStringList fixedNames() { return {"esc", "enter", "ctrlEnter", "tab", "shiftTab", "shift", "alt", "ctrl", "del", "shiftDel", "backspace", "space", "f2", "shiftLeft", "shiftRight", "shiftEnd", "undo", "redo", "copy",
+QStringList fixedNames() { return {"esc", "enter", "ctrlEnter", "shiftEnter", "tab", "shiftTab", "shift", "alt", "ctrl", "del", "shiftDel", "backspace", "space", "f2", "shiftLeft", "shiftRight", "shiftEnd", "undo", "redo", "copy",
           "flyForward", "flyBack", "flyLeft", "flyRight", "flyUp", "flyDown"}; }
 
 QStringList fixedCaps(const QString& name, Style style) {
@@ -154,6 +154,7 @@ QStringList fixedCaps(const QString& name, Style style) {
       {"esc", QKeyCombination(Qt::Key_Escape)},
       {"enter", QKeyCombination(Qt::Key_Return)},
       {"ctrlEnter", QKeyCombination(Qt::ControlModifier, Qt::Key_Return)},
+      {"shiftEnter", QKeyCombination(Qt::ShiftModifier, Qt::Key_Return)},  // apply and keep a one-shot tool (else Repeat)
       {"tab", QKeyCombination(Qt::Key_Tab)},
       {"shiftTab", QKeyCombination(Qt::ShiftModifier, Qt::Key_Tab)},
       {"shift", QKeyCombination(Qt::Key_Shift)},

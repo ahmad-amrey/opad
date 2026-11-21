@@ -153,8 +153,13 @@ padding the spine range beyond 2%. State: 33 of 1036 solids invalid in the 196-f
 Properties, Annotations and Section are `ToolPanel`s (`app/Panels.hpp`): frameless tool windows owned by the main
 window, anchored to the viewport's top-right corner (right 8, top 186; `positionOverlays` re-anchors them), dragged
 by the 32 px header, resized by the corner grip (width 280-480), place/size/pin persisted under `panels/<id>`;
-double-click on the header restores the default place. `MainWindow::openPanel` hides the other unpinned panels;
-Esc closes an unpinned panel before it clears the measurement. Properties opens only from the context menu
+double-click on the header restores the default place. Two kinds: a tool's panel and the document's (`setPersistent`:
+Properties, Annotations, Section, Version, Parameters, Layers); `MainWindow::openPanel` hides the unpinned others of its
+own kind only, a shown one of the other kind is beside it (the new one to its left, `setDefaultRight`), a pinned one of
+its kind above it. Esc closes an unpinned panel (a tool's first) before it clears the measurement. A footer whose
+primary says Enter (`PanelFooter::entersPrimary`: Canvas OK, KiCad Sync) is pressed by Enter / Shift+Enter in its panel
+(`ToolPanel::enterFooter`) and in the view (`MainWindowView.cpp` `panelEnter`); while a tool's panel shows, a plain
+Enter in the view is never Repeat. Properties opens only from the context menu
 (`inspect.properties`, Ctrl+P) for the current selection (`m_selRefs`); a new selection closes it
 (`selectionMoved`), unless pinned, in which case it follows the selection. Nothing is inspected while it is closed.
 
@@ -229,6 +234,24 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   may be an arc or open spline (`align_ends`: its chord; a DXF polyline's straight-looking segment is often a flat bulge
   arc). Align and Rigid pick by the unsnapped press (`curveAtPress`): the snap near a line's end lands on its end point.
   `ctest -R sketch-rigid`, bench `sketch-align` (OPAD_BENCH_SKETCH_ALIGN).
+- Offset relationship (`SkConstraint::Type::Offset`, a dimension: refs = the `sources` curves then what the offset made,
+  `value` signed as the kernel takes it, `built` = the distance the curves were made at, `sharp`): the Offset tool's
+  default (option `relation`, "none" = plain copy; the agent's `sketch_tool` offset too, `inputs.relation`). The solver
+  holds it as Rigid (the chain is not reshaped either); `evaluate_dimensions` ends in `refresh_offsets`, which remakes the
+  offset when value != built (the side read off the curves, so a mirrored copy keeps its side; same curves = points moved
+  in place, ids kept; else replaced). Its label follows the curves (`offsetLeader`, `pos` unused), double-click edits it
+  (the box shows the distance; a plain number keeps the side). Saved in `more_constraints`. `ctest -R sketch-offset`.
+- Measure (`sketch.measure`, D in a sketch; Distance keeps D outside it, the scopes never overlap) adds nothing; Dimension is
+  Shift+D (migration `shortcuts/measureDefaultsVersion`). `SketchMeasure.cpp`: picks in `m_picked` as Dimension's (Esc and
+  Backspace step back alike), `measureResult()` drawn in `updateTransient` and written in the steps. A constraint's badge
+  or a dimension's value hovered (`Hit::Dimension`): `hoverTip` puts `constraintTip` in the status bar's hover text at once
+  and a QToolTip after 500 ms. Bench `sketch-measure`.
+- Least movement (`SolveOptions::moves`, solver.cpp `movement_stages`): a constraint added (`applyConstraint`: last pick
+  first, then the other picks) or a dimension changed (`commitDimensionEdit`) solves with only that geometry movable (the
+  held variables' column scale 0, so they keep their values exactly), then with the curves sharing its points, then with
+  what the constraints on those hold; the whole sketch (the plain least-squares step, which spread a new constraint over
+  every free point) only when no stage satisfies everything. `SketchEditor::m_moves` feeds `solveOptions()` for that one
+  change. `ctest -R sketch-movement`.
 - Bench without input driving: `opad-cli new x.opad`, then `OPAD_BENCH_DESIGN=<png> [OPAD_BENCH_SKETCHSHOT=<png>]
   opad.exe x.opad --bench-select` draws a dimensioned rectangle + circle through the tool code, extrudes it through
   the panel's plan/commit path, edits the extrude rolled back, fillets, saves, quits; trace lines `bench: design:` /
@@ -248,6 +271,24 @@ a sphere): candidates are chosen by the facets' middles too (`centre_error`); ve
 sides (chord sagitta limited by `mesh_sagitta`); arcs need their centre on the ends' bisector or the sketch's wire does
 not close. `OPAD_MESHSOLID_DEBUG=1` traces why a profile or attempt was refused. `ctest -R mesh_solid`; bench
 `mesh-to-solid` (OPAD_BENCH_MESHSOLID).
+
+## One-shot tools (close after use, Shift keeps them)
+
+A tool normally used once ends after Apply / OK / Enter and closes its panel; Shift held (Shift+Enter, Shift+click on the
+button) keeps it for another use. Sketch: the table `sketchkeys::afterApply` (app/SketchKeys.hpp, a new Apply tool
+declares itself there); `applyTool(keep)` sets `m_applyCloses`, `applied()` (every Apply that changed the sketch) goes
+back to Select; a failed Apply keeps the tool. The sketch panel's page the user opened (Constraints...) stays
+(`SketchPanel::userPage`). Features: `runPreview(true, keep)` starts the same kind again after the commit (new features
+only, not edits or Align sketch); Shift comes from `PanelFooter::shiftAccepted` (OK clicked), `ToolValues::shift` /
+`DimensionHandle::accepted(bool)` (`DynamicInput::committed(bool)`), the view's eventFilter and a `KeyHook` on the panel.
+Shift+Enter is also `edit.repeat`: the tool takes it only while it has an Apply ready (`keepsOnShiftEnter`, a feature
+open), Repeat everywhere else. `PanelFooter::setShiftKeeps` shows the hint. Elsewhere through the footer's
+`shiftAccepted` / `DrawingPlacer::keepOpen`: Mesh to solid and Drawing to sketch open again (their panels lose their
+objectName on the way out, so the command makes a new one), drawing placement and Canvas insert place the same file again
+on the same plane, KiCad Sync shows its preview again; Note / Hand drawing (`AnnotationEditor::anotherRequested`;
+Shift+Enter in its text is a new line), Section's Pick face (a Shift-click keeps picking) and the Drawings view tools
+(`SheetViewTool::commit` reads the keyboard's Shift) start again. Guided measuring tools, sheet annotations, Explode's
+Save as view and Canvas editing stay open anyway. Benches sketch-oneshot, feature-oneshot, panels-stay.
 
 ## Guided tools (`app/GuidedTool.hpp`, flow in `MainWindow` "guided tools")
 

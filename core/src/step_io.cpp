@@ -1117,17 +1117,30 @@ Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, con
 
 ExportResult export_selection(const Document& doc, const Scene& scene, const std::filesystem::path& out,
                               const ExportOptions& opt) {
-  for(const auto& id:opt.select) if(scene.sketch(id)) throw Error("Sketches export as DXF, SVG or DWG; select a solid or mesh for this format");
-  for(const auto& id:select_bodies(scene,opt.select)) if(scene.node(id)->representation=="drawing2d") throw Error("2D drawings export as DXF, SVG or DWG");
+  // A 3D format takes the solids and meshes: drawings and sketches, in the selection or the whole document, are left out
+  // (they export as DXF, SVG, DWG or PDF) and counted in the result's "left_out"; only nothing else to write is refused.
+  int left_out = 0;
+  std::vector<std::string> picked;
+  for (const auto& id : opt.select) {
+    if (scene.sketch(id)) ++left_out;
+    else picked.push_back(id);
+  }
+  std::vector<std::string> bodies = !opt.select.empty() && picked.empty() ? std::vector<std::string>{} : select_bodies(scene, picked);
   if (opt.format == "step" || opt.format == "stp")
-    for (const auto& id : select_bodies(scene, opt.select))
+    for (const auto& id : bodies)
       if (scene.node(id)->representation == "mesh") throw Error("Mesh objects cannot be exported as CAD solids; choose STL, OBJ or GLB");
   ExportResult res;
-  std::vector<std::string> bodies = select_bodies(scene, opt.select);
   bodies.erase(std::remove_if(bodies.begin(), bodies.end(),
-                              [&](const std::string& id) { return scene.node(id)->body_missing; }),
+                              [&](const std::string& id) {
+                                const bool drawing = scene.node(id)->representation == "drawing2d";
+                                left_out += drawing;
+                                return drawing || scene.node(id)->body_missing;
+                              }),
                bodies.end());
-  if (bodies.empty()) throw Error("nothing to export (selection contains no bodies)");
+  if (bodies.empty())
+    throw Error(left_out ? "Drawings and sketches export as DXF, SVG, DWG or PDF; there is no solid or mesh to write in this format"
+                         : "nothing to export (selection contains no bodies)");
+  if (left_out) res.details["left_out"] = left_out;
   res.bodies = static_cast<int>(bodies.size());
   if (out.has_parent_path()) std::filesystem::create_directories(out.parent_path());
   std::string fmt = opt.format;

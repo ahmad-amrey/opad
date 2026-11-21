@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QLabel>
 #include <QFile>
+#include <QGuiApplication>
 #include <QMenu>
 #include <QWidgetAction>
 
@@ -75,7 +76,8 @@ void MainWindow::onViewportSelection() {
     if (seen.insert(r.body).second) ids.push_back(r.body);
   m_browser->setSelectedIds(ids);
   if (m_section && m_section->picking() && !refs.empty() && refs.front().kind == opad::Ref::Kind::Face) {  // one face: Pick face is done
-    m_section->endPick();
+    // ... unless Shift was held with the click (a tool used once kept open): it waits for another face (toolPicksChanged).
+    if (!QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier)) m_section->endPick();
     sectionFromFace(refs.front());
   }
   m_selRows.clear();
@@ -327,7 +329,7 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
       forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
       return;
     }
-    for(const char* id:{"sketch.construction","sketch.dimension","sketch.c.horizontal","sketch.c.vertical","sketch.c.coincident","sketch.c.tangent","sketch.c.fix","sketch.node","sketch.openEnds"})menu.addAction(action(id));
+    for(const char* id:{"sketch.construction","sketch.measure","sketch.dimension","sketch.c.horizontal","sketch.c.vertical","sketch.c.coincident","sketch.c.tangent","sketch.c.fix","sketch.node","sketch.openEnds"})menu.addAction(action(id));
     menu.addSeparator();menu.addAction(tr("Driving / reference"),m_design->sketch(),&SketchEditor::toggleReference);
     menu.addAction(tr("Delete"),m_design->sketch(),&SketchEditor::deleteSelection);
     forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });

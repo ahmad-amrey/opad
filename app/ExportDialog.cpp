@@ -140,16 +140,24 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   bool asView = false;  // a 2D format of solids or meshes: a view of them
   auto refresh = [&] {
     std::set<std::string> categories;
+    int flat = 0;  // drawings and sketches in scope: a 3D format leaves them out (the export writes the solids and meshes)
     auto addCategory=[&](const std::string& id) {
-      if(m_doc->scene.sketch(id)) { categories.insert("drawing2d"); return; }
-      for(const auto& body:m_doc->scene.bodies_under(id)) categories.insert(m_doc->scene.node(body)->representation);
+      if(m_doc->scene.sketch(id)) { categories.insert("drawing2d"); ++flat; return; }
+      for(const auto& body:m_doc->scene.bodies_under(id)) {
+        const std::string& kind=m_doc->scene.node(body)->representation;
+        categories.insert(kind);
+        flat += kind=="drawing2d";
+      }
     };
     if(scopeSel->isChecked()) for(const auto& id:ids) addCategory(id);
     else { for(const auto& id:m_doc->scene.all_bodies()) addCategory(id); for(const auto& sk:m_doc->scene.sketches) if(sk.visible) addCategory(sk.id); }
+    const bool model=categories.count("solid") || categories.count("mesh");
     for(auto* format:group->buttons()) {
       const auto fmt=format->property("format").toString(); bool compatible=!categories.empty();
       for(const auto& cat:categories) {
-        if(fmt=="step") compatible &= cat=="solid";
+        // A 3D format with drawings or sketches among the objects: they are left out, so they never disable it.
+        if((fmt=="step" || fmt=="stl" || fmt=="obj" || fmt=="glb") && cat=="drawing2d") compatible &= model;
+        else if(fmt=="step") compatible &= cat=="solid";
         else if(fmt=="stl" || fmt=="obj" || fmt=="glb") compatible &= cat=="solid" || cat=="mesh";
         else if(fmt=="svg" || fmt=="dxf" || fmt=="dwg" || fmt=="pdf" || fmt=="png") compatible &= cat=="drawing2d" || cat=="solid" || cat=="mesh";  // solids: a view of them
       }
@@ -163,6 +171,9 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
     int n = scopeSel->isChecked() ? selBodies : allBodies;
     summary->setText(tr("%1 · %2 objects · %3").arg(b ? b->text() : fmt).arg(n).arg(units::format(units::Kind::Length, units::fromDisplay(units::Kind::Length, tol->value()), tol->decimals())));
     const bool twoD = fmt=="svg" || fmt=="dxf" || fmt=="dwg" || fmt=="pdf" || fmt=="png";
+    if(!twoD && flat > 0 && model)  // what a 3D format leaves out, said
+      summary->setText(tr("%1 · %2 objects · %3").arg(b ? b->text() : fmt).arg(n - flat).arg(units::format(units::Kind::Length, units::fromDisplay(units::Kind::Length, tol->value()), tol->decimals())) +
+                       " · " + (flat == 1 ? tr("1 drawing or sketch left out") : tr("%1 drawings and sketches left out").arg(flat)));
     asView = twoD && (categories.count("solid") || categories.count("mesh"));
     if(asView) summary->setText(tr("%1 · a 2D view of %2 objects · %3").arg(b->text()).arg(n).arg(viewBox->currentText()));
     if(!available) summary->setText(tr("Select objects of a compatible export category."));

@@ -19,6 +19,8 @@
 #include <QScreen>
 #include <QSettings>
 #include <QShortcut>
+
+#include "PanelFooter.hpp"
 #include <QTextEdit>
 #include <QTimer>
 #include <QToolButton>
@@ -405,17 +407,35 @@ void ToolPanel::restoreDefaultPlace() {
   else resize(m_defaultSize);  // never anchored yet: placed when it is first shown
 }
 
+// Enter (Shift+Enter) that nothing in the panel took presses its footer's primary button when that button says Enter
+// (Canvas OK, KiCad Sync): not while a text field or a list has the keyboard, which takes Enter itself.
+PanelFooter* ToolPanel::enterFooter() const {
+  if (keepsKeyboard(QApplication::focusWidget())) return nullptr;
+  auto* footer = m_content ? m_content->findChild<PanelFooter*>() : nullptr;
+  return footer && footer->entersPrimary() ? footer : nullptr;
+}
+
+static bool enterKey(const QKeyEvent* key, bool* shift) {
+  const auto modifiers = key->modifiers() & ~Qt::KeypadModifier;
+  *shift = modifiers == Qt::ShiftModifier;
+  return (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && (modifiers == Qt::NoModifier || *shift);
+}
+
 void ToolPanel::keyPressEvent(QKeyEvent* e) {
+  bool shift = false;
   if (e->key() == Qt::Key_Escape) { if(m_escapeHandler) m_escapeHandler(); else hide(); }
+  else if (enterKey(e, &shift) && enterFooter()) enterFooter()->pressPrimary(shift);
   else QWidget::keyPressEvent(e);
 }
 
 bool ToolPanel::event(QEvent* e) {
   // Esc that nothing in the panel took is the panel's (keyPressEvent). Qt offers a tool window's keys to the main window's
-  // shortcuts too: its Esc and a panel shortcut were ambiguous, and neither ran.
+  // shortcuts too: its Esc and a panel shortcut were ambiguous, and neither ran. So is the Enter its footer says (its
+  // Shift+Enter is not the window's Repeat either).
   if (e->type() == QEvent::ShortcutOverride) {
     const auto* key = static_cast<QKeyEvent*>(e);
-    if (key->key() == Qt::Key_Escape && !(key->modifiers() & ~Qt::KeypadModifier)) {
+    bool shift = false;
+    if ((key->key() == Qt::Key_Escape && !(key->modifiers() & ~Qt::KeypadModifier)) || (enterKey(key, &shift) && enterFooter())) {
       e->accept();
       return true;
     }

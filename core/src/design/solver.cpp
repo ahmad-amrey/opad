@@ -511,7 +511,8 @@ struct System {
         break;
       }
       case CType::Fix: fix(ci, c); break;
-      case CType::Rigid: rigid(ci, c); break;
+      case CType::Rigid:
+      case CType::Offset: rigid(ci, c); break;  // an offset holds its curves as a rigid group (its value rebuilt them)
       case CType::Distance: {
         if (c.refs.size() == 1 || is_point(c.refs[1])) {
           P2 p, q;
@@ -638,7 +639,9 @@ void gram(const System& sys, const std::vector<double>& rs, Columns& cols, std::
 
 // Levenberg-Marquardt from `x`. Returns whether every residual got below the tolerance; `x` is the best state
 // reached either way. `polish` spends up to two more Newton steps after the tolerance is met.
-bool minimise(System& sys, std::vector<double>& x, const SolveOptions& opt, bool polish_after = true) {
+// `movable` (least movement, SolveOptions::moves): only the variables marked there move; the others keep their values
+// exactly (their columns weigh nothing in the step).
+bool minimise(System& sys, std::vector<double>& x, const SolveOptions& opt, bool polish_after = true, const std::vector<char>* movable = nullptr) {
   const double tol = opt.tolerance;
   if (!sys.eval(x)) return false;
   const size_t m = sys.nrows, n = size_t(sys.nvars);
@@ -663,6 +666,9 @@ bool minimise(System& sys, std::vector<double>& x, const SolveOptions& opt, bool
   std::vector<double> cs(n, 1.0);
   for (int r : sys.vr)
     if (r >= 0) cs[size_t(r)] = 1.0 / std::sqrt(kRadiusCost);
+  if (movable)
+    for (size_t j = 0; j < n && j < movable->size(); ++j)
+      if (!(*movable)[j]) cs[j] = 0;
 
   double err = merit(), res = sys.max_residual();
   double lambda = 1e-6;
@@ -881,6 +887,53 @@ void drag(System& sys, std::vector<double>& x, const std::vector<std::pair<size_
   minimise(sys, x, opt);  // the probes stopped at the tolerance; the analysis wants the polished state
 }
 
+// Least movement's stages (SolveOptions::moves): for each, the variables that may move. Per group of named points and
+// curves: the group (with the groups before it), then with the curves that share a point with what is free, then with
+// the points and curves of the constraints on those; a stage the same as the one before is left out.
+std::vector<std::vector<char>> movement_stages(const Sketch& sk, const System& sys, const std::vector<std::vector<int>>& moves) {
+  std::vector<std::vector<char>> out;
+  std::vector<char> point(sk.points.size(), 0), curve(sk.entities.size(), 0);
+  auto add = [&](int id) {
+    if (const auto p = sys.pidx.find(id); p != sys.pidx.end()) point[size_t(p->second)] = 1;
+    else if (const auto e = sys.eidx.find(id); e != sys.eidx.end()) {
+      curve[size_t(e->second)] = 1;
+      for (int pid : sk.entities[size_t(e->second)].p) point[size_t(sys.pidx.at(pid))] = 1;
+    }
+  };
+  auto touches = [&](const SkEntity& e) {
+    return std::any_of(e.p.begin(), e.p.end(), [&](int pid) { return point[size_t(sys.pidx.at(pid))] != 0; });
+  };
+  auto push = [&] {
+    std::vector<char> free(size_t(sys.nvars), 0);
+    for (size_t i = 0; i < sk.points.size(); ++i)
+      if (point[i] && sys.vx[i] >= 0) free[size_t(sys.vx[i])] = free[size_t(sys.vy[i])] = 1;
+    for (size_t i = 0; i < sk.entities.size(); ++i)
+      if (curve[i] && sys.vr[i] >= 0) free[size_t(sys.vr[i])] = 1;
+    if (out.empty() || out.back() != free) out.push_back(std::move(free));
+  };
+  for (const auto& group : moves) {
+    for (int id : group) add(id);
+    push();
+    std::vector<int> sharing;
+    for (const auto& e : sk.entities)
+      if (touches(e)) sharing.push_back(e.id);
+    for (int id : sharing) add(id);
+    push();
+    std::vector<int> held;
+    for (const auto& c : sk.constraints) {
+      const bool on = std::any_of(c.refs.begin(), c.refs.end(), [&](int r) {
+        if (const auto p = sys.pidx.find(r); p != sys.pidx.end()) return point[size_t(p->second)] != 0;
+        if (const auto e = sys.eidx.find(r); e != sys.eidx.end()) return curve[size_t(e->second)] != 0 || touches(sk.entities[size_t(e->second)]);
+        return false;
+      });
+      if (on) held.insert(held.end(), c.refs.begin(), c.refs.end());
+    }
+    for (int id : held) add(id);
+    push();
+  }
+  return out;
+}
+
 }  // namespace
 
 static SolveResult solve_system(Sketch& sk, const SolveOptions& opt, bool keep_best) {
@@ -907,7 +960,17 @@ static SolveResult solve_system(Sketch& sk, const SolveOptions& opt, bool keep_b
   std::vector<double> x = x0;
   bool ok = false;
   if (sys.eval(x0, true)) {  // sides, tangency kind, angle branch and Fix values come from the untouched sketch
-    ok = minimise(sys, x, opt);
+    // Least movement first: what the change names gives way, the rest stays (a stage that cannot satisfy everything
+    // hands on to the next, the last to the whole sketch).
+    if (!opt.moves.empty())
+      for (const auto& movable : movement_stages(sk, sys, opt.moves)) {
+        x = x0;
+        if ((ok = minimise(sys, x, opt, true, &movable))) break;
+      }
+    if (!ok) {
+      x = x0;
+      ok = minimise(sys, x, opt);
+    }
     if (ok && !pulls.empty()) drag(sys, x, pulls, opt);
   }
 

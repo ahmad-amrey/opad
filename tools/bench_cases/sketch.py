@@ -49,6 +49,21 @@ CASES = [
     # and Curvature from a line or an arc, the Constraints page (by the panel's page switch) lighting a row's geometry, an
     # open end dragged shut, a backdrop picture dragged.
     ("sketch-pointer", "empty", {"OPAD_BENCH_SKETCH_POINTER": "{prefix}"}),
+    # A tool normally used once closes after Apply or Enter, Shift keeps it (sketchkeys::afterApply): Move in a sketch
+    # (Enter, Shift+Enter, Shift+click and a click on Apply; the Constraints page the user opened stays; Rigid stays), and
+    # the Move feature (OK, Shift+click on OK, Shift+Enter in the view and in its panel, Enter).
+    ("sketch-oneshot", "empty", {"OPAD_BENCH_SKETCH_ONESHOT": "{prefix}"}),
+    ("feature-oneshot", "box", {"OPAD_BENCH_FEATURE_ONESHOT": "1"}),
+    # D measures in a sketch and adds nothing (a line, a point square to it, a circle, the nearest distance), Shift+D is
+    # Dimension; hovering a dimension's value names it in the status bar and a tooltip (SketchMeasureBench.cpp).
+    ("sketch-measure", "empty", {"OPAD_BENCH_SKETCH_MEASURE": "{prefix}"}),
+    # A constraint added through the tool (Coincident: a short line's end onto a profile's bottom edge) and a dimension
+    # typed in its box move only what they name and what must follow (SolveOptions::moves, SketchMovementBench.cpp).
+    ("sketch-movement", "empty", {"OPAD_BENCH_SKETCH_MOVEMENT": "{prefix}"}),
+    # Using a tool never closes Section (it stays beside Distance's and a feature's panel, not over them); the Note
+    # editor's Shift+Enter is a new line in its text, else Save and another note (never Repeat); a footer that says Enter
+    # is pressed by Enter and Shift+Enter in the view, and no plain Enter there is Repeat while a tool's panel is shown.
+    ("panels-stay", "box", {"OPAD_BENCH_PANELS_STAY": "1"}),
     # Tool panels hand the keyboard back to the view after a click on a button or the slider; Esc in a panel is its (UI-05).
     ("panel-focus", "box", {"OPAD_BENCH_PANEL_FOCUS": "1"}),
     # The Section panel's Pick face takes one face, then the view selects as before; Exit section is its main button.

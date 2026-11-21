@@ -35,6 +35,8 @@
 #include "Drawing2D.hpp"
 #include "DrawingPlacer.hpp"
 #include "I18n.hpp"
+#include "PanelFooter.hpp"
+#include "ToolPanel.hpp"
 #include "PlanePicker.hpp"
 #include "Icons.hpp"
 #include "KeyText.hpp"
@@ -416,8 +418,34 @@ void MainWindow::showCentral() {
   if (m_toasts) m_toasts->setHost(page);  // over whatever is shown (the sheet canvas too)
 }
 
+// A tool's panel shown whose footer says Enter on its primary button (Canvas OK, KiCad Sync), while nothing else that takes
+// Enter in the view runs (a tool, a feature, a sketch, a note, a plane pick, a drawing being placed): that footer. `shown`:
+// some tool's panel is shown at all (then a plain Enter in the view is never Repeat).
+static PanelFooter* panelEnter(const QList<ToolPanel*>& panels, bool busy, bool* shown = nullptr) {
+  PanelFooter* footer = nullptr;
+  for (ToolPanel* p : panels)
+    if (p->isVisible() && !p->persistent()) {
+      if (shown) *shown = true;
+      if (!busy && !footer) footer = p->enterFooter();
+    }
+  return footer;
+}
+
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
   if (o == m_viewport && (e->type() == QEvent::Resize || e->type() == QEvent::Show)) positionOverlays();
+  // Shift+Enter in the view with such a panel shown: its primary button with Shift held (a tool used once kept open), not
+  // the window's Repeat last command.
+  if (o == m_viewport && (e->type() == QEvent::ShortcutOverride || e->type() == QEvent::KeyPress)) {
+    auto* key = static_cast<QKeyEvent*>(e);
+    const bool busy = !m_tool.id.isEmpty() || m_annotationEditor || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane() ||
+                      m_design->planePicker()->active() || m_drawingPlacer->active();
+    if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && (key->modifiers() & ~Qt::KeypadModifier) == Qt::ShiftModifier)
+      if (PanelFooter* footer = panelEnter(m_panels, busy)) {
+        key->accept();
+        if (e->type() == QEvent::KeyPress) footer->pressPrimary(true);
+        return true;
+      }
+  }
   if (o == m_viewport && e->type() == QEvent::KeyPress && repeatOnEnter(static_cast<QKeyEvent*>(e))) return true;
   return QMainWindow::eventFilter(o, e);
 }
@@ -428,11 +456,13 @@ bool MainWindow::eventFilter(QObject* o, QEvent* e) {
 // whatever is selected now.
 bool MainWindow::repeatOnEnter(const QKeyEvent* key) {
   static const QStringList asked{"edit.delete", "edit.restore", "edit.hide", "edit.showall"};
-  if ((key->key() != Qt::Key_Return && key->key() != Qt::Key_Enter) || (key->modifiers() & ~Qt::KeypadModifier) || key->isAutoRepeat() || asked.contains(m_lastCommand))
-    return false;
-  if (!m_doc->hasDocument || !m_tool.id.isEmpty() || m_annotationEditor || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane() ||
-      m_design->planePicker()->active() || m_drawingPlacer->active() || m_toolPanel->isVisible())
-    return false;
+  if ((key->key() != Qt::Key_Return && key->key() != Qt::Key_Enter) || (key->modifiers() & ~Qt::KeypadModifier) || key->isAutoRepeat()) return false;
+  const bool busy = !m_tool.id.isEmpty() || m_annotationEditor || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane() ||
+                    m_design->planePicker()->active() || m_drawingPlacer->active();
+  // A tool's panel shown: its footer's Enter (Canvas OK, KiCad Sync) if it says so, else nothing; never Repeat over it.
+  bool panelShown = false;
+  if (PanelFooter* footer = panelEnter(m_panels, busy, &panelShown)) return footer->pressPrimary(false);
+  if (!m_doc->hasDocument || busy || panelShown || asked.contains(m_lastCommand)) return false;
   QAction* repeat = action("edit.repeat");
   if (!repeat || !repeat->isEnabled()) return false;
   repeat->trigger();
