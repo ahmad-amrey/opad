@@ -92,9 +92,10 @@ builds get slow because a branch's ccache is old, run the workflow on that branc
 The rules live in the repository's settings, not in a file; set them once (owner or admin).
 
 **`dev`**: *Settings > Rules > Rulesets > New branch ruleset*, name `dev`, *Enforcement status* Active, *Target
-branches*: *Add target > Include by pattern* `dev` (no quotes). Leave the *Bypass list* empty. Tick only **Restrict
-deletions** and **Block force pushes**: merges into `dev` need no pull request and no checks, and its history can
-still never be rewritten. The checks bite where code reaches people: a published development build and `main`.
+branches*: *Add target > Include by pattern* `dev` (no quotes). Leave the *Bypass list* empty. Tick **Restrict
+deletions**, **Block force pushes** and **Require a pull request before merging** (approvals can stay 0), and no status
+checks: every change reaches `dev` through a pull request, so `dev` stays a clean pipeline into `main`, but nothing waits
+for a build. The checks bite where code reaches people: a published development build and `main`.
 
 **`main`**: two rulesets, both targeting *Include default branch*, because a bypass lifts every rule of its ruleset:
 
@@ -145,7 +146,7 @@ the release would never run. On your computer:
    Write for the people using OPAD: what they can do now, what behaves differently, what to watch for. The opening
    sentences are what the update notice in OPAD shows. The headings under the version are free; only the
    `## [X.Y.Z] - date` line is read.
-2. Merge it into `dev` (a pull request or a direct merge: `dev` asks for neither checks nor reviews).
+2. Merge its pull request into `dev` (no checks to wait for).
 3. *Actions > Build > Run workflow* on `dev` with **Publish** ticked. When every platform passes, the run publishes
    **OPAD X.Y.Z release candidate (build N)**. Install it (or let a copy set to *Offer development builds* offer it) and
    test it on your machines.

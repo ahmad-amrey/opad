@@ -614,8 +614,8 @@ filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`,
 
 ## CI and releases (`.github/workflows/ci.yml`, `promote.yml`, docs/releasing.md)
 
-Branches: **work goes into `dev`** (never `main`); `dev` runs no checks (its ruleset only blocks force pushes and
-deletion), so changes merge freely. A development build is made on demand, Build > Run workflow on `dev` with `publish`:
+Branches: **work goes into `dev`** (never `main`); `dev` runs no checks: its ruleset requires a pull request (no
+direct commits) and blocks force pushes and deletion, but no status check, so pull requests merge at once. A development build is made on demand, Build > Run workflow on `dev` with `publish`:
 every platform built, tested and install-checked, and only then a GitHub
 pre-release `vA.B.(C+1)-dev.<build>` (the release candidate `vX.Y.Z-rc.<build>` when the version is new; notes: `[Unreleased]`, or the version's section for the release
 candidate; marker `<!-- opad-build: N; opad-version: X.Y.Z -->`; ten kept). `main` = the latest release: it moves only by
