@@ -610,8 +610,19 @@ with `view` 'C'/'D' only there, the session's own objects masked out; 3 panes = 
 filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`, the files in `m_variantDocs`). `opad-cli variants`,
 `ctest -R "variants|xt"`, bench `compare-files` (OPAD_BENCH_COMPARE_FILES).
 
-## CI and releases (`.github/workflows/ci.yml`, docs/releasing.md)
+## CI and releases (`.github/workflows/ci.yml`, `promote.yml`, docs/releasing.md)
 
+Branches: **pull requests target `dev`** (never `main`). Each push to `dev` publishes a development build, a GitHub
+pre-release `dev-<build>` (notes: `[Unreleased]`, or the version's section when the version is new = the release
+candidate; marker `<!-- opad-build: N; opad-version: X.Y.Z -->`; ten kept). `main` = the latest release: it moves only by
+*Actions > Promote dev to main* (promote.yml: checks Tested on dev's commit, `main` ancestor of `dev`, a new dated
+version; then `git push <sha>:main` with the deploy key PROMOTE_DEPLOY_KEY, a secret of the environment `promote` that only main's copy of the
+workflow may use, the deploy key being the only bypass of the `main` ruleset (PR + Tested); a second ruleset,
+`main-history`, blocks force pushes and deletion with no bypass; a
+GITHUB_TOKEN push would start no workflow), or by a hotfix PR into `main` (then merge `main` back into `dev`). Builds
+carry OPAD_BUILD_NUMBER (run number of the run that built them) and OPAD_BUILD_COMMIT; a promotion reuses the release
+candidate's packages, so a release and its candidate share (version, build). Merging into `dev`, and promoting, are
+Ahmad's (a session may merge into `dev` only when he says so for that work).
 The version's one source is `project(opad VERSION X.Y.Z)`; a version is released
 when it has a published release (tag `vX.Y.Z`), and the workflow creates both: the push to `main` that changes the
 version (compared with `github.event.before`) to one without a release publishes it (`gh release create v$VERSION
@@ -627,9 +638,9 @@ run's packages (`run-id`); only successful runs of ci.yml in this repo whose hea
 UCRT64/CLANG64), Linux = OCCT from source + AppImage + `opad-deb`, macOS = Homebrew + dmg (macos-15, Apple silicon);
 each job tees build.log and annotates errors on failure; the Windows installer and the .deb are installed, updated and
 removed in the job with a check that settings/data survive. Caches: restore at the start, deps saved right after the
-configure, ccache saved `always()`; PR caches are PR-scoped and only main's runs save main's, so a PR run uploads
-`caches-<system>` (deps tar + its cache key + ccache tar) and, when a merge reused that run, `warm-*` on main download
-it and `cache/save` it under main (same runner OS: a cache is found only on the system that saved it); without it they
+configure, ccache saved `always()`; PR caches are PR-scoped and only a branch's own runs save its caches, so the run that
+builds (a PR, or dev) uploads `caches-<system>` (deps tar + its cache key + ccache tar, kept 7 days; packages 30) and,
+when a merge or promotion reused that run, `warm-*` on dev/main download it and `cache/save` it under that branch (same runner OS: a cache is found only on the system that saved it); without it they
 build the missing deps. Actions pinned by SHA (update with the version comment). For each release write the changelog section
 (for users: added, changed, fixed, notes; the opening sentences are the update notice's summary). The workflow file is
 not called build*.yml: `.gitignore`'s `build*` would hide it; public docs need a `!/docs/<name>` line there.
