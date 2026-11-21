@@ -297,24 +297,43 @@ std::optional<Prim> fit_torus(const std::vector<gp_Pnt>& points, const std::vect
     Try t;
     t.r2 = r2;
     std::vector<gp_Pnt> q;
+    q.reserve(at.size());
     for (size_t i = 0; i < at.size(); ++i) q.push_back(at[i].Translated(normals[i] * -r2));
-    const auto plane = fit_plane(q);
-    if (!plane) return t;
-    const gp_Dir u = any_perpendicular(plane->a), w = plane->a.Crossed(u);
-    std::vector<std::array<double, 2>> flat;
-    for (const auto& p : q) flat.push_back({gp_Vec(plane->o, p).Dot(gp_Vec(u)), gp_Vec(plane->o, p).Dot(gp_Vec(w))});
-    double cx, cy, R;
-    if (!fit_circle_2d(flat, cx, cy, R)) return t;
-    double s = 0;
-    for (size_t i = 0; i < q.size(); ++i) {
-      const double off = gp_Vec(plane->o, q[i]).Dot(gp_Vec(plane->a));
-      const double radial = std::hypot(flat[i][0] - cx, flat[i][1] - cy) - R;
-      s += off * off + radial * radial;
+    gp_XYZ mean;
+    const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(covariance(q, mean));
+    const gp_Pnt o(mean);
+    // On a short arc of the middle circle the two smallest spreads are alike (the arc's sagitta against the scatter of
+    // facet middles moved by r2), so the plane's normal is a coin toss: try both as the circle's normal and keep the torus
+    // the patch's vertices, which lie on the surface, fit best.
+    for (const int col : {0, 1}) {
+      const Eigen::Vector3d n = eig.eigenvectors().col(col);
+      if (!n.allFinite() || n.norm() < 1e-12) continue;
+      const gp_Dir a(n(0), n(1), n(2));
+      const gp_Dir u = any_perpendicular(a), w = a.Crossed(u);
+      std::vector<std::array<double, 2>> flat;
+      flat.reserve(q.size());
+      for (const auto& p : q) flat.push_back({gp_Vec(o, p).Dot(gp_Vec(u)), gp_Vec(o, p).Dot(gp_Vec(w))});
+      double cx, cy, R;
+      if (!fit_circle_2d(flat, cx, cy, R) || R < size * 1e-4 || R > size * 50 || std::abs(r2) >= R) continue;
+      Prim p;
+      p.type = Prim::Torus;
+      p.o = o.Translated(gp_Vec(u) * cx + gp_Vec(w) * cy);
+      p.a = a;
+      p.r = R;
+      p.r2 = std::abs(r2);
+      double s = 0;
+      for (const auto& v : points) {
+        const double d = p.distance(v);
+        s += d * d;
+      }
+      const double res = std::sqrt(s / double(points.size()));
+      if (res < t.residual) {
+        t.residual = res;
+        t.centre = p.o;
+        t.axis = a;
+        t.R = R;
+      }
     }
-    t.residual = std::sqrt(s / double(q.size()));
-    t.centre = plane->o.Translated(gp_Vec(u) * cx + gp_Vec(w) * cy);
-    t.axis = plane->a;
-    t.R = R;
     return t;
   };
   Try best;

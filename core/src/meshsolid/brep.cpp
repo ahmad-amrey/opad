@@ -302,14 +302,19 @@ std::vector<Region> segment(const Context& c) {
       const double sign = orientation(c, f, patch);
       auto support = grow(c, f, patch, owner, sign);
       if (support.size() < 3) continue;
+      // Refit on what it reached and grow again, until it stops growing: a fit from a small patch (a torus's axis above
+      // all) is rough, and one round only reaches its neighbourhood.
       Prim prim = f;
-      const Prim refined = refine(f, vertices_of(c.m, support), c.size);
-      if (max_distance(refined, vertices_of(c.m, support)) <= c.tol) {
+      for (int round = 0; round < 8; ++round) {
+        const auto held = vertices_of(c.m, support);
+        const Prim refined = refine(prim, held, c.size);
+        if (max_distance(refined, held) > c.tol) break;
         auto more = grow(c, refined, support, owner, sign);
-        if (more.size() >= support.size()) {
-          prim = refined;
-          support = std::move(more);
-        }
+        if (more.size() < support.size()) break;
+        const bool grew = more.size() > support.size();
+        prim = refined;
+        support = std::move(more);
+        if (!grew) break;
       }
       // The facets' middles too: a mesh whose vertices are all on rims fits more than one surface (two rings of a
       // cylinder lie on a sphere); the facets between them only lie on the right one, within their sagitta.

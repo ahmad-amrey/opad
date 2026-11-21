@@ -311,6 +311,18 @@ TEST(torus_as_a_fitted_solid) {
   CHECK_EQ(faces_of(c.report, "torus"), 1);
 }
 
+// The same torus meshed coarser and finer: one torus face at every density, not a lucky merge of partial tori that a
+// slightly different mesh (another OCCT build's diagonals) breaks into hundreds of facets.
+TEST(torus_at_any_density) {
+  const TopoDS_Shape torus = BRepPrimAPI_MakeTorus(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 15, 5).Shape();
+  for (const double deflection : {0.005, 0.015, 0.04, 0.08}) {
+    const auto c = convert(mesh_document(torus, deflection), "solid");
+    if (c.deviation.shape_faces != 1) std::printf("  torus at %g: %d faces\n", deflection, c.deviation.shape_faces);
+    CHECK_EQ(c.deviation.shape_faces, 1);
+    CHECK_EQ(faces_of(c.report, "torus"), 1);
+  }
+}
+
 TEST(two_pieces_and_open_meshes) {
   // Two cylinders apart at different heights: neither one extrusion nor one revolution; two fitted solids.
   BRep_Builder b;
