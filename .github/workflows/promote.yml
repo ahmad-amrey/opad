@@ -10,6 +10,7 @@
 # environment "promote", which only main may use: a copy of this file changed on dev and run from dev (Run workflow
 # lets you pick the branch) gets no key. Setup in docs/releasing.md.
 name: Promote dev to main
+run-name: "${{ inputs.check_only && 'Promote dev to main (check only)' || 'Promote dev to main, publishing the release' }}"
 
 on:
   workflow_dispatch:
@@ -67,11 +68,12 @@ jobs:
             exit 1
           fi
 
-          # The exact commit passed Tested (dev's own run, or the run whose build it reused).
+          # The exact commit passed Tested: every platform built, tested and install-checked (the run that published its
+          # release candidate, Build on dev with Publish). Merging into dev runs nothing, so this is where the checks bite.
           conclusion=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?check_name=Tested&per_page=20" \
             --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.started_at) | last | .conclusion // ""')
           if [ "$conclusion" != success ]; then
-            echo "::error::dev's commit $sha has no passing Tested check (latest: ${conclusion:-none}). Wait for its run on dev to pass."
+            echo "::error::dev's commit $sha was not built and tested (Tested: ${conclusion:-none}). Publish its release candidate first: Actions > Build, test and release > Run workflow on dev with Publish ticked; promote once it has passed."
             exit 1
           fi
 

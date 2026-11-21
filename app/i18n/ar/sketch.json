@@ -460,5 +460,11 @@
  "Click to select it · {fixed:del} deletes it when selected": "انقر لتحديده · يحذفه {fixed:del} عند تحديده",
  "Pick another to measure between them": "اختر آخر للقياس بينهما",
  "nothing is added to the sketch · a third pick starts again · Dimension ({key:sketch.dimension}) adds a dimension": "لا يُضاف شيء إلى الرسم التخطيطي · الاختيار الثالث يبدأ من جديد · البُعد ({key:sketch.dimension}) يضيف بُعدًا",
- "The connected chain: %1 curves selected": "السلسلة المتصلة: حُدد %1 من المنحنيات"
+ "The connected chain: %1 curves selected": "السلسلة المتصلة: حُدد %1 من المنحنيات",
+ "Sketch fillet: only one line or arc ends at this point (the other passes through it, or ends at a point of its own); merge the two points, or pick where both curves end": "تدوير زاوية الرسم: ينتهي عند هذه النقطة خط أو قوس واحد فقط (الآخر يمر بها أو ينتهي عند نقطة خاصة به)؛ ادمج النقطتين أو اختر حيث ينتهي المنحنيان كلاهما",
+ "Sketch fillet: %1 lines and arcs end at this point; a fillet joins two": "تدوير زاوية الرسم: تنتهي %1 من الخطوط والأقواس عند هذه النقطة؛ والتقويس يصل بين اثنين",
+ "Sketch fillet: a spline ends here; fillets join lines and arcs": "تدوير زاوية الرسم: ينتهي هنا منحنى حر؛ والتقويس يصل بين الخطوط والأقواس",
+ "Sketch fillet: the two curves meet tangent here, so there is no corner to round": "تدوير زاوية الرسم: يلتقي المنحنيان هنا متماسين، فلا زاوية لتدويرها",
+ "Sketch fillet: a %1 fillet does not fit this corner; %2 at most fits": "تدوير زاوية الرسم: لا يتسع هذا الركن لتقويس %1؛ يتسع %2 على الأكثر",
+ "Sketch fillet: no fillet fits this corner; the curves are too short": "تدوير زاوية الرسم: لا يتسع هذا الركن لأي تقويس؛ المنحنيات أقصر من اللازم"
 }

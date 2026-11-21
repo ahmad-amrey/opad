@@ -160,6 +160,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchOneShot();  // OPAD_BENCH_SKETCH_ONESHOT: a tool used once closes after Apply, Shift keeps it
   void benchMeasure();  // OPAD_BENCH_SKETCH_MEASURE: D measures, Shift+D dimensions, hovering a constraint names it
   void benchChainDim();  // OPAD_BENCH_SKETCH_CHAINDIM: double-click selects the chain; a dimension drawn whole while placed and typed
+  void benchFillet();  // OPAD_BENCH_SKETCH_FILLET: Sketch fillet on the open sketch's line-arc corners
   void benchMovement();  // OPAD_BENCH_SKETCH_MOVEMENT: a constraint added or a dimension changed moves only what it must
   void benchTrail();  // OPAD_BENCH_OVERLAY_TRAIL's sketch part (OverlayTrailBench.cpp)
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
@@ -186,6 +187,7 @@ class SketchEditor : public QObject, public SketchInput {
  signals:
   void toolChanged(const QString& tool);
   void status(const QString& text);  // what the tool waits for, or why a change was refused
+  void refused(const QString& why);  // a click that changed nothing, and why: also shown where the user looks (a toast)
   void changed();                    // geometry, selection or undo state
   void workflowChanged();
   void hintsChanged();  // what Shift does changed (the pointer onto a guide or off it): keyHints() again

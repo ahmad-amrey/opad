@@ -50,6 +50,12 @@ int extend_entity(Sketch& sk,int entity,double x,double y);
 // from the corner, the nearest that fits) and the curves; false when none fits.
 struct FilletCorner { double cx=0,cy=0,ax=0,ay=0,bx=0,by=0,r=0; int first=0,second=0; bool ccw=true; };  // ccw: from a to b
 bool fillet_geometry(const Sketch& sk,int point,double r,FilletCorner& out);
+// Why no fillet of radius r fits at `point`, for the tool to say (kind None when one fits): TooFew = fewer than two lines
+// or arcs end at that point (the other passes through it, or ends at a point of its own: a drawing's coincident ends),
+// TooMany = more than two (`curves` how many), Spline = a spline ends there, Tangent = the two meet tangent (no corner),
+// TooBig = the curves are too short or too curved for r (`largest`: about the largest radius that fits, 0 when none).
+struct FilletProblem { enum Kind { None, TooFew, TooMany, Spline, Tangent, TooBig } kind=None; int curves=0; double largest=0; };
+FilletProblem fillet_problem(const Sketch& sk,int point,double r);
 // Makes it: each curve ends where the arc touches it, the arc is tangent to both with its radius (`expr` kept as typed);
 // what measured a trimmed line's whole length moves to a construction line along the old side, an arc's length goes; the
 // old corner stays as a virtual sharp on both curves when something still refers to it. Returns the arc. Throws (the

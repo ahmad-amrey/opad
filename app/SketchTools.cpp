@@ -974,8 +974,23 @@ void SketchEditor::filletAt(const Hit& h, double, double) {
   } catch (const std::exception& e) {
     return emit status(i18n::t(QString::fromUtf8(e.what())));
   }
-  FilletCorner corner;
-  if (!fillet_geometry(m_sk, h.id, r, corner)) return emit status(tr("Sketch fillet: no fillet of that radius fits there; pick a corner where two lines or arcs end, with room for it"));
+  // Why not, said where the user looks (a toast) and on the status line: the click used to do nothing visible.
+  if (const FilletProblem problem = fillet_problem(m_sk, h.id, r); problem.kind != FilletProblem::None) {
+    QString why;
+    switch (problem.kind) {
+      case FilletProblem::TooFew:
+        why = tr("Sketch fillet: only one line or arc ends at this point (the other passes through it, or ends at a point of its own); merge the two points, or pick where both curves end");
+        break;
+      case FilletProblem::TooMany: why = tr("Sketch fillet: %1 lines and arcs end at this point; a fillet joins two").arg(problem.curves); break;
+      case FilletProblem::Spline: why = tr("Sketch fillet: a spline ends here; fillets join lines and arcs"); break;
+      case FilletProblem::Tangent: why = tr("Sketch fillet: the two curves meet tangent here, so there is no corner to round"); break;
+      default:
+        why = problem.largest > 0 ? tr("Sketch fillet: a %1 fillet does not fit this corner; %2 at most fits").arg(text, units::compact(units::Kind::Length, problem.largest))
+                                  : tr("Sketch fillet: no fillet fits this corner; the curves are too short");
+    }
+    emit status(why);
+    return emit refused(why);
+  }
   begin_change();
   try {
     fillet_corner(m_sk, h.id, r, plainValue(text) ? std::string() : text.toStdString());

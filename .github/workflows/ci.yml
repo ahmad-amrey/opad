@@ -1,11 +1,12 @@
-# Builds and tests OPAD on Windows, Linux and macOS for every pull request to dev or main and every push to them, and
-# publishes the development builds and the releases (docs/releasing.md).
+# Builds and tests OPAD on Windows, Linux and macOS and publishes the development builds and the releases
+# (docs/releasing.md).
 #
-# Two branches: dev takes every pull request, and each push to it publishes a development build, a GitHub pre-release
-# `vX.Y.Z-dev.<build>` (`-rc.<build>` for a release candidate) that installed copies set to "Offer development builds"
-# are told about. main only moves forward to a
-# tested commit of dev ("Promote dev to main", .github/workflows/promote.yml, a fast-forward), so it always holds the
-# latest release.
+# Two branches. dev takes changes freely: merging into it runs nothing. A development build is published on demand:
+# Actions > Build, test and release > Run workflow on dev with "Publish" ticked builds, tests and install-checks every platform and, only
+# when all pass, publishes a GitHub pre-release `vX.Y.(Z+1)-dev.<build>` (`vX.Y.Z-rc.<build>`, the release candidate,
+# when the version is new) that installed copies set to "Offer development builds" are told about. main only moves
+# forward to such a tested commit of dev ("Promote dev to main", .github/workflows/promote.yml, a fast-forward), so it
+# always holds the latest release; pull requests into main (hotfixes) and pushes to it are built and checked as ever.
 #
 # Releases follow the version in CMakeLists.txt (project(opad VERSION X.Y.Z)), the one place it is written: when a push
 # to main changes it to a version without a published release, normally the promotion of a dev that raised it, the run
@@ -31,17 +32,34 @@
 # check orders development builds by it.
 #
 # Actions are pinned to exact commits; update the SHA and the version comment together. The check to require in the
-# dev and main rulesets is "Tested" alone (it fails when the version checks or any platform failed or were cancelled).
-name: Build
+# main ruleset is "Tested" alone (it fails when the version checks or any platform failed or were cancelled); dev
+# requires none.
+name: Build, test and release
+# Each run's title says what it is (the Actions list shows it): a pull request's check, a pre-release, a plain build, or
+# main's release run.
+run-name: >-
+  ${{ github.event_name == 'pull_request'
+      && format('Pull request #{0} check: {1}', github.event.pull_request.number, github.event.pull_request.title)
+    || (github.event_name == 'workflow_dispatch' && inputs.publish)
+      && format('Pre-release: publish a development build from {0}', github.ref_name)
+    || github.event_name == 'workflow_dispatch'
+      && format('Build and test {0} (nothing published)', github.ref_name)
+    || github.ref_type == 'tag'
+      && format('Release {0} (tag pushed by hand)', github.ref_name)
+    || 'Release: main moved (publishes if the version changed)' }}
 
 on:
   pull_request:
-    branches: [dev, main]
+    branches: [main]
   push:
-    branches: [dev, main]
+    branches: [main]
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]  # releases only: never a pre-release tag (vX.Y.Z-dev.N, -rc.N)
   workflow_dispatch:
     inputs:
+      publish:
+        description: On dev, publish a development build (the release candidate when the version is new) if everything passes
+        type: boolean
+        default: false
       rebuild:
         description: Build even if this exact code was built before
         type: boolean
@@ -101,6 +119,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BEFORE: ${{ github.event.before }}
+          PUBLISH: ${{ inputs.publish && 'true' || 'false' }}
         run: |
           version=$(sed -n 's/^project(opad VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           if [ -z "$version" ]; then
@@ -156,17 +175,25 @@ jobs:
               else
                 release=true
               fi
-            elif [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$GITHUB_BASE_REF" = main ]; then
-              echo "::notice title=Release::Merging this pull request publishes OPAD $version."
             elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-              echo "::notice title=Release candidate::Merging this pull request into $GITHUB_BASE_REF makes the release candidate of OPAD $version (a development build); Actions > Promote dev to main then publishes it."
+              echo "::notice title=Release::Merging this pull request publishes OPAD $version."
             fi
-          elif [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$GITHUB_BASE_REF" = dev ]; then
-            echo "::notice title=Development build::Merging this pull request into dev publishes a development build for testing (a pre-release, offered only to copies set to Offer development builds)."
           fi
-          # A push to dev publishes a development build of whatever it holds (the release candidate when the version is new).
+          # Run workflow on dev with "Publish": a development build of whatever dev holds (the release candidate when the
+          # version is new), published by the Release job only if every platform passes.
           dev=false
-          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/dev ]; then dev=true; fi
+          if [ "$PUBLISH" = true ]; then
+            if [ "$GITHUB_REF" != refs/heads/dev ]; then
+              echo "::error::\"Publish\" makes a development build of dev: run the workflow on dev, not $GITHUB_REF_NAME."
+              exit 1
+            fi
+            dev=true
+            if [ "$released" = false ]; then
+              echo "::notice title=Release candidate::If every platform passes, this run publishes the release candidate of OPAD $version; Actions > Promote dev to main then publishes the release."
+            else
+              echo "::notice title=Development build::If every platform passes, this run publishes a development build (a pre-release, offered only to copies set to Offer development builds)."
+            fi
+          fi
           echo "dev=$dev" >> "$GITHUB_OUTPUT"
           echo "released=$released" >> "$GITHUB_OUTPUT"
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
@@ -192,6 +219,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REBUILD: ${{ inputs.rebuild && 'true' || 'false' }}
+          PUBLISH: ${{ inputs.publish && 'true' || 'false' }}
         run: |
           tree=$(git rev-parse 'HEAD^{tree}')
           echo "tree=$tree" >> "$GITHUB_OUTPUT"
@@ -210,10 +238,10 @@ jobs:
           candidates=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=tested-$tree&per_page=100" \
             --jq '.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)
                   | .workflow_run.id' | sort -u)
-          # A push to dev must publish a build newer than every development build already out (the update check orders
-          # them by build number): code that comes back exactly (a revert) is built again rather than reused.
+          # A development build must be newer than every one already out (the update check orders them by build
+          # number): code that comes back exactly (a revert) is built again rather than reused.
           newest_dev=0
-          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/dev ]; then
+          if [ "$PUBLISH" = true ] && [ "$GITHUB_REF" = refs/heads/dev ]; then
             newest_dev=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
               --jq '.[] | .tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-(dev|rc)\\.[0-9]+$")) | split(".") | last' \
               | sort -n | tail -1)
@@ -805,6 +833,13 @@ jobs:
                 echo "Removing $old"
                 gh release delete "$old" --cleanup-tag --yes
               done
+          # The first development build was tagged dev-<build> before the SemVer names: removed.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.prerelease and (.tag_name | test("^dev-[0-9]+$"))) | .tag_name' \
+            | while read -r old; do
+                echo "Removing $old (old naming)"
+                gh release delete "$old" --cleanup-tag --yes
+              done
       - name: Publish the release
         if: env.DEV != 'true'
         run: |
@@ -830,7 +865,8 @@ jobs:
     name: Warm cache (Windows)
     needs: version
     if: >-
-      github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+       || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'))
       && needs.version.outputs.reuse-run != ''
     runs-on: windows-latest  # the platform job's runner: a cache is only found on the system that saved it
     timeout-minutes: 120
@@ -910,7 +946,8 @@ jobs:
     name: Warm cache (Linux)
     needs: version
     if: >-
-      github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+       || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'))
       && needs.version.outputs.reuse-run != ''
     runs-on: ubuntu-24.04  # the platform job's runner: a cache is only found on the system that saved it
     timeout-minutes: 120
@@ -983,7 +1020,8 @@ jobs:
     name: Warm cache (macOS)
     needs: version
     if: >-
-      github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+       || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'))
       && needs.version.outputs.reuse-run != ''
     runs-on: macos-15  # the platform job's runner: a cache is only found on the system that saved it
     timeout-minutes: 120

@@ -17,7 +17,9 @@ class CommandPreview;
 class CommandPalette : public QDialog {
   Q_OBJECT
  public:
-  CommandPalette(const QList<QAction*>& actions, QWidget* parent = nullptr);
+  // sketching: a sketch is open, so its tools come before the 3D commands of the same name (Sketch fillet before Fillet);
+  // outside a sketch the 3D ones come first. Every command stays listed: only the order changes.
+  CommandPalette(const QList<QAction*>& actions, QWidget* parent = nullptr, bool sketching = false);
  protected:
   bool eventFilter(QObject* o, QEvent* e) override;
  private:
@@ -25,6 +27,7 @@ class CommandPalette : public QDialog {
   void runCurrent();
   void setFoot(const QString& text, bool warning);
   QList<QAction*> m_actions;
+  bool m_sketching = false;
   QLineEdit* m_edit;
   QListWidget* m_list;
   QLabel* m_foot;
