@@ -437,6 +437,9 @@ Keys in texts (help records, clips, tr() strings and their Arabic) are tokens: `
 (`help_texts_have_no_literal_keys`) flags "(H)", "Press D", "Ctrl+" (Ctrl/Shift/Alt + click/drag/Tab are allowed, in
 Arabic write "Alt مع النقر"). Every registered command needs a record and a clip; `every_registered_command_has_help`'s
 `pending` list holds those of tracks merged after the wave 3 help pass and fails when one gains help.
+A label too wide for the ribbon in one language gets a ribbon-only label `"ribbon|<command id>"` in that language's file
+(read by `ribbonLabel` in Ribbon.cpp into the action's iconText; menus, palette and help keep the full name): never shorten
+the command's own name for room (Arabic Design > Solid at 1600 px uses six).
 RTL: `@rtl` sets the app layout direction. Docks, cube, tool panels and overlays keep their sides. Custom-painted
 widgets with fixed columns (`BrowserDelegate`, `TimelineWidget`) force their painter LTR, or `AlignLeft` flips;
 property values are wrapped in LRE..PDF so vectors keep their order. Cube labels stay English (OCCT text has no
