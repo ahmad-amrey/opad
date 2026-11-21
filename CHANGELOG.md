@@ -12,7 +12,15 @@ as a commit log.
   development branch and the release candidates too, not only releases, so you can try fixes and features before they
   ship. *About* now shows the build number.
 
+### Changed
+- **Search commands puts the tools of where you work first:** in a sketch, *Sketch fillet* comes before *Fillet* (and
+  so on for Mirror, Offset, Move and the patterns; "measure" finds Measure in a sketch, Distance outside it).
+  Everything is still listed.
+
 ### Fixed
+- **Sketch fillet says why a corner can't be rounded:** two ends that only touch (common in DXF drawings: merge the
+  points), a tangent join, more than two curves meeting, or a radius too big, with the largest that fits. Any sketch
+  change OPAD refuses now shows its reason in a notice, not only on the status line.
 - Pointing at a constraint's badge or a dimension's value in Trim, Extend and Split also says what it is, while a
   click there still trims or extends the curve.
 
