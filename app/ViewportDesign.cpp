@@ -837,7 +837,7 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
   m_viewButtons |= e->button();
   if (e->button() == Qt::MiddleButton && !m_zoomWindow) { emit fitRequested(); return; }  // a middle double click fits (UI-47)
   double u, v;
-  if (m_sketchInput && e->button() == Qt::LeftButton && planePoint(e->position(), m_sketchFrame, u, v)) return m_sketchInput->sketchDoubleClick(u, v);
+  if (m_sketchInput && e->button() == Qt::LeftButton && planePoint(e->position(), m_sketchFrame, u, v)) return m_sketchInput->sketchDoubleClick(u, v, e->modifiers());
   mousePressEvent(e);
 }
 

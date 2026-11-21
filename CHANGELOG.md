@@ -13,6 +13,13 @@ as a commit log.
   ship. *About* now shows the build number.
 
 ### Changed
+- **Version control in a folder of its own.** Setting up version control for a document that shares its folder with
+  other files now offers to move it into a folder of its own first, so the repository holds just your design. AI agents
+  setting up version control ask you first too, then move the design or use the folder as it is.
+- **Double-click selects the chain:** in a sketch, double-click a curve to select every curve connected to it end to
+  end (Shift or Ctrl+double-click adds the chain to the selection).
+- **Offsetting an open curve or chain** in a sketch makes a single parallel copy on the side you point to, instead of a
+  closed loop around it. A closed profile still offsets inward or outward.
 - **Search commands puts the tools of where you work first:** in a sketch, *Sketch fillet* comes before *Fillet* (and
   so on for Mirror, Offset, Move and the patterns; "measure" finds Measure in a sketch, Distance outside it).
   Everything is still listed.
@@ -23,6 +30,9 @@ as a commit log.
   change OPAD refuses now shows its reason in a notice, not only on the status line.
 - Pointing at a constraint's badge or a dimension's value in Trim, Extend and Split also says what it is, while a
   click there still trims or extends the curve.
+- A dimension between two lines (and the other two-pick dimensions) draws its lines and arrows while you place it and
+  after, not just the number.
+- Renaming an item in the browser no longer shows the old name peeking out behind the text box.
 
 ## [0.10.0] - 2026-11-21
 

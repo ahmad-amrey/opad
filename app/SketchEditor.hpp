@@ -159,6 +159,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchPointer();
   void benchOneShot();  // OPAD_BENCH_SKETCH_ONESHOT: a tool used once closes after Apply, Shift keeps it
   void benchMeasure();  // OPAD_BENCH_SKETCH_MEASURE: D measures, Shift+D dimensions, hovering a constraint names it
+  void benchChainDim();  // OPAD_BENCH_SKETCH_CHAINDIM: double-click selects the chain; a dimension drawn whole while placed and typed
   void benchFillet();  // OPAD_BENCH_SKETCH_FILLET: Sketch fillet on the open sketch's line-arc corners
   void benchMovement();  // OPAD_BENCH_SKETCH_MOVEMENT: a constraint added or a dimension changed moves only what it must
   void benchTrail();  // OPAD_BENCH_OVERLAY_TRAIL's sketch part (OverlayTrailBench.cpp)
@@ -176,7 +177,7 @@ class SketchEditor : public QObject, public SketchInput {
   void sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) override;
   void sketchLeave() override;
   void sketchRelease(double u, double v, Qt::KeyboardModifiers mods) override;
-  void sketchDoubleClick(double u, double v) override;
+  void sketchDoubleClick(double u, double v, Qt::KeyboardModifiers mods = {}) override;
   bool sketchKey(QKeyEvent* e) override;
   bool sketchType(QKeyEvent* e) override;
 
@@ -326,6 +327,7 @@ class SketchEditor : public QObject, public SketchInput {
   size_t transientSolid(const QColor& c) const;       // rubber band and highlight segments in that colour (benches)
   size_t transientDashed(const QColor& c) const;      // dashed ones (a frame, a measure being taken)
   size_t sketchSolid(const QColor& c) const;          // the sketch's own curves' segments drawn in that colour (benches)
+  size_t sketchThin(const QColor& c) const;           // its thin segments in that colour: dimensions' lines, arrows (benches)
   bool drawsCursor() const;  // grid snapping: the editor draws the drawing cursor at the snapped point, the pointer is hidden
   std::optional<std::pair<double, double>> m_drawnCursor;  // where it was last drawn (none: not drawn), sketch coordinates
   bool m_inTransient = false;  // updateTransient is telling the viewport whether it draws the cursor
@@ -418,6 +420,8 @@ class SketchEditor : public QObject, public SketchInput {
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void updateDimensionHandle();
+  bool offsetClosed() const;  // the selection to offset is a closed chain (outward for a positive distance), else one side
+  struct OffsetArrow { double x = 0, y = 0, dx = 1, dy = 0; } m_offsetArrow;  // where the offset's arrow stands, its way
   void referenceHover();
   void pickReference();
   // The reference a replayed press is on (ClipReplayBench.cpp: a clip's click on a body, found where the clip shows it), which

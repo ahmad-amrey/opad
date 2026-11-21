@@ -60,6 +60,9 @@ CASES = [
     # A constraint added through the tool (Coincident: a short line's end onto a profile's bottom edge) and a dimension
     # typed in its box move only what they name and what must follow (SolveOptions::moves, SketchMovementBench.cpp).
     ("sketch-movement", "empty", {"OPAD_BENCH_SKETCH_MOVEMENT": "{prefix}"}),
+    # A double-click selects the connected chain (Shift adds), a dimension's value still opens on a double-click; the
+    # Dimension tool draws the whole dimension while it is placed and typed (SketchChainDimBench.cpp).
+    ("sketch-chaindim", "empty", {"OPAD_BENCH_SKETCH_CHAINDIM": "{prefix}"}),
     # Sketch fillet on a drawing-like profile (SketchFilletBench.cpp): an upright line with its dimension meeting a long arc,
     # a construction line ending there, rounded by a click; two ends only held together: the click says why, in a toast too.
     ("sketch-fillet", "empty", {"OPAD_BENCH_SKETCH_FILLET": "{prefix}"}),

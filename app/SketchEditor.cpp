@@ -1458,12 +1458,23 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
   emit changed();
 }
 
-void SketchEditor::sketchDoubleClick(double u, double v) {
+void SketchEditor::sketchDoubleClick(double u, double v, Qt::KeyboardModifiers mods) {
   if (!m_active) return;
   if (m_tool == "line" || (m_tool == "spline" && !m_chain.empty())) return finishChain();
   const Hit h = hitTest(u, v);
   if((m_tool=="select" || m_tool=="spline") && h.kind==Hit::Point) {m_sel={h.id};editSplineNode();return;}
-  if (h.kind == Hit::Dimension) editDimension(h.id, false);
+  if (h.kind == Hit::Dimension) return editDimension(h.id, false);  // a dimension's value, an offset's distance: edited
+  // A curve: the whole chain connected to it through shared ends, as other CAD programs select it; Shift or Ctrl adds the
+  // chain to the selection.
+  if (m_tool == "select" && h.kind == Hit::Entity) {
+    if (!(mods & (Qt::ShiftModifier | Qt::ControlModifier))) m_sel.clear();
+    for (int id : connected_entities(m_sk, {h.id}))
+      if (selectable(id) && std::find(m_sel.begin(), m_sel.end(), id) == m_sel.end()) m_sel.push_back(id);
+    m_dragging = m_boxSelecting = false;
+    emit status(tr("The connected chain: %1 curves selected").arg(m_sel.size()));
+    rebuild();
+    emit changed();
+  }
 }
 
 // At the shortcut override (from the view, a tool panel or the main window): which keys are the sketch's, so no window
@@ -1807,15 +1818,62 @@ void SketchEditor::rebuild() {
           d.thin.push_back({W(ex, ey), W(ex + s * (tx * 9 + nx * 3) * px, ey + s * (ty * 9 + ny * 3) * px), col});
         }
       }
-    } else if (c.type == T::Distance && c.refs.size() == 2) {  // point-line or line-line: from the point to its foot
+    } else if (c.type == T::Distance && c.refs.size() == 2) {
+      // Point-line or two parallel lines: a dimension line across the gap through the label, arrow heads at both ends,
+      // extension lines from the curves out to it where it lies past them (the line-to-line one only drew a stroke from the
+      // first line's start to its foot, which lies on the joining side of a U: the value seemed to hang alone).
       const SkEntity* line = m_sk.entity(c.refs[1]);
       const SkEntity* first = m_sk.entity(c.refs[0]);
-      double qx = 0, qy = 0;
-      const bool havePoint = first ? (first->p.size() >= 1 && P(first->p[0], qx, qy)) : P(c.refs[0], qx, qy);
-      if (line && line->p.size() >= 2 && havePoint && P(line->p[0], ax, ay) && P(line->p[1], bx, by)) {
-        const double dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
-        const double k = len2 < 1e-18 ? 0 : ((qx - ax) * dx + (qy - ay) * dy) / len2;
-        d.thin.push_back({W(qx, qy), W(ax + k * dx, ay + k * dy), col});
+      const bool firstLine = first && first->type == SkEntity::Type::Line && first->p.size() >= 2;
+      double qx = 0, qy = 0, q2x = 0, q2y = 0;
+      const bool haveFirst = firstLine ? P(first->p[0], qx, qy) && P(first->p[1], q2x, q2y) : P(c.refs[0], qx, qy);
+      if (line && line->p.size() >= 2 && haveFirst && P(line->p[0], ax, ay) && P(line->p[1], bx, by)) {
+        const double dx = bx - ax, dy = by - ay, len = std::hypot(dx, dy);
+        if (len > 1e-9) {
+          const double ux = dx / len, uy = dy / len;  // along the measured line
+          auto foot = [&](double x, double y, double& fx, double& fy) {  // onto the measured line, unbounded
+            const double k = (x - ax) * ux + (y - ay) * uy;
+            fx = ax + k * ux;
+            fy = ay + k * uy;
+          };
+          // From the nearest point of a segment to (x, y), when (x, y) lies past its ends (on it otherwise: nothing to draw).
+          auto extension = [&](double sx, double sy, double ex, double ey, double x, double y) {
+            const double vx = ex - sx, vy = ey - sy, l2 = vx * vx + vy * vy;
+            const double s = l2 < 1e-18 ? 0 : std::clamp(((x - sx) * vx + (y - sy) * vy) / l2, 0.0, 1.0);
+            const double nx0 = sx + s * vx, ny0 = sy + s * vy;
+            if (std::hypot(x - nx0, y - ny0) > 0.5 * px) d.thin.push_back({W(nx0, ny0), W(x, y), col});
+          };
+          double e1x, e1y, e2x, e2y;  // the dimension line's ends: on the first curve's side, on the measured line
+          if (firstLine) {  // both feet of the label: the dimension line runs through it, square to both lines
+            const double k = (lu - qx) * ux + (lv - qy) * uy;
+            e1x = qx + k * ux;
+            e1y = qy + k * uy;
+            foot(lu, lv, e2x, e2y);
+            extension(qx, qy, q2x, q2y, e1x, e1y);
+          } else {  // from the point square to the line, moved along the line to the label
+            double fx, fy;
+            foot(qx, qy, fx, fy);
+            const double off = (lu - qx) * ux + (lv - qy) * uy;
+            e1x = qx + ux * off;
+            e1y = qy + uy * off;
+            e2x = fx + ux * off;
+            e2y = fy + uy * off;
+            if (std::hypot(e1x - qx, e1y - qy) > 0.5 * px) d.thin.push_back({W(qx, qy), W(e1x, e1y), col});
+          }
+          extension(ax, ay, bx, by, e2x, e2y);
+          const double gx = e2x - e1x, gy = e2y - e1y, gap = std::hypot(gx, gy);
+          if (gap > 1e-9) {
+            const double tx = gx / gap, ty = gy / gap, nx = -ty, ny = tx;
+            d.thin.push_back({W(e1x, e1y), W(e2x, e2y), col});
+            for (const auto& [ex, ey, s] : {std::tuple{e1x, e1y, 1.0}, std::tuple{e2x, e2y, -1.0}}) {  // arrow heads
+              d.thin.push_back({W(ex, ey), W(ex + s * (tx * 9 - nx * 3) * px, ey + s * (ty * 9 - ny * 3) * px), col});
+              d.thin.push_back({W(ex, ey), W(ex + s * (tx * 9 + nx * 3) * px, ey + s * (ty * 9 + ny * 3) * px), col});
+            }
+            const double side = (lu - e1x) * nx + (lv - e1y) * ny;  // the value beside its dimension line, not on it
+            lu += nx * 9 * px * (side < 0 ? -1 : 1);
+            lv += ny * 9 * px * (side < 0 ? -1 : 1);
+          }
+        }
       }
     } else if (c.type == T::Offset) {  // a leader from the source to the offset (arrow head on it), on to the value
       double mu, mv, nu, nv;
@@ -1858,6 +1916,18 @@ void SketchEditor::rebuild() {
         const int n = 24;
         for (int i = 0; i < n; ++i)
           d.thin.push_back({W(ox + r * std::cos(a0 + sweep * i / n), oy + r * std::sin(a0 + sweep * i / n)), W(ox + r * std::cos(a0 + sweep * (i + 1) / n), oy + r * std::sin(a0 + sweep * (i + 1) / n)), col});
+        const double turn = sweep < 0 ? -1 : 1;
+        for (const auto& [angle, s, sx, sy, tx2, ty2] : {std::tuple{a0, 1.0, ax, ay, bx, by}, std::tuple{a0 + sweep, -1.0, cx, cy, ex, ey}}) {
+          const double px0 = ox + r * std::cos(angle), py0 = oy + r * std::sin(angle);
+          // An extension line from its line out to the arc's end where the arc reaches past the line's ends.
+          const double vx = tx2 - sx, vy = ty2 - sy, l2 = vx * vx + vy * vy;
+          const double k = l2 < 1e-18 ? 0 : std::clamp(((px0 - sx) * vx + (py0 - sy) * vy) / l2, 0.0, 1.0);
+          if (std::hypot(px0 - sx - k * vx, py0 - sy - k * vy) > 0.5 * px) d.thin.push_back({W(sx + k * vx, sy + k * vy), W(px0, py0), col});
+          // An arrow head pointing out along the arc at its end.
+          const double ux = -std::sin(angle) * turn * s, uy = std::cos(angle) * turn * s, rx = std::cos(angle), ry = std::sin(angle);
+          d.thin.push_back({W(px0, py0), W(px0 + (ux * 9 - rx * 3) * px, py0 + (uy * 9 - ry * 3) * px), col});
+          d.thin.push_back({W(px0, py0), W(px0 + (ux * 9 + rx * 3) * px, py0 + (uy * 9 + ry * 3) * px), col});
+        }
       }
     }
     if (!(m_dimEdit && m_dimEdit->isVisible() && m_dimEditing == c.id)) d.texts.push_back({W(lu, lv), dimensionText(c), col});  // the value box covers it while typing
@@ -1922,6 +1992,13 @@ size_t SketchEditor::sketchSolid(const QColor& c) const {
   size_t n = 0;
   if (!m_prs.IsNull())
     for (const auto& s : static_cast<const SketchPrs*>(m_prs.get())->solid) n += s.c == c;
+  return n;
+}
+
+size_t SketchEditor::sketchThin(const QColor& c) const {
+  size_t n = 0;
+  if (!m_prs.IsNull())
+    for (const auto& s : static_cast<const SketchPrs*>(m_prs.get())->thin) n += s.c == c;
   return n;
 }
 
