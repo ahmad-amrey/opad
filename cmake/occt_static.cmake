@@ -24,8 +24,19 @@ else()
   message(WARNING "OPAD_STATIC: RapidJSON headers not found under ${OPAD_STATIC_PREFIX}/include; glTF export is left out")
 endif()
 
+# GCC 16 (MSYS2 UCRT64) at -O3 builds an OCCT that faults in Extrema_ExtCC::Perform under every solid classification
+# (BRepClass3d_SClassifier: booleans, distances, classifiers; seen in CI, GCC 15 and 13 are fine): -O2 and no strict
+# aliasing there.
+set(_occt_opt "")
+set(_occt_flags "${OPAD_STATIC_CXX_FLAGS}")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 16)
+  set(_occt_opt "-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O2 -DNDEBUG")
+  string(APPEND _occt_flags " -fno-strict-aliasing")
+endif()
+
 opad_occt_from_source(OPAD_STATIC Static
-  "-DCMAKE_C_FLAGS=${OPAD_STATIC_CXX_FLAGS}" "-DCMAKE_CXX_FLAGS=${OPAD_STATIC_CXX_FLAGS}"  # per-function sections: the exe's --gc-sections drops what it does not call
+  ${_occt_opt}
+  "-DCMAKE_C_FLAGS=${_occt_flags}" "-DCMAKE_CXX_FLAGS=${_occt_flags}"  # per-function sections: the exe's --gc-sections drops what it does not call
   -DUSE_XLIB=OFF
   "-D3RDPARTY_FREETYPE_INCLUDE_DIR_ft2build=${OPAD_STATIC_PREFIX}/include/freetype2"
   "-D3RDPARTY_FREETYPE_INCLUDE_DIR_freetype2=${OPAD_STATIC_PREFIX}/include/freetype2"

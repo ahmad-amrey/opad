@@ -57,7 +57,7 @@ env:
     mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-openssl
     mingw-w64-ucrt-x86_64-libwebp mingw-w64-ucrt-x86_64-libtiff mingw-w64-ucrt-x86_64-libjpeg-turbo
     mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-brotli mingw-w64-ucrt-x86_64-pcre2 mingw-w64-ucrt-x86_64-vulkan-headers
-    mingw-w64-ucrt-x86_64-gdb git
+    mingw-w64-ucrt-x86_64-gdb
   APT_PACKAGES: >-
     cmake ninja-build g++ pkg-config ccache qt6-base-dev libqt6opengl6-dev nlohmann-json3-dev libfreetype-dev
     libfontconfig-dev libharfbuzz-dev libzstd-dev libgl-dev libglu1-mesa-dev libx11-dev libxext-dev libxi-dev
@@ -255,20 +255,25 @@ jobs:
       - name: Build
         # -k 0: every compile error of the run at once, not just the first.
         run: set -o pipefail; cmake --build --preset windows-static-ucrt64 -- -k 0 2>&1 | tee build.log
+      # git: the runner's Git for Windows (MSYS2's own git answers with /tmp/... paths, which a Windows program cannot use).
       - name: Test
         id: test
-        run: ctest --preset windows-static-ucrt64
+        run: |
+          export PATH="$PATH:/c/Program Files/Git/cmd"
+          ctest --preset windows-static-ucrt64
       # A test that crashed says nothing (its output is lost with the process): run each failed test program once more
       # under gdb for a backtrace.
       - name: Backtraces of the failed tests
         if: failure() && steps.test.outcome == 'failure'
         run: |
           cd build/windows-static-ucrt64
+          export PATH="$PATH:/c/Program Files/Git/cmd"
+          export OPAD_MESHSOLID_DEBUG=1  # mesh-solid says why a fit or an attempt was refused
           for name in $(sed 's/^[0-9]*://' Testing/Temporary/LastTestsFailed.log); do
             exe="bin/opad-test-$name.exe"
             [ -f "$exe" ] || continue
             echo "::group::$name"
-            timeout 600 gdb -q -batch -ex run -ex "thread apply all bt 30" --args "$exe" 2>&1 | tail -150 || true
+            timeout 600 gdb -q -batch -ex run -ex "thread apply all bt 30" -ex "x/8i \$pc" -ex "info registers" --args "$exe" 2>&1 | tail -220 || true
             echo "::endgroup::"
           done
       - name: Single-file exes

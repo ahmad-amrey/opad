@@ -432,6 +432,12 @@ TEST(ribbon_tab_row) {
     QTabBar* tabs = bar.tabBar();
     auto whole = [&] { return tabs->width() >= tabs->sizeHint().width() && (rtl ? bar.cluster()->geometry().right() < tabs->x() : bar.cluster()->x() > tabs->geometry().right()); };
     CHECK(tabs->count() == 6 && gear && branch->parentWidget() == bar.cluster() && undoButton->popupMode() == QToolButton::MenuButtonPopup && undoButton->menu() == &steps && !saveButton->menu());
+    if (!(!bar.searchField()->compact() && bar.searchField()->width() == SearchField::kFull && inOrder() && whole())) {
+      std::printf("  ribbon_tab_row: bar %d, search %d compact %d, tabs x %d w %d hint %d, cluster x %d w %d, in order %d\n",
+                  bar.width(), bar.searchField()->width(), int(bar.searchField()->compact()), tabs->x(), tabs->width(),
+                  tabs->sizeHint().width(), bar.cluster()->x(), bar.cluster()->width(), int(inOrder()));
+      for (QWidget* w : order) std::printf("    %s x %d w %d\n", w->metaObject()->className(), w->x(), w->width());
+    }
     CHECK(!bar.searchField()->compact() && bar.searchField()->width() == SearchField::kFull && inOrder() && whole());
     CHECK(bar.selectButton()->menu() == &more && bar.strip()->isAncestorOf(bar.selectButton()) && !bar.strip()->isAncestorOf(bar.searchField()));
     for (SegmentButton* b : bar.strip()->findChildren<SegmentButton*>()) {
