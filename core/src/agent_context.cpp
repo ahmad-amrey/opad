@@ -278,8 +278,8 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   editInputs["properties"]["round"]={{"type","boolean"},{"default",true}};
   editInputs["properties"]["boundary"]={{"type","integer"},{"minimum",1}};
   editInputs["properties"]["at"]={{"type","array"},{"items",{{"type","number"}}},{"minItems",2},{"maxItems",2}};
-  editInputs["properties"]["source"]={{"type","object"}};editInputs["properties"]["linked"]={{"type","boolean"},{"default",true}};
-  add({"sketch_tool","Modify sketch geometry using the same offset, transform, repair and chain algorithms as the desktop. Coordinates are local mm; angle inputs accept degree expressions. project: inputs.source ({asset,kicad,node} of a KiCad board, a reference, {sketch}) as linked curves.",
+  editInputs["properties"]["source"]={{"type","object"}};editInputs["properties"]["linked"]={{"type","boolean"},{"default",true}};editInputs["properties"]["relation"]={{"type","boolean"},{"default",true}};
+  add({"sketch_tool","Modify sketch geometry with the desktop's offset (held by an editable offset dimension), transform, repair and chain algorithms. Coordinates are local mm; angle inputs accept degree expressions. project: inputs.source ({asset,kicad,node} of a KiCad board, a reference, {sketch}) as linked curves.",
     {{"doc",{{"type","string"}}},{"target",{{"type","string"}}},{"tool",{{"type","string"},{"enum",{"offset","move","copy","rotate","scale","mirror","split","extend","heal","break_intersections","chamfer","delete","project"}}}},
      {"entities",{{"type","array"},{"items",{{"type","integer"},{"minimum",1}}},{"maxItems",10000}}},{"chain",{{"type","boolean"},{"default",false}}},{"inputs",editInputs},{"by",{{"type","string"}}}},true},
     [](Document* doc,const json& a){
@@ -292,7 +292,11 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
       const auto tool=a.at("tool").get<std::string>();const auto inputs=a.value("inputs",json::object());
       auto length=[&](const char* key,double fallback){return design::eval_input(parameters,inputs.value(key,json(fallback)),design::Dim::Length);};
       auto single=[&]{if(ids.size()!=1)throw Error(tool+": select exactly one entity or point");return ids.front();};
-      if(tool=="offset")design::offset_entities(sk,ids,length("distance",5),inputs.value("round",true));
+      if(tool=="offset"){  // held by an offset relationship unless inputs.relation is false: its distance (d<id>) edits later
+        const double distance=length("distance",5);const bool round=inputs.value("round",true);
+        if(inputs.value("relation",true))design::offset_relationship(sk,ids,distance,round,inputs.contains("distance")&&inputs["distance"].is_string()?inputs["distance"].get<std::string>():std::string());
+        else design::offset_entities(sk,ids,distance,round);
+      }
       else if(tool=="move" || tool=="copy" || tool=="rotate" || tool=="scale" || tool=="mirror") {
         design::SketchTransform transform;transform.x=length("x",0);transform.y=length("y",0);transform.cx=length("cx",0);transform.cy=length("cy",0);
         transform.angle=design::eval_input(parameters,inputs.value("angle",json(0)),design::Dim::Angle);transform.scale=design::eval_input(parameters,inputs.value("scale",json(1)),design::Dim::None);transform.mirror=tool=="mirror";

@@ -175,6 +175,7 @@ void MainWindow::sketchTab(RibbonLayout& layout, const QString& tab) {
          {"sketch.c.equal", I, {"sketch.c.symmetric"}},
          {"sketch.c.fix", I, {"sketch.c.rigid"}},
          {"sketch.constraints", I}});
+  group("inspect", tr("Inspect"), {{"sketch.measure"}});  // D: measures, adds nothing (Dimension is Shift+D)
   group("reference", tr("Reference"),
         {{"sketch.project", L, {"sketch.intersect_body", "sketch.silhouette", "sketch.include3d", "sketch.break_link"}}, {"kicad.project", S}});
   // Pictures and vector files by their own tools (the Sketch menu keeps its Images and files list).

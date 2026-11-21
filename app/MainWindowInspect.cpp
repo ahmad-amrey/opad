@@ -8,6 +8,7 @@
 #include <QRegularExpression>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTimer>
 
 #include <cmath>
 #include <map>
@@ -162,7 +163,7 @@ QList<ToolStep> MainWindow::toolSteps() const {
   QList<ToolStep> steps;
   for (int i = 0; i < m_tool.steps; ++i) {
     ToolStep s;
-    s.label = m_tool.id == "sectionface" ? tr("Select a planar face") : m_tool.steps == 1 ? one : i == 0 ? tr("Select first %1").arg(kind) : tr("Select second %1").arg(kind);
+    s.label = m_tool.id == "sectionface" ? tr("Select a planar face (with %1 held, another after it)").arg(keys::fixedText("shift")) : m_tool.steps == 1 ? one : i == 0 ? tr("Select first %1").arg(kind) : tr("Select second %1").arg(kind);
     if (i < static_cast<int>(m_toolPicks.size())) s.picked = refLabel(m_toolPicks[i]);
     steps << s;
   }
@@ -268,7 +269,10 @@ void MainWindow::toolEscape() {
 
 void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromClick) {
   if (m_tool.id == "sectionface") {  // the pick itself is handled with the section panel (sectionFromFace)
-    if (!refs.empty()) cancelTool();
+    if (refs.empty()) return;
+    // Picked with Shift held, the section still picking: the next face (the pick cleared once the section has it).
+    if (m_section->picking()) QTimer::singleShot(0, this, [this] { if (m_tool.id == "sectionface") m_viewport->clearSelection(); });
+    else cancelTool();
     return;
   }
   std::vector<opad::Ref> picks = refs;

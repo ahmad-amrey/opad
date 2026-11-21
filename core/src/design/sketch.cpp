@@ -31,7 +31,7 @@ using CType = SkConstraint::Type;
 const char* const kEntityNames[] = {"point", "line", "circle", "arc", "ellipse", "spline"};
 const char* const kConstraintNames[] = {"coincident", "horizontal", "vertical", "parallel", "perpendicular", "collinear",
                                         "tangent",    "equal",      "concentric", "midpoint", "symmetric",   "fix", "smooth", "curvature", "rigid",
-                                        "distance",   "hdistance",  "vdistance",  "radius",   "diameter",    "angle", "arc_length"};
+                                        "distance",   "hdistance",  "vdistance",  "radius",   "diameter",    "angle", "arc_length", "offset"};
 
 bool has_radius(EType t) { return t == EType::Circle || t == EType::Ellipse; }
 
@@ -115,6 +115,8 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
     case CType::Radius:
     case CType::Diameter: return n == 1 && is_round(k[0]);
     case CType::ArcLength: return n == 1 && is(0, Kind::Arc);
+    case CType::Offset:  // curves only: the sources, then what the offset made (the split is `sources`: check_constraint)
+      return n >= 2 && std::all_of(k.begin(), k.end(), [](Kind x) { return x == Kind::Line || is_round(x) || x == Kind::Ellipse || x == Kind::Spline; });
   }
   return false;
 }
@@ -123,7 +125,7 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
 // between a circle or an arc and a spline. Such a build throws on the whole sketch (and on any later edit of it, which
 // fails the document's replay), so to_json keeps these apart in "more_constraints", a key it ignores.
 bool older_readers_refuse(CType t, const std::vector<Kind>& k) {
-  if (t == CType::Rigid) return true;  // a type they do not know
+  if (t == CType::Rigid || t == CType::Offset) return true;  // a type they do not know
   if (k.size() != 2) return false;
   if (t == CType::Smooth || t == CType::Curvature) return !(k[0] == Kind::Spline && k[1] == Kind::Spline);
   if (t == CType::Tangent) return (is_round(k[0]) && k[1] == Kind::Spline) || (k[0] == Kind::Spline && is_round(k[1]));
@@ -191,8 +193,10 @@ void check_constraint(const Sketch& sk, const SkConstraint& c, const Index* inde
     kinds.push_back(k);
   }
   if (!refs_fit(c.type, kinds)) throw Error(who + ": references do not fit the constraint type");
-  if (c.type == CType::Rigid && std::set<int>(c.refs.begin(), c.refs.end()).size() != c.refs.size())
+  if ((c.type == CType::Rigid || c.type == CType::Offset) && std::set<int>(c.refs.begin(), c.refs.end()).size() != c.refs.size())
     throw Error(who + ": names a point or curve twice");
+  if (c.type == CType::Offset && (c.sources < 1 || c.sources >= int(c.refs.size()) || c.reference || !(std::fabs(c.value) > 1e-9)))
+    throw Error(who + ": an offset names its source curves (\"sources\" of them) and then the curves it made, at a nonzero distance");
   for(int id:c.anchors)if(!has_point(sk,id,index))throw Error(who+": missing endpoint anchor");
   if(c.type==CType::Smooth || c.type==CType::Curvature || (c.type==CType::Tangent && std::find(kinds.begin(),kinds.end(),Kind::Spline)!=kinds.end())) {
     size_t splines=0;
@@ -455,8 +459,13 @@ json Sketch::to_json() const {
       if (!c.expr.empty()) o["expr"] = c.expr;
       o["pos"] = json::array({c.pos[0], c.pos[1]});
     }
+    if (c.type == CType::Offset) {
+      o["sources"] = c.sources;
+      o["built"] = c.built;
+      if (c.sharp) o["sharp"] = true;
+    }
     bool later = false;
-    if (c.type == CType::Smooth || c.type == CType::Curvature || c.type == CType::Tangent || c.type == CType::Rigid) {
+    if (c.type == CType::Smooth || c.type == CType::Curvature || c.type == CType::Tangent || c.type == CType::Rigid || c.type == CType::Offset) {
       std::vector<Kind> kinds;
       for (int ref : c.refs) kinds.push_back(kind_of(*this, ref));
       later = older_readers_refuse(c.type, kinds);
@@ -539,6 +548,11 @@ Sketch Sketch::from_json(const json& j) {
           c.pos[0] = pos[0];
           c.pos[1] = pos[1];
         }
+      }
+      if (c.type == CType::Offset) {
+        c.sources = o.value("sources", 0);
+        c.built = o.value("built", c.value);
+        c.sharp = o.value("sharp", false);
       }
       return c;
     };

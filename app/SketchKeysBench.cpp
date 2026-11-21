@@ -132,9 +132,9 @@ void SketchEditor::benchKeys() {
       case 1: {
         check(m_toolPreview && std::abs(extent(*m_toolPreview, false) + 8) < 1e-6, "the preview follows to 8");
         m_dimensionHandle->grab().save(prefix + ".handle.png");
-        send(Qt::Key_Return);
-        check(m_sk.entities.size() == 16 && std::abs(extent(m_sk, false) + 8) < 1e-6 && m_sel.empty(), "Enter applies the offset by 8");
-        check(m_tool == "offset" && !m_dimensionHandle->isVisible() && m_input->isVisible() && m_input->box(0)->placeholderText() == "8", "after Apply the distance box is back and still says 8");
+        send(Qt::Key_Return, Qt::ShiftModifier);  // Shift+Enter keeps the tool for the next curves (plain Enter closes it)
+        check(m_sk.entities.size() == 16 && std::abs(extent(m_sk, false) + 8) < 1e-6 && m_sel.empty(), "Shift+Enter applies the offset by 8");
+        check(m_tool == "offset" && !m_dimensionHandle->isVisible() && m_input->isVisible() && m_input->box(0)->placeholderText() == "8", "the tool stays after Shift+Enter, the distance box back and still saying 8");
         m_viewport->setFocus();
         type("3");
         check(option("distance") == "3" && m_input->typed(), "3 typed after Apply waits for the next curves");
@@ -144,8 +144,8 @@ void SketchEditor::benchKeys() {
       }
       case 2: {
         check(m_toolPreview && std::abs(extent(*m_toolPreview, true) - 103) < 1e-6, "its preview offsets by 3");
-        send(Qt::Key_Return);
-        check(m_sk.entities.size() == 24 && std::abs(extent(m_sk, true) - 103) < 1e-6, "Enter applies it");
+        send(Qt::Key_Return, Qt::ShiftModifier);
+        check(m_sk.entities.size() == 24 && std::abs(extent(m_sk, true) - 103) < 1e-6, "Shift+Enter applies it, the tool stays");
         // The tool panel has the keyboard (a click on one of its buttons): digits still reach the tool.
         QCoreApplication::processEvents();  // Apply rebuilt the panel's fields: Qt shows the new ones a turn later
         QPushButton* preview = nullptr;
@@ -378,7 +378,7 @@ void SketchEditor::benchKeys() {
         const SkEntity* line = nullptr;
         for (const auto& e : m_sk.entities)
           if (e.type == SkEntity::Type::Line && e.p.size() == 2 && at(e.p[0], 205, 202) && at(e.p[1], 225, 202)) line = &e;
-        check(line && !m_input->typed() && m_tool == "move", "Enter right after typing moves the line by (5, 2)");
+        check(line && !m_input->typed() && m_tool == "select", "Enter right after typing moves the line by (5, 2) and closes Move (a tool used once)");
         // Tools whose values live in the panel take typed digits too (a tolerance, an image's place, a node's weights).
         setTool("simplify");
         m_viewport->setFocus();

@@ -329,7 +329,7 @@ bool DynamicInput::eventFilter(QObject* target,QEvent* event) {
         if(box.field.text)return false;
         key->accept();if(press)type(QStringLiteral(","));return true;
       case Qt::Key_Return:case Qt::Key_Enter:
-        key->accept();if(press)emit committed();return true;
+        key->accept();if(press)emit committed(key->modifiers().testFlag(Qt::ShiftModifier));return true;
       case Qt::Key_Escape:
         key->accept();
         if(press)switch(inputkeys::escape(box.edit->text()!=box.before,typed())) {

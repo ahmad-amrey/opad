@@ -46,8 +46,9 @@ The newest version, ready to run: no account, no build.
 | Other Linux (64-bit) | [OPAD AppImage](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-linux-x86_64.AppImage) | Allow it to run as a program (file Properties, or `chmod +x`), then double-click it. |
 
 **The first time you start it:** these downloads are not code-signed yet, so your system asks first. On Windows, if
-"Windows protected your PC" appears, choose *More info*, then *Run anyway*. On a Mac, right-click OPAD in Applications,
-choose *Open*, then *Open* again.
+"Windows protected your PC" appears, choose *More info*, then *Run anyway*. On a Mac, double-click OPAD in Applications; when
+macOS says it could not verify OPAD, choose *Done*, open *System Settings > Privacy & Security*, choose *Open Anyway*
+next to the message about OPAD and confirm. You do this once.
 
 What is new in each version, older versions and checksums are on the [releases page](https://github.com/ahmad-amrey/opad/releases).
 To build OPAD yourself, see [Installation](#installation).

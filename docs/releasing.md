@@ -51,9 +51,13 @@ the code is built again.
 
 Caches: the first run builds OCCT (Windows, Linux) and the simulation engines (macOS), about 15 to 40 minutes; the
 Actions cache keeps them, and ccache keeps the compiled sources. Caches saved by runs on `main` are the ones every pull
-request can read. When a merge reuses its pull request's build, the "Warm cache" jobs build on `main` just the
-dependencies `main`'s cache does not have yet (a lookup, then nothing, when it has them). If pull request builds get
-slow because `main`'s ccache is old, run the workflow on `main` with "rebuild".
+request can read, and only a run on `main` can save them. So a pull request's run also uploads its dependencies and
+its ccache as an artifact (`caches-<system>`, kept as long as the packages), and when the merge reuses that run's build,
+the "Warm cache" jobs on `main` download them and save them under `main`: no build, and the next pull request starts
+with warm caches. The branch was up to date with `main` when it merged (the ruleset requires it), so the cache keys are
+the ones `main` needs. When there is no hand-over (an older run, or the artifact expired), the jobs build just the
+dependencies `main`'s cache lacks. If pull request builds get slow because `main`'s ccache is old, run the workflow on
+`main` with "rebuild".
 
 ## Protecting `main` and the tags
 

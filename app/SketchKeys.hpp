@@ -56,6 +56,25 @@ inline bool entersApply(const std::string& tool) {
     if (tool == t) return true;
   return false;
 }
+// What a tool does after its Apply (or Enter) changed the sketch: one normally used once closes (back to Select, its panel
+// with it), one used again and again stays. Shift held with Enter or the Apply button keeps a closing tool for another use.
+//   Close: the modify tools with an Apply step (move, copy, rotate, scale, align, mirror, offset, chamfer, the patterns,
+//     node weights, break, explode, heal, simplify, the region booleans), the reference tools, break link, the image and
+//     file tools.
+//   Stay: the chain and shape tools (the next shape), the click tools (trim, extend, split, fillet), the constraint and
+//     dimension tools (Rigid among them: pick, hold, pick again), select. A tool that declares nothing stays.
+// A new tool with an Apply button declares itself here.
+enum class AfterApply { Stay, Close };
+inline AfterApply afterApply(const std::string& tool) {
+  static const char* const closing[] = {"offset", "chamfer", "move", "copy", "rotate", "align", "scale", "rect_pattern", "polar_pattern", "node",
+                                        "mirror", "break", "union", "subtract", "intersect", "explode", "heal", "simplify", "project",
+                                        "intersect_body", "silhouette", "include3d", "break_link", "image_insert", "image_calibrate",
+                                        "image_edit", "image_trace", "image_remove", "vector_import", "vector_export"};
+  for (const char* t : closing)
+    if (tool == t) return AfterApply::Close;
+  return AfterApply::Stay;
+}
+inline bool closesAfterApply(const std::string& tool) { return afterApply(tool) == AfterApply::Close; }
 // The reference tools: their picks are sources in the model (edges, faces, bodies, other sketches), several at once.
 inline bool referenceTool(const std::string& tool) { return tool == "project" || tool == "intersect_body" || tool == "silhouette" || tool == "include3d"; }
 // Clicks that pick curves or loops rather than place points.
@@ -73,6 +92,12 @@ inline Enter enter(const State& s) {
   if (inChain(s)) return Enter::EndChain;
   if (s.tool == "mirror" && s.mirrorSeeds && s.selection) return Enter::PickMirrorLine;
   return s.applies ? Enter::Apply : Enter::None;
+}
+// Shift+Enter applies and keeps the tool only where Enter would apply a tool that closes after it (also with a value typed:
+// Enter takes it and applies); anywhere else Shift+Enter stays the window's Repeat last command.
+inline bool keepsOnShiftEnter(const State& s) {
+  const Enter e = enter(s);
+  return closesAfterApply(s.tool) && (e == Enter::Apply || (e == Enter::UseTyped && s.applies));
 }
 
 inline Esc escape(const State& s) {

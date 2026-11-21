@@ -75,7 +75,9 @@ class SketchEditor : public QObject, public SketchInput {
   QString option(const QString& key, const QString& fallback = {}) const;
   void setOption(const QString& key, const QString& value) { m_options[key] = value; }
   QString dimensionText(const opad::design::SkConstraint& c) const;  // "R1 in", "fx: 12.5 mm", "(45°)"
-  void applyTool();
+  // keep: Shift held with Enter or the Apply button: a tool that closes after its Apply (sketchkeys::afterApply) stays for
+  // another use.
+  void applyTool(bool keep = false);
   // References from outside the Project tool (a KiCad board's outline, mounting holes and parts by node, UI-134): read from a
   // copy of the document taken on a worker and derived there into the sketch's frame, all one change of the sketch; linked
   // ones follow their source when the design regenerates. False when the sketch or the document is busy.
@@ -89,7 +91,7 @@ class SketchEditor : public QObject, public SketchInput {
   // the ladder) and Close tool (Esc until the tool is closed). Each returns whether it did something.
   sketchkeys::State keyState() const;
   bool undoPoint();
-  bool done();
+  bool done(bool keep = false);  // keep: Shift+Enter (applyTool)
   bool escape();
   void closeTool();
   QString keyHints() const;  // what Backspace, Enter, Esc and Shift do now, for the prompt
@@ -134,6 +136,8 @@ class SketchEditor : public QObject, public SketchInput {
   int dof() const { return m_solved.dof; }
   // What the overlay draws now, for benches: "points", "rings" (free points), "bigPoints" and "texts" (glyphs, labels).
   QMap<QString, QStringList> drawn() const;
+  QString constraintTip(int id) const;  // what hovering that constraint's badge or value says (empty: no such constraint)
+  QStringList measured() const;         // the Measure tool's values now (benches)
   void bench(const QString& script);  // OPAD_BENCH_DESIGN: draws a dimensioned rectangle with a hole through the tool code paths
   void benchWorkflow();
   void benchPrimitives();
@@ -153,6 +157,9 @@ class SketchEditor : public QObject, public SketchInput {
   void benchEdits();
   void benchApply();
   void benchPointer();
+  void benchOneShot();  // OPAD_BENCH_SKETCH_ONESHOT: a tool used once closes after Apply, Shift keeps it
+  void benchMeasure();  // OPAD_BENCH_SKETCH_MEASURE: D measures, Shift+D dimensions, hovering a constraint names it
+  void benchMovement();  // OPAD_BENCH_SKETCH_MOVEMENT: a constraint added or a dimension changed moves only what it must
   void benchTrail();  // OPAD_BENCH_OVERLAY_TRAIL's sketch part (OverlayTrailBench.cpp)
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   size_t settingsReads() const { return m_settingsReads; }  // benches: once per change, never per mouse move
@@ -255,7 +262,7 @@ class SketchEditor : public QObject, public SketchInput {
   QList<DynamicInput::Field> inputStage() const;
   bool typingKey(const QKeyEvent* e) const;
   bool appliesOnEnter() const;  // an option tool with what it applies to picked: Enter applies
-  bool useTyped(const Snap* at = nullptr);
+  bool useTyped(const Snap* at = nullptr, bool keep = false);  // keep: an Apply it makes keeps a one-shot tool (Shift)
   bool pointTyped() const;  // a value typed that places the next point (not only an option of the tool)
   void updateInput();
   inputkeys::Entry entry() const;
@@ -352,6 +359,26 @@ class SketchEditor : public QObject, public SketchInput {
   bool applyConstraint(opad::design::SkConstraint::Type type, const std::vector<int>& ids, bool quiet);
   void constraintClick(const Hit& h);
   void dimensionClick(const Hit& h, double u, double v);
+  // The Measure tool (SketchMeasure.cpp, D in a sketch; Dimension is Shift+D): the picks (m_picked, so Esc and Backspace
+  // step back as in Dimension) measured, nothing added to the sketch. One point: where it is; one curve: its sizes; two:
+  // the distance between them (square to a line, between centres, the nearest points) and their angle when both are lines.
+  struct Measure {
+    QStringList lines;              // "Distance 12 mm", ... (the first is the main value)
+    bool segment = false;           // a dashed line from (au, av) to (bu, bv): what the distance runs between
+    double au = 0, av = 0, bu = 0, bv = 0;
+    double lu = 0, lv = 0;          // where its values are written
+  };
+  std::optional<Measure> measureResult() const;
+  void measureClick(const Hit& h);
+  QString entityName(int id) const;  // "Line 3", "Point 7" (the steps' and the tooltips' names)
+  // A constraint's badge or a dimension's value under the pointer says what it is (a tooltip after a rest, the status bar's
+  // hover text at once): its kind, its value, what it holds, what a click does there.
+  void hoverTip();
+  QTimer m_tipTimer;
+  int m_tipShown = 0;  // the constraint the hover text names (0: none)
+  // Least movement for the change being made (SolveOptions::moves, read by solveOptions): a constraint added gives way at
+  // its last pick first, then its other picks; a dimension changed at what it measures. Cleared once the change is solved.
+  std::vector<std::vector<int>> m_moves;
   void placeDimension(double u, double v);
   void editDimension(int id, bool fresh);
   void commitDimensionEdit();
@@ -432,6 +459,9 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<std::pair<double, double>> sampled(const opad::design::SkEntity& e) const;  // polyline of a curve, sketch coordinates
   double distanceTo(const opad::design::SkEntity& e, double u, double v) const;
   void labelPosition(const opad::design::SkConstraint& c, double& u, double& v) const;
+  // An offset relationship's leader: from the middle of its first source curve (m) to the nearest point of its offset (n);
+  // its value sits past n, so it follows the curves wherever they move. False when the curves cannot be drawn.
+  bool offsetLeader(const opad::design::SkConstraint& c, double& mu, double& mv, double& nu, double& nv) const;
   void toolPrompt();
   bool isFixedPoint(int id) const;
 
@@ -451,6 +481,7 @@ class SketchEditor : public QObject, public SketchInput {
   int m_session=0,m_modelRevision=0;
   Job* m_editJob=nullptr;
   bool m_previewRequested=false,m_previewComputing=false;
+  bool m_applyCloses=false;  // the Apply in progress ends a one-shot tool once it has changed the sketch (applied)
   QTimer m_toolPreviewTimer;
   QPointer<DimensionHandle> m_dimensionHandle;
   QPointer<DynamicInput> m_input;

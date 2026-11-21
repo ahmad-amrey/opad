@@ -4,7 +4,9 @@
 #include "DimensionHandle.hpp"
 #include "SketchPanel.hpp"
 #include "SketchSteps.hpp"
+#include "KeyText.hpp"
 #include <QPointer>
+#include <QScopeGuard>
 #include <QKeyEvent>
 #include <QSettings>
 #include <QCoreApplication>
@@ -28,6 +30,7 @@ SolveOptions SketchEditor::solveOptions() const {
   SolveOptions out;
   out.tolerance=m_settings.tolerance;
   out.max_iterations=m_settings.iterations;
+  out.moves=m_moves;
   return out;
 }
 
@@ -46,20 +49,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
     return s == "-0" ? QStringLiteral("0") : s;
   };
   auto at = [&](double u, double v) { return number(u) + ", " + number(v); };
-  auto name = [&](int id) {
-    if (m_sk.point(id)) return tr("Point %1").arg(id);
-    const SkEntity* e = m_sk.entity(id);
-    if (!e) return QString::number(id);
-    switch (e->type) {
-      case SkEntity::Type::Line: return tr("Line %1").arg(id);
-      case SkEntity::Type::Circle: return tr("Circle %1").arg(id);
-      case SkEntity::Type::Arc: return tr("Arc %1").arg(id);
-      case SkEntity::Type::Ellipse: return tr("Ellipse %1").arg(id);
-      case SkEntity::Type::Spline: return tr("Spline %1").arg(id);
-      case SkEntity::Type::Point: break;
-    }
-    return tr("Point %1").arg(id);
-  };
+  auto name = [&](int id) { return entityName(id); };
   auto names = [&](const std::vector<int>& ids) { QStringList n; for (int id : ids) n << name(id); return n.join(", "); };
   auto selection = [&] {
     int curves = 0;
@@ -86,6 +76,10 @@ QList<ToolStep> SketchEditor::toolSteps() const {
     const QString to = option("alignTo", "vertical");
     if (!m_picked.empty() && (to == "vertical" || to == "horizontal")) done(1, to == "vertical" ? tr("Vertical") : tr("Horizontal"));
     else if (m_picked.size() >= 2) done(1, name(m_picked[1]));
+  } else if (t == "measure") {  // what each pick measures alone or with the other, beside its name
+    if (!m_picked.empty()) done(0, name(m_picked[0]));
+    if (m_picked.size() >= 2) done(1, name(m_picked[1]));
+    if (const auto m = measureResult(); m && !m->lines.isEmpty()) done(m_picked.size() >= 2 ? 1 : 0, name(m_picked[m_picked.size() >= 2 ? 1 : 0]) + " · " + m->lines.join(" · "));
   } else if (t == "extend" || t == "tangent_circle" || t.startsWith("c:")) {
     for (size_t i = 0; i < m_picked.size(); ++i) done(int(i), name(m_picked[i]));
   } else if (t == "tangent_arc") {
@@ -119,10 +113,15 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   return out;
 }
 
-void SketchEditor::applyTool() {
+void SketchEditor::applyTool(bool keep) {
   if(!m_active)return;
   if(!m_previewRequested)dropPreviewJob();  // Apply (or Enter) right after a value changed: not lost to the preview being computed
   if(m_editJob)return;
+  // A tool normally used once ends when this Apply has changed the sketch (applied), unless Shift kept it; an Apply that
+  // fails or changes nothing leaves it as it is. The flag is this call's: a job it starts takes it along (runSketchEdit),
+  // so a later change by the same tool (an image dragged) does not close it.
+  if(!m_previewRequested)m_applyCloses=!keep && sketchkeys::closesAfterApply(m_tool.toStdString());
+  const auto ownFlag=qScopeGuard([this,preview=m_previewRequested]{if(!preview)m_applyCloses=false;});
   if(!m_previewRequested)m_toolPreviewTimer.stop();
   if(!m_previewRequested && m_toolPreview) {
     ++m_modelRevision;
@@ -174,6 +173,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
   if(!m_active || m_editJob)return;
   const auto before=std::make_shared<Sketch>(m_sk),after=std::make_shared<Sketch>(m_sk);
   const bool preview=m_previewRequested;
+  const bool closes=!preview && m_applyCloses;  // started by an Apply of a tool used once (applyTool): it closes on success
   m_previewComputing=preview;
   const int previewRevision=m_previewRevision;
   const int modelRevision=m_modelRevision;
@@ -197,7 +197,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
       }
       Bnd_Box box;BRepBndLib::Add(*shape,box);*prs=BodyPrs::build(*shape,box);
     }
-  },[this,guard,before,after,solved,session,preview,previewRevision,modelRevision,shape,prs](bool ok,const QString& error){
+  },[this,guard,before,after,solved,session,preview,closes,previewRevision,modelRevision,shape,prs](bool ok,const QString& error){
     if(!guard || !m_active || m_session!=session)return;
     m_editJob=nullptr;m_previewComputing=false;
     // A preview for an older value: shown while the handle is still dragged (the newest one is computed next), but
@@ -230,7 +230,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
       m_toolPreviewOverlay=overlay;if(m_visible)showToolPreview();
       if(!stale)emit status(tr("Preview ready. Press Enter or Apply to keep it, or change the values."));return;}
     ++m_modelRevision;m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
-    m_clicks.clear();m_picked.clear();m_sel.clear();applied();rebuild();scheduleFill();toolPrompt();emit changed();
+    m_applyCloses=closes;m_clicks.clear();m_picked.clear();m_sel.clear();applied();rebuild();scheduleFill();toolPrompt();emit changed();
   });
 }
 
@@ -297,15 +297,15 @@ bool SketchEditor::undoPoint() {
   return true;
 }
 
-bool SketchEditor::done() {
+bool SketchEditor::done(bool keep) {
   dropPreviewJob();
   if(!m_active || m_editJob)return false;
   switch(sketchkeys::enter(keyState())) {
     case sketchkeys::Enter::None:return false;
-    case sketchkeys::Enter::UseTyped:return useTyped();
+    case sketchkeys::Enter::UseTyped:return useTyped(nullptr,keep);
     case sketchkeys::Enter::EndChain:if(m_tool=="control_spline")finishPrimitive();else finishChain();break;
     case sketchkeys::Enter::PickMirrorLine:m_options["mirrorStage"]="axis";toolPrompt();break;  // the curves are chosen: now the line
-    case sketchkeys::Enter::Apply:applyTool();break;
+    case sketchkeys::Enter::Apply:applyTool(keep);break;
   }
   rebuild();emit changed();return true;
 }
@@ -349,6 +349,7 @@ QString SketchEditor::keyHints() const {
     out<<(m_tool!="line" && std::max(s.chain,s.clicks)>1?tr("Enter/Esc finish spline"):tr("Enter/Esc end chain"));
   else if(sketchkeys::enter(s)==Enter::PickMirrorLine)out<<tr("Enter pick mirror line");
   else if(sketchkeys::enter(s)==Enter::Apply)out<<tr("Enter apply");
+  if(keepsOnShiftEnter(s))out<<tr("%1 apply, keep tool").arg(keys::fixedText("shiftEnter"));  // a one-shot tool closes after Enter
   if(esc==Esc::BackToCurves)out<<tr("Esc back to curves");
   else if(esc==Esc::CancelStep)out<<(back==Back::UndoPick?tr("Esc clear picks"):tr("Esc cancel shape"));
   else if(esc==Esc::CloseTool)out<<tr("Esc close tool");
@@ -367,7 +368,7 @@ void SketchEditor::noteHints() {
 void SketchEditor::toggleReference() {
   if(!m_active)return;
   begin_change();bool any=false;
-  for(int id:m_sel)if(auto* c=m_sk.constraint(id);c && c->is_dimension()) {
+  for(int id:m_sel)if(auto* c=m_sk.constraint(id);c && c->is_dimension() && c->type!=SkConstraint::Type::Offset) {  // an offset always drives
     c->reference=!c->reference;c->expr.clear();c->value=dimension_value(m_sk,*c);any=true;
   }
   if(any)end_change(tr("Driving / reference"));else cancel_change();
@@ -536,6 +537,9 @@ void SketchEditor::applied() {
   if(m_tool=="mirror")m_options["mirrorStage"]="seed";  // the next curves to mirror, then their line
   if(m_tool=="image_calibrate"){m_options.remove("knownDistance");m_calibrateShown.clear();}  // the next two clicks show their own distance
   if(sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()){m_sources.clear();emit workflowChanged();}  // the next sources
+  // A one-shot tool is done (sketchkeys::afterApply): back to Select now, which closes its panel (the caller then prompts
+  // for Select). Not a turn later: a tool chosen again in between would be closed by it.
+  if(std::exchange(m_applyCloses,false))setTool("select");
 }
 void SketchEditor::showToolPreview() {
   if(m_toolPreviewOverlay.IsNull())return;

@@ -20,7 +20,10 @@ class AgentBridge : public QObject {
  public:
   AgentBridge(AppDocument*,DesignController*,Viewport*,JobRunner*,QWidget*);
   ~AgentBridge() override;
-  void settings();
+  // Settings > AI integration. page: 0 Connect an AI client, 1 Access and activity, 2 Client setup; -1: Connect while no
+  // client is connected, else Access and activity (AgentSettings.cpp).
+  void settings(int page = -1);
+  bool clientConnected() const;  // a client is bound to this window now
   void showActivity();
   void stop();
   void disconnectClients();

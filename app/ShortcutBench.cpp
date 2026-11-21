@@ -39,7 +39,8 @@ bool MainWindow::benchShortcuts() {
         require(action("view.alignPlane")->isEnabled(),"align view disabled in sketch");
         sketch->setVisible(false);require(!sketch->visible(),"active sketch cannot be hidden");sketch->setVisible(true);
         require(!action("inspect.distance")->isEnabled(),"measurement binding still active in sketch");
-        key(Qt::Key_D);require(m_design->sketch()->tool()=="dimension","sketch D shortcut");
+        key(Qt::Key_D);require(m_design->sketch()->tool()=="measure","sketch D shortcut (Measure)");
+        key(Qt::Key_D,Qt::ShiftModifier);require(m_design->sketch()->tool()=="dimension","sketch Shift+D shortcut (Dimension)");
         key(Qt::Key_T);require(m_design->sketch()->tool()=="trim","sketch T shortcut");
         key(Qt::Key_R);require(m_design->sketch()->tool()=="rect","sketch R shortcut");
         key(Qt::Key_A);require(m_design->sketch()->tool()=="arc3","sketch A shortcut");

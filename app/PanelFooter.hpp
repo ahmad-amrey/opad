@@ -43,6 +43,14 @@ class PanelFooter : public QWidget {
   void setPrimaryEnabled(bool on);
   // Off: Cancel and the primary never take the focus, so Esc, Enter and the tool's keys stay with the window (guided tools).
   void setKeysStayWithWindow(bool on);
+  // A tool normally used once closes after OK; on: Shift held with OK (a click, or Enter where the tool takes it) keeps it
+  // open for another use, and the footer says so (its hint unless the panel set one, and OK's tooltip).
+  void setShiftKeeps(bool on);
+  bool shiftAccepted() const { return m_shiftAccepted; }  // while accepted() is emitted: the click on OK had Shift held
+  // The key the primary button shows pressed (Enter, Shift+Enter: shift): accepted() as its click would, when it is shown,
+  // enabled and its key is Enter. False otherwise (nothing done).
+  bool entersPrimary() const;
+  bool pressPrimary(bool shift);
   QPushButton* primary() const { return m_primary; }
   QPushButton* cancel() const { return m_cancel; }
   QPushButton* back() const { return m_back; }
@@ -57,6 +65,7 @@ class PanelFooter : public QWidget {
   void backRequested();
  protected:
   void paintEvent(QPaintEvent*) override;  // the divider above it
+  bool eventFilter(QObject* watched, QEvent* event) override;  // the modifiers of the click on OK
  private:
   QPushButton* button(const QString& text, const QString& key);
   void relabel(QPushButton* button, const QString& text, const QString& key);
@@ -67,4 +76,7 @@ class PanelFooter : public QWidget {
   QPushButton* m_primary;
   QPushButton* m_back;
   QLabel* m_hint;
+  QString m_hintText;  // the panel's own hint (setHint), shown before the Shift one
+  bool m_shiftKeeps = false, m_primaryShift = false, m_shiftAccepted = false;
+  void showHint();
 };

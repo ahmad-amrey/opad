@@ -218,7 +218,7 @@ OPAD_BENCH(OPAD_BENCH_CONTEXT, contextmenus) {
         case 9: {
           if (w.m_design->featureActive()) return;
           Built b = build({state->component});
-          require(has(b, {"contextTitle", "contextFit", "contextFind", "design.newcomponent", "edit.rename", "contextDelete"}) && !b.names.contains("design.move") &&
+          require(has(b, {"contextTitle", "contextFit", "contextFind", "design.newcomponent", "edit.rename", "contextDelete", "design.move"}) &&  // moved by its placement
                       b.text("contextFind") == MainWindow::tr("Find %1 in the timeline").arg("Assembly") && b.text("contextDelete").startsWith(MainWindow::tr("Remove %1").arg("Assembly")),
                   "a component's entries: " + b.names.join(",").toStdString());
           pass("the component: " + b.names.join(", "));

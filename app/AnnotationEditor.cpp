@@ -420,7 +420,8 @@ void AnnotationEditor::build() {
   footer->addWidget(m_save);
   outer->addWidget(m_footerBar);
   connect(cancel, &QPushButton::clicked, this, &AnnotationEditor::cancel);
-  connect(m_save, &QPushButton::clicked, this, &AnnotationEditor::finish);
+  connect(m_save, &QPushButton::clicked, this, [this] { finish(std::exchange(m_saveShift, false)); });  // Shift+click: and another
+  m_save->setToolTip(tr("Saves and closes; with %1 held (%1+click, %2) another one starts at once").arg(keys::fixedText("shift"), keys::fixedText("shiftEnter")));
 }
 
 QWidget* AnnotationEditor::buildHeading(QVBoxLayout* layout, const QString& title, QLabel** value) {
@@ -738,7 +739,7 @@ void AnnotationEditor::eraseAt(const QPointF& point) {
   refresh();
 }
 
-void AnnotationEditor::finish() {
+void AnnotationEditor::finish(bool keep) {
   if (!m_active || m_dragging || !m_save->isEnabled()) return;
   const QString text = m_text->toPlainText().trimmed();
   // Drawn on a part an exploded view has moved: stored where the part is in the model (the view adds its offset back).
@@ -759,7 +760,9 @@ void AnnotationEditor::finish() {
   if (m_drawingMode) args["drawing"] = drawing;
   try {
     m_doc->run("annotate", args);  // one op, one Undo step; the document's change ends this editor
+    const bool drawing = m_drawingMode;
     cancel();
+    if (keep) emit anotherRequested(drawing);  // Shift: the window starts the next one
   } catch (const std::exception& e) {
     m_footer->setText(i18n::t(e.what()));
   }
@@ -795,6 +798,8 @@ void AnnotationEditor::detach() {
 // drawn from another side. The keys: Esc, Ctrl+Enter, and the pen keys once a drawing has its target.
 bool AnnotationEditor::eventFilter(QObject* object, QEvent* event) {
   if (!m_active || !m_viewport || !m_content) return false;
+  if (object == m_save && (event->type() == QEvent::MouseButtonRelease || event->type() == QEvent::KeyRelease))
+    m_saveShift = static_cast<QInputEvent*>(event)->modifiers().testFlag(Qt::ShiftModifier);  // the click on Save (clicked() does not say)
   switch (event->type()) {
     case QEvent::ShortcutOverride:
     case QEvent::KeyPress: return key(object, event);
@@ -818,7 +823,18 @@ bool AnnotationEditor::key(QObject* object, QEvent* event) {
   const int k = e->key();
   const auto modifiers = e->modifiers() & ~Qt::KeypadModifier;
   const bool typing = widget == m_text || m_text->isAncestorOf(widget);
-  const bool save = (modifiers & Qt::ControlModifier) && (k == Qt::Key_Return || k == Qt::Key_Enter);
+  const bool enter = k == Qt::Key_Return || k == Qt::Key_Enter;
+  // Shift+Enter is never the window's Repeat here (which would close the editor unsaved): a new line in the text, else
+  // Save and another note (or drawing) at once, as Ctrl+Shift+Enter and a Shift+click on Save do (a tool used once).
+  if (enter && modifiers == Qt::ShiftModifier) {
+    event->accept();
+    if (event->type() == QEvent::KeyPress) {
+      if (typing) m_text->insertPlainText(QStringLiteral("\n"));
+      else finish(true);
+    }
+    return true;
+  }
+  const bool save = (modifiers & Qt::ControlModifier) && enter;
   const bool history = e->matches(QKeySequence::Undo) || e->matches(QKeySequence::Redo);
   const bool penKey = (modifiers == Qt::NoModifier && (k == Qt::Key_B || k == Qt::Key_E || (k >= Qt::Key_1 && k <= Qt::Key_4)))
                       || k == Qt::Key_BracketLeft || k == Qt::Key_BracketRight;
@@ -829,7 +845,7 @@ bool AnnotationEditor::key(QObject* object, QEvent* event) {
     return true;
   }
   if (k == Qt::Key_Escape) cancel();
-  else if (save) finish();
+  else if (save) finish(modifiers.testFlag(Qt::ShiftModifier));
   else if (e->matches(QKeySequence::Undo)) undo();
   else if (e->matches(QKeySequence::Redo)) redo();
   else if (k == Qt::Key_B) chooseTool(false);

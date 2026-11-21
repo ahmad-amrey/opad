@@ -564,14 +564,14 @@ bool SketchEditor::pointTyped() const {
   return std::any_of(fields.begin(), fields.end(), [this](const DynamicInput::Field& f) { return !f.option && !m_input->text(f.key).isEmpty(); });
 }
 
-bool SketchEditor::useTyped(const Snap* at) {
+bool SketchEditor::useTyped(const Snap* at, bool keep) {
   const auto fields = inputStage();
   if (fields.isEmpty() || !m_input->typed()) return false;
   if (!pointTyped()) {  // options only (a polygon's sides, a conic's rho beside the point's boxes): set, the point waits
     // Set as they were typed. Enter applies the tool when something is picked, else the value waits for the pick (the
     // fillet's and the tangent circle's picks apply it themselves).
     forgetTyped();
-    if (kAppliedNow.contains(m_tool) || appliesOnEnter()) applyTool();
+    if (kAppliedNow.contains(m_tool) || appliesOnEnter()) applyTool(keep);
     else if (kApplied.contains(m_tool)) emit status(tr("The value waits: pick what it applies to."));
     else if (m_tool == "text") emit status(tr("Click where the text goes, or Tab to its X and Y and Enter."));
     updateInput();

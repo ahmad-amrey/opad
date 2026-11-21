@@ -2,6 +2,7 @@
 #include "MainWindow.hpp"
 
 #include <QStatusBar>
+#include <QTimer>
 
 #include <utility>
 
@@ -33,6 +34,13 @@ void MainWindow::startAnnotation(bool drawing) {
   m_annotationEditor = new AnnotationEditor(m_doc, m_viewport, m_annotationPanel, this, drawing);
   connect(m_design, &DesignController::stateChanged, m_annotationEditor, &AnnotationEditor::cancel);
   connect(m_annotationEditor, &QObject::destroyed, this, &MainWindow::syncAnnotationActions);
+  // Saved with Shift held (a tool used once kept open): the next one of the same kind, once this one has let go.
+  connect(m_annotationEditor, &AnnotationEditor::anotherRequested, this, [this](bool again) {
+    QTimer::singleShot(0, this, [this, again] {
+      m_annotationEditor = nullptr;  // the saved one is detached and on its way out (deleteLater)
+      startAnnotation(again);
+    });
+  }, Qt::QueuedConnection);
   m_annotationEditor->adoptSelection(selected);
   syncAnnotationActions();
 }
