@@ -1,3 +1,7 @@
+# Test programs keep their symbols in the single-file build (cmake/static.cmake strips release links): a test that
+# crashes in CI gets a backtrace with function names. Tests are never shipped.
+string(REPLACE " -s" "" CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}")
+
 add_executable(opad-fixtures fixtures.cpp)
 target_link_libraries(opad-fixtures PRIVATE opad::core)
 
@@ -62,6 +66,9 @@ if(TARGET opad)
   set_target_properties(opad-test-update-check PROPERTIES AUTOMOC ON)
   target_include_directories(opad-test-update-check PRIVATE ../app)
   target_link_libraries(opad-test-update-check PRIVATE Qt6::Network)
+  if(OPAD_STATIC)  # its fake GitHub is plain HTTP on a local socket: no TLS backend (OpenSSL's would need libssl)
+    qt_import_plugins(opad-test-update-check EXCLUDE_BY_TYPE tls networkinformation)
+  endif()
   add_test(NAME update-check COMMAND opad-test-update-check)
 endif()
 
