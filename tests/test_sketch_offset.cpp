@@ -246,4 +246,59 @@ TEST(offset_too_far_inside_is_refused) {
   CHECK_THROWS(evaluate_dimensions(tried));
 }
 
+// An open chain offsets to ONE side, a parallel copy (it used to come back as a closed loop round both sides with end caps):
+// the side of the point given (the pointer's), for a line, an arc and a chain; the relationship keeps that side.
+TEST(open_chain_offsets_to_one_side) {
+  {  // one line along X: the copy above it, then below it
+    for (const double side : {5.0, -5.0}) {
+      Sketch sk;
+      const int line = sk.add_line(sk.add_point(0, 0), sk.add_point(20, 0));
+      const double d = offset_side(sk, {line}, 3, false, 10, side);
+      const auto made = offset_entities(sk, {line}, d, false);
+      CHECK_EQ(made.size(), size_t(1));
+      const SkEntity* copy = sk.entity(made[0]);
+      CHECK(copy && copy->type == SkEntity::Type::Line);
+      const SkPoint *a = sk.point(copy->p[0]), *b = sk.point(copy->p[1]);
+      CHECK(std::fabs(a->y - (side > 0 ? 3 : -3)) < 1e-6 && std::fabs(b->y - a->y) < 1e-6);
+      CHECK(std::fabs(std::fabs(b->x - a->x) - 20) < 1e-6);  // as long as the line: no caps
+    }
+  }
+  {  // a quarter arc of radius 10: the copy outside (radius 12) where the point is outside
+    Sketch sk;
+    const int arc = sk.add_arc(sk.add_point(0, 0), sk.add_point(10, 0), sk.add_point(0, 10));
+    const double d = offset_side(sk, {arc}, 2, false, 9, 9);
+    const auto made = offset_entities(sk, {arc}, d, false);
+    CHECK_EQ(made.size(), size_t(1));
+    const SkEntity* copy = sk.entity(made[0]);
+    CHECK(copy && copy->type == SkEntity::Type::Arc);
+    const SkPoint *c = sk.point(copy->p[0]), *s = sk.point(copy->p[1]);
+    CHECK(std::fabs(std::hypot(s->x - c->x, s->y - c->y) - 12) < 1e-6);
+  }
+  {  // an L of two lines: one open chain on the inside of the L
+    Sketch sk;
+    const int a = sk.add_point(0, 10), b = sk.add_point(0, 0), c = sk.add_point(10, 0);
+    const std::vector<int> chain{sk.add_line(a, b), sk.add_line(b, c)};
+    const double d = offset_side(sk, chain, 2, false, 5, 5);
+    const auto made = offset_entities(sk, chain, d, false);
+    CHECK(made.size() == 2);
+    std::map<int, int> ends;  // an open chain: two ends used once
+    for (int id : made) for (int p : sk.entity(id)->p) ++ends[p];
+    CHECK(std::count_if(ends.begin(), ends.end(), [](const auto& e) { return e.second == 1; }) == 2);
+    for (int id : made) for (int p : sk.entity(id)->p) CHECK(sk.point(p)->x > 1.9 - 1e-6 && sk.point(p)->y > 1.9 - 1e-6);
+  }
+  {  // the relationship on one line: the copy stays on its side when the distance changes
+    Sketch sk;
+    const int line = sk.add_line(sk.add_point(0, 0), sk.add_point(20, 0));
+    const double d = offset_side(sk, {line}, 3, false, 10, -5);
+    const int rel = offset_relationship(sk, {line}, d, false);
+    CHECK(solve(sk).converged);
+    sk.constraint(rel)->value = d / 3 * 7;
+    evaluate_dimensions(sk);
+    CHECK(solve(sk).converged);
+    const SkConstraint* c = sk.constraint(rel);
+    const SkEntity* copy = sk.entity(c->refs.back());
+    CHECK(copy && std::fabs(sk.point(copy->p[0])->y + 7) < 1e-6);
+  }
+}
+
 CHECK_MAIN()

@@ -1,5 +1,7 @@
 #include "BrowserDelegate.hpp"
 
+#include <QFontInfo>
+
 #include <QAbstractItemView>
 #include <QDateTime>
 #include <QFontMetrics>
@@ -53,10 +55,14 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   } else if (opt.state & QStyle::State_MouseOver) {
     p->fillRect(full, t.bg3);
   }
+  // The row being renamed shows its editor's text alone: the painted name under it showed at the editor's edges.
+  const bool renaming = (opt.state & QStyle::State_Editing) || (m_editing.isValid() && m_editing == index);
+  if (renaming) ++m_namesSkipped;
   // The name up to the decorators' badges (cut short before them), or as it always was when there are none.
   auto drawName = [&](const QString& name, int right) {
     const std::vector<QRect> badges = badgeRects(d, r, right);
     paintBadges(p, d, badges, opt.widget);
+    if (renaming) return;
     p->setFont(nameFont);
     const int width = badges.empty() ? r.width() - kNameX : std::max(10, badges.back().left() - 6 - (r.left() + kNameX));
     p->drawText(QRect(r.left() + kNameX, r.top(), width, r.height()), Qt::AlignVCenter | Qt::AlignLeft,
@@ -126,7 +132,7 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   QString name = index.data(kNameRole).toString();
   if (n->kind == opad::Node::Kind::Body && n->representation != "solid")
     name += n->representation == "mesh" ? tr(" [mesh]") : tr(" [2D]");
-  p->drawText(QRect(x, r.top(), std::max(10, right - x), r.height()), Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, std::max(10, right - x)));
+  if (!renaming) p->drawText(QRect(x, r.top(), std::max(10, right - x), r.height()), Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, std::max(10, right - x)));
   p->restore();
 }
 
@@ -293,10 +299,36 @@ bool BrowserDelegate::helpEvent(QHelpEvent* e, QAbstractItemView* view, const QS
 QWidget* BrowserDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem&, const QModelIndex& index) const {
   if (decoration(index).readOnly) return nullptr;  // no rename (F2, double-click)
   auto* e = new QLineEdit(parent);
-  e->setFrame(true);
+  e->setObjectName("browserRename");
+  e->setFrame(false);  // flat over the row, its own background: nothing of the row shows through
+  e->setAutoFillBackground(true);
+  e->setTextMargins(0, 0, 0, 0);
+  e->setContentsMargins(0, 0, 0, 0);
+  const browser::Decoration d = decoration(index);
+  QFont font = theme::ui(13);  // the row's own name font: the text does not jump when the editor opens
+  if (d.italic) font.setItalic(true);
+  if (d.bold) font.setBold(true);
+  e->setFont(font);
+  // The window's stylesheet gives every line edit a border, rounded corners, 8 px padding and its own height: the corners
+  // left the painted name showing and the text started elsewhere. Here: flat, square, no padding, the row's height and font.
+  const Tokens& t = theme::current();
+  e->setStyleSheet(QString("QLineEdit#browserRename { background: %1; color: %2; border: none; border-radius: 0; padding: 0 0 0 2px; margin: 0; "
+                           "min-height: 0; height: %3px; font-size: %4px; font-weight: %5; font-style: %6; selection-background-color: %7; }")
+                       .arg(theme::css(t.bg), theme::css(t.fg)).arg(theme::px(28)).arg(QFontInfo(font).pixelSize())
+                       .arg(d.bold ? "bold" : "normal", d.italic ? "italic" : "normal", theme::css(t.selbg)));
+  e->setLayoutDirection(Qt::LeftToRight);  // the row's columns are fixed left to right in every language (BrowserPanel)
+  m_editing = index;
   return e;
 }
 
+void BrowserDelegate::destroyEditor(QWidget* editor, const QModelIndex& index) const {
+  if (m_editing == index) m_editing = QPersistentModelIndex();
+  QStyledItemDelegate::destroyEditor(editor, index);
+}
+
+// Exactly on the name's text: from where the name is painted to the row's end, the row's full height.
 void BrowserDelegate::updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& opt, const QModelIndex&) const {
-  editor->setGeometry(QRect(opt.rect.left() + kNameX - 4, opt.rect.top() + 1, opt.rect.width() - kNameX, opt.rect.height() - 2));
+  const QRect r = opt.rect;
+  const int left = r.left() + kNameX - 2;  // QLineEdit's own text inset: its text starts where the name was painted
+  editor->setGeometry(QRect(left, r.top(), std::max(40, r.right() + 1 - left), r.height()));
 }
