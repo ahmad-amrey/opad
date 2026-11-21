@@ -1,17 +1,23 @@
-# Builds and tests OPAD on Windows, Linux and macOS for every pull request to main and every push to it, and publishes
-# the releases (docs/releasing.md).
+# Builds and tests OPAD on Windows, Linux and macOS for every pull request to dev or main and every push to them, and
+# publishes the development builds and the releases (docs/releasing.md).
+#
+# Two branches: dev takes every pull request, and each push to it publishes a development build, a GitHub pre-release
+# `dev-<build>` that installed copies set to "Offer development builds" are told about. main only moves forward to a
+# tested commit of dev ("Promote dev to main", .github/workflows/promote.yml, a fast-forward), so it always holds the
+# latest release.
 #
 # Releases follow the version in CMakeLists.txt (project(opad VERSION X.Y.Z)), the one place it is written: when a push
-# to main changes it to a version without a published release, normally the merge of the pull request that raised it,
-# the run creates the tag vX.Y.Z on that commit and publishes the release: the CHANGELOG.md section of X.Y.Z, a downloads table
-# (tools/release_downloads.md), GitHub's list of merged pull requests, and the packages. A pull request that raises the
-# version must keep it above the latest release and bring its dated "## [X.Y.Z] - YYYY-MM-DD" section, the newest in
-# the changelog; its check then says "Merging this pull request publishes OPAD X.Y.Z". Pushing a vX.Y.Z tag on a
-# commit of main by hand publishes too (a release lost to a failed run).
+# to main changes it to a version without a published release, normally the promotion of a dev that raised it, the run
+# creates the tag vX.Y.Z on that commit and publishes the release: the CHANGELOG.md section of X.Y.Z, a downloads table
+# (tools/release_downloads.md), GitHub's list of merged pull requests, and the packages. Raising the version on dev
+# makes its next development build the release candidate. A pull request that raises the version must keep it above the
+# latest release and bring its dated "## [X.Y.Z] - YYYY-MM-DD" section, the newest in the changelog. Pushing a vX.Y.Z
+# tag on a commit of main by hand publishes too (a release lost to a failed run).
 #
 # Each successful build is recorded under the git tree hash of the code it built (a "tested-<tree>" artifact). When a
-# later run sees exactly the same code, typically the push of a merged pull request that was up to date with main, it
-# skips the builds and the release publishes the packages of that earlier run. Anything that differs is built and
+# later run sees exactly the same code, typically the push of a merged pull request that was up to date with its base,
+# or the promotion of dev to main, it skips the builds and publishes the packages of that earlier run: a release is the
+# very binaries of its release candidate. Anything that differs is built and
 # tested again. Run the workflow by hand with "rebuild" to build anyway.
 #
 # Packages: Windows = installer (installer/opad.iss) and single-file exe (windows-static-ucrt64 preset: Qt and OCCT
@@ -20,15 +26,18 @@
 # sources; macOS takes Homebrew's. The simulation engines, Python module and plugins are off in the Windows and Linux
 # packages.
 #
+# Every build carries its build number (the run number, OPAD_BUILD_NUMBER) and commit (OPAD_BUILD_COMMIT): the update
+# check orders development builds by it.
+#
 # Actions are pinned to exact commits; update the SHA and the version comment together. The check to require in the
-# main ruleset is "Tested" alone (it fails when the version checks or any platform failed or were cancelled).
+# dev and main rulesets is "Tested" alone (it fails when the version checks or any platform failed or were cancelled).
 name: Build
 
 on:
   pull_request:
-    branches: [main]
+    branches: [dev, main]
   push:
-    branches: [main]
+    branches: [dev, main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
@@ -40,16 +49,19 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same pull request replaces its run. Runs on main and tags each have their own group (by commit):
-# GitHub keeps one pending run per group and cancels the older pending one, which on main could be the release.
+# A newer push to the same pull request replaces its run. Runs on dev, main and tags each have their own group (by
+# branch and commit): GitHub keeps one pending run per group and cancels the older pending one, which could be a
+# release; a promotion's run on main never waits behind, or is cancelled by, dev's run of the same commit.
 concurrency:
-  group: build-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: build-${{ github.event_name == 'pull_request' && github.ref || format('{0}@{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CCACHE_MAXSIZE: 1500M
-  # Packages of a tag are the release's; those of other runs are kept a week (a release reusing them takes them then).
-  ARTIFACT_DAYS: ${{ github.ref_type == 'tag' && 30 || 7 }}
+  # Packages are kept a month: a release candidate on dev may be tested for a while before it is promoted, and the
+  # release then publishes those very packages. The caches handed to dev and main (caches-*) only need a week.
+  ARTIFACT_DAYS: 30
+  HANDOVER_DAYS: 7
   MSYS2_PACKAGES: >-
     mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ccache
     mingw-w64-ucrt-x86_64-qt6-static mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-nlohmann-json
@@ -75,8 +87,12 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
+      released: ${{ steps.version.outputs.released }}
+      latest: ${{ steps.version.outputs.latest }}
+      dev: ${{ steps.version.outputs.dev }}
       tree: ${{ steps.reuse.outputs.tree }}
       reuse-run: ${{ steps.reuse.outputs.run }}
+      build: ${{ steps.reuse.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read and check the version
@@ -139,10 +155,20 @@ jobs:
               else
                 release=true
               fi
-            elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            elif [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$GITHUB_BASE_REF" = main ]; then
               echo "::notice title=Release::Merging this pull request publishes OPAD $version."
+            elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              echo "::notice title=Release candidate::Merging this pull request into $GITHUB_BASE_REF makes the release candidate of OPAD $version (a development build); Actions > Promote dev to main then publishes it."
             fi
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$GITHUB_BASE_REF" = dev ]; then
+            echo "::notice title=Development build::Merging this pull request into dev publishes a development build for testing (a pre-release, offered only to copies set to Offer development builds)."
           fi
+          # A push to dev publishes a development build of whatever it holds (the release candidate when the version is new).
+          dev=false
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/dev ]; then dev=true; fi
+          echo "dev=$dev" >> "$GITHUB_OUTPUT"
+          echo "released=$released" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
           if [ "$release" = true ] || [ "$released" = false ]; then
             if ! sh tools/changelog_section.sh "$version" > /dev/null; then
               echo "::error file=CHANGELOG.md::version $version needs a '## [$version] - YYYY-MM-DD' section with its release notes"
@@ -150,6 +176,12 @@ jobs:
             fi
             if ! tr -d '\r' < CHANGELOG.md | grep -qE "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*$"; then
               echo "::error file=CHANGELOG.md::date the section of $version: '## [$version] - YYYY-MM-DD' (the day it is published)"
+              exit 1
+            fi
+            # While $version is being released, its fixes go into its own section: entries left under [Unreleased]
+            # would be missing from its notes and roll into the next version.
+            if sh tools/changelog_section.sh Unreleased > /dev/null 2>&1; then
+              echo "::error file=CHANGELOG.md::$version is not released yet: move the entries under [Unreleased] into its section '## [$version]'"
               exit 1
             fi
           fi
@@ -165,16 +197,32 @@ jobs:
           echo "Code tree: $tree"
           if [ "$REBUILD" = true ]; then
             echo "Rebuild requested."
+            echo "build=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # A build is reused only from a run whose commit has exactly this tree. ci.yml is part of the tree, so the
           # packages were made by the same reviewed workflow that is running now, never by a branch or fork whose own
           # workflow could have produced anything. A pull request's run counts when its branch was up to date with
-          # main (its head then has the tree of the merge).
+          # its base (its head then has the tree of the merge); a promotion to main finds dev's build of that commit.
           run=""
-          candidates=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=tested-$tree&per_page=20" \
-            --jq '.artifacts[] | select(.expired | not) | .workflow_run.id' | sort -u)
+          # Only this repository's own runs (a fork's run may carry the same artifact name), every page.
+          candidates=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=tested-$tree&per_page=100" \
+            --jq '.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)
+                  | .workflow_run.id' | sort -u)
+          # A push to dev must publish a build newer than every development build already out (the update check orders
+          # them by build number): code that comes back exactly (a revert) is built again rather than reused.
+          newest_dev=0
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/dev ]; then
+            newest_dev=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | .tag_name | select(test("^dev-[0-9]+$")) | ltrimstr("dev-")' | sort -n | tail -1)
+            newest_dev=${newest_dev:-0}
+          fi
           for id in $candidates; do
+            number=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .run_number)
+            if [ "$number" -le "$newest_dev" ]; then
+              echo "Run $id (build $number) is not newer than development build $newest_dev; building again."
+              continue
+            fi
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" \
               --jq '[.conclusion, .path, .head_repository.full_name, .head_sha] | @tsv' > run.tsv
             IFS=$'\t' read -r conclusion path head_repo head_sha < run.tsv
@@ -200,8 +248,11 @@ jobs:
           done
           if [ -z "$run" ]; then
             echo "No earlier build of exactly this code; building it."
+            echo "build=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # The packages carry the build number of the run that built them.
+          echo "build=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .run_number)" >> "$GITHUB_OUTPUT"
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "::notice title=Reusing an earlier build::This exact code was built and tested in run $run ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run), so the builds are skipped."
 
@@ -216,6 +267,8 @@ jobs:
         shell: msys2 {0}
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      OPAD_BUILD_NUMBER: ${{ github.run_number }}
+      OPAD_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -323,21 +376,21 @@ jobs:
         with:
           path: .ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}
-      # Hand-over to main (the warm-* jobs): caches saved here stay with this pull request, and the merge that reuses
-      # this run's packages builds nothing on main, so the dependencies and ccache go along as an artifact.
+      # Hand-over (the warm-* jobs): caches saved here stay with this pull request (or dev), and the merge or promotion
+      # that reuses this run's packages builds nothing, so the dependencies and ccache go along as an artifact.
       - name: Pack the caches for main
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/dev'
         shell: bash
         run: |
           mkdir -p handover
           tar -cf handover/deps.tar build/windows-static-ucrt64/occt/install
           tar -cf handover/ccache.tar .ccache
           printf '%s\n' '${{ steps.deps.outputs.cache-primary-key }}' > handover/deps-key
-      - if: github.event_name == 'pull_request'
+      - if: github.event_name == 'pull_request' || github.ref == 'refs/heads/dev'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: caches-windows
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ env.HANDOVER_DAYS }}
           compression-level: 0
           if-no-files-found: error
           path: handover
@@ -359,6 +412,8 @@ jobs:
     timeout-minutes: 300
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      OPAD_BUILD_NUMBER: ${{ github.run_number }}
+      OPAD_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       APPIMAGE_EXTRACT_AND_RUN: 1  # linuxdeploy is an AppImage itself; no FUSE on the runner
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -440,21 +495,21 @@ jobs:
         with:
           path: .ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}
-      # Hand-over to main (the warm-* jobs): caches saved here stay with this pull request, and the merge that reuses
-      # this run's packages builds nothing on main, so the dependencies and ccache go along as an artifact.
+      # Hand-over (the warm-* jobs): caches saved here stay with this pull request (or dev), and the merge or promotion
+      # that reuses this run's packages builds nothing, so the dependencies and ccache go along as an artifact.
       - name: Pack the caches for main
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/dev'
         shell: bash
         run: |
           mkdir -p handover
           tar -cf handover/deps.tar build/linux/occt/install
           tar -cf handover/ccache.tar .ccache
           printf '%s\n' '${{ steps.deps.outputs.cache-primary-key }}' > handover/deps-key
-      - if: github.event_name == 'pull_request'
+      - if: github.event_name == 'pull_request' || github.ref == 'refs/heads/dev'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: caches-linux
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ env.HANDOVER_DAYS }}
           compression-level: 0
           if-no-files-found: error
           path: handover
@@ -480,6 +535,8 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       HOMEBREW_NO_AUTO_UPDATE: 1
+      OPAD_BUILD_NUMBER: ${{ github.run_number }}
+      OPAD_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -557,21 +614,21 @@ jobs:
         with:
           path: .ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}
-      # Hand-over to main (the warm-* jobs): caches saved here stay with this pull request, and the merge that reuses
-      # this run's packages builds nothing on main, so the dependencies and ccache go along as an artifact.
+      # Hand-over (the warm-* jobs): caches saved here stay with this pull request (or dev), and the merge or promotion
+      # that reuses this run's packages builds nothing, so the dependencies and ccache go along as an artifact.
       - name: Pack the caches for main
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/dev'
         shell: bash
         run: |
           mkdir -p handover
           tar -cf handover/deps.tar build/macos/eigen build/macos/chrono/install build/macos/netgen/install
           tar -cf handover/ccache.tar .ccache
           printf '%s\n' '${{ steps.deps.outputs.cache-primary-key }}' > handover/deps-key
-      - if: github.event_name == 'pull_request'
+      - if: github.event_name == 'pull_request' || github.ref == 'refs/heads/dev'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: caches-macos
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ env.HANDOVER_DAYS }}
           compression-level: 0
           if-no-files-found: error
           path: handover
@@ -626,9 +683,10 @@ jobs:
   release:
     name: Release
     # Explicit status checks: a plain condition implicitly requires every upstream job to have succeeded, and the
-    # platform jobs behind Tested are skipped when an earlier build is reused.
+    # platform jobs behind Tested are skipped when an earlier build is reused. A push to main or a tag publishes the
+    # release; a push to dev, a development build (a pre-release).
     if: >-
-      !cancelled() && needs.version.outputs.release == 'true'
+      !cancelled() && (needs.version.outputs.release == 'true' || needs.version.outputs.dev == 'true')
       && needs.version.result == 'success' && needs.tested.result == 'success'
     needs: [version, tested]
     runs-on: ubuntu-latest
@@ -637,6 +695,10 @@ jobs:
       actions: read
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      BUILD: ${{ needs.version.outputs.build }}
+      DEV: ${{ needs.version.outputs.release != 'true' && needs.version.outputs.dev == 'true' }}
+      RELEASED: ${{ needs.version.outputs.released }}
+      LATEST: ${{ needs.version.outputs.latest }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -678,29 +740,85 @@ jobs:
           done
       - name: Release notes
         run: |
-          sh tools/changelog_section.sh "$VERSION" > notes.md
+          if [ "$DEV" = true ]; then
+            if [ "$RELEASED" = false ]; then
+              {
+                echo "Release candidate of OPAD $VERSION, build $BUILD, from the dev branch: the binaries that become"
+                echo "OPAD $VERSION when they are promoted. For testing; installed copies set to *Offer development builds*"
+                echo "are told about it."
+                echo
+                sh tools/changelog_section.sh "$VERSION"
+              } > notes.md
+            else
+              {
+                echo "Development build $BUILD of OPAD, from the dev branch: what is merged since OPAD ${LATEST:-$VERSION},"
+                echo "for testing before the next release. Installed copies set to *Offer development builds* are told about it."
+                echo
+                sh tools/changelog_section.sh Unreleased || echo "_No changelog entries yet._"
+              } > notes.md
+            fi
+          else
+            sh tools/changelog_section.sh "$VERSION" > notes.md
+          fi
           sed "s/@VERSION@/$VERSION/g" tools/release_downloads.md >> notes.md
+          # What the update check reads: the build these packages carry and the version they say.
+          printf '\n<!-- opad-build: %s; opad-version: %s -->\n' "$BUILD" "$VERSION" >> notes.md
           cat notes.md
-      - name: Publish the release
+      - name: Publish the development build
+        if: env.DEV == 'true'
         run: |
+          tag="dev-$BUILD"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            target=$(git rev-list -n 1 "refs/tags/$tag" 2>/dev/null || true)
+            if [ "$target" = "$GITHUB_SHA" ]; then
+              echo "::notice::$tag is already published for this commit (a re-run)."
+              exit 0
+            fi
+            echo "::error::$tag already exists for another commit (${target:-unknown}): this push's build is not newer. Re-run the workflow on dev with \"rebuild\"."
+            exit 1
+          fi
+          if [ "$RELEASED" = false ]; then title="OPAD $VERSION release candidate (build $BUILD)"; else title="OPAD development build $BUILD"; fi
+          start=()
+          if [ -n "$LATEST" ]; then start=(--notes-start-tag "v$LATEST"); fi
+          gh release create "$tag" dist/* --prerelease --latest=false --target "$GITHUB_SHA" --title "$title" \
+            --notes-file notes.md --generate-notes "${start[@]}"
+          echo "::notice title=Development build::$title: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag"
+      - name: Keep the ten newest development builds
+        if: env.DEV == 'true'
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.prerelease and (.tag_name | test("^dev-[0-9]+$"))) | .tag_name' \
+            | sort -t- -k2 -n -r | tail -n +11 | while read -r old; do
+                echo "Removing $old"
+                gh release delete "$old" --cleanup-tag --yes
+              done
+      - name: Publish the release
+        if: env.DEV != 'true'
+        run: |
+          # GitHub's list of merged pull requests since the previous release, not since the last development build.
+          start=()
+          if [ -n "$LATEST" ] && [ "$LATEST" != "$VERSION" ]; then start=(--notes-start-tag "v$LATEST"); fi
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "OPAD $VERSION" \
-              --notes-file notes.md --generate-notes
+              --notes-file notes.md --generate-notes "${start[@]}"
           else
             # Creates the vX.Y.Z tag on this commit of main. Tags created with the workflow's token start no new run.
             gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --title "OPAD $VERSION" \
-              --notes-file notes.md --generate-notes
+              --notes-file notes.md --generate-notes "${start[@]}"
           fi
 
-  # Caches made on a pull request stay with it; those made on main are the ones every pull request reads, and only a run on
-  # main can save them. When a merge reuses its pull request's build, main builds nothing, so these jobs take the caches
-  # that pull request's run handed over as an artifact (`caches-<system>`: its dependencies, their cache key and its
-  # ccache) and save them under main: a download, no build. A branch merged up to date with main has the same recipes, so
-  # the keys match what main's next pull request looks for. Without a hand-over, they build only what main lacks.
+  # Caches made on a pull request stay with it; those made on dev and main are the ones the pull requests into them read,
+  # and only a run on that branch can save them. When a merge (or a promotion) reuses an earlier build, the branch builds
+  # nothing, so these jobs take the caches that build's run handed over as an artifact (`caches-<system>`: its
+  # dependencies, their cache key and its ccache) and save them under the branch: a download, no build. Code merged up to
+  # date has the same recipes, so the keys match what the next pull request looks for. Without a hand-over, they build
+  # only what the branch's cache lacks.
   warm-windows:
     name: Warm cache (Windows)
     needs: version
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.reuse-run != ''
+    if: >-
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+      && needs.version.outputs.reuse-run != ''
     runs-on: windows-latest  # the platform job's runner: a cache is only found on the system that saved it
     timeout-minutes: 120
     permissions:
@@ -778,7 +896,9 @@ jobs:
   warm-linux:
     name: Warm cache (Linux)
     needs: version
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.reuse-run != ''
+    if: >-
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+      && needs.version.outputs.reuse-run != ''
     runs-on: ubuntu-24.04  # the platform job's runner: a cache is only found on the system that saved it
     timeout-minutes: 120
     permissions:
@@ -849,7 +969,9 @@ jobs:
   warm-macos:
     name: Warm cache (macOS)
     needs: version
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.reuse-run != ''
+    if: >-
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+      && needs.version.outputs.reuse-run != ''
     runs-on: macos-15  # the platform job's runner: a cache is only found on the system that saved it
     timeout-minutes: 120
     permissions:

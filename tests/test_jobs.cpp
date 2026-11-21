@@ -77,22 +77,19 @@ TEST(others_beside_the_oldest_job) {
   Job* c = jobs.begin("Third");
   Job* tidy = jobs.begin("Tidy", false, JobKind::Background);
   CHECK(strip.othersText().isEmpty());  // nothing shows before 0.5 s
-  QTest::qWait(600);
-  CHECK_EQ(strip.othersText(), QString("+2"));
+  // Shown after 0.5 s: waited for, not a fixed sleep (a loaded CI machine fires the timer late).
+  CHECK(wait([&] { return strip.othersText() == "+2"; }, 5000));
   const QString tip = strip.findChild<QLabel*>("progressOthers")->toolTip();
   CHECK(!tip.contains("First") && tip.contains("Second") && tip.contains("Third") && !tip.contains("Tidy"));
   CHECK(a->wasShown() && !c->wasShown() && !tidy->wasShown());
   a->finish();
-  QTest::qWait(10);
-  CHECK_EQ(strip.othersText(), QString("+1"));  // Second shows now, Third beside it
+  CHECK(wait([&] { return strip.othersText() == "+1"; }, 2000));  // Second shows now, Third beside it
   CHECK(b->wasShown());
   c->finish();
-  QTest::qWait(10);
-  CHECK(strip.othersText().isEmpty());
+  CHECK(wait([&] { return strip.othersText().isEmpty(); }, 2000));
   b->finish();
   tidy->finish();
-  QTest::qWait(10);
-  CHECK(!jobs.busy() && strip.isHidden() && strip.othersText().isEmpty());
+  CHECK(wait([&] { return !jobs.busy() && strip.isHidden() && strip.othersText().isEmpty(); }, 2000));
 }
 
 TEST(done_signal_carries_what_a_toast_needs) {
