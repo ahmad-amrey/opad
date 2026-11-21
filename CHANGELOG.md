@@ -40,6 +40,7 @@ clicks, step by step.
 - **Sketch Dimension moves to Shift+D**, to make room for Measure. A D saved for Dimension in your settings is reset.
 - **Design > Assemble fits the window** at 1600 px with every label: *Play explode* and *Collapse exploded view* are in
   the *Exploded view* button's menu, and stay on the Explode tab that shows while an explode is on.
+- **The macOS download opens as the usual install window:** drag OPAD onto the Applications folder beside it.
 - **Export keeps the 3D formats** when the document or the selection also holds drawings or sketches. STEP stays the
   default, the file holds the 3D bodies, and the summary says how many drawings or sketches were left out. The 2D
   formats are still there for a view.
