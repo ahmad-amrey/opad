@@ -685,3 +685,6 @@ empty), templates and data folders (not the cache, not `agent/`) once and leaves
 ## Commits
 
 One-line commit messages, no body or trailer.
+No bare `@word` in a commit message, pull request title, changelog or release text unless it is a real GitHub login meant to be
+notified: GitHub turns it into a mention (the release notes copy pull request titles; macOS's `@rpath` once listed an
+unrelated account as a contributor). Put such words in backticks: `@rpath`, `@executable_path`.
