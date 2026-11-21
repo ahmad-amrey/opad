@@ -54,5 +54,7 @@
  "No document is open in this window: open_document opens a file, new_document makes an empty .opad.": "لا مستند مفتوح في هذه النافذة: يفتح open_document ملفًا، وينشئ new_document ملف ‎.opad فارغًا.",
  "The document was reloaded from its file; bound agents follow it": "أُعيد تحميل المستند من ملفه؛ الوكلاء المرتبطون يتابعونه",
  "%1 changed on disk and OPAD is asking the user what to do with it (Reload, Merge, Save as or Overwrite). Nothing was saved: saving now could write over what changed there.": "تغيّر %1 على القرص ويسأل OPAD المستخدم عمّا يفعله به (إعادة التحميل أو الدمج أو الحفظ باسم أو الكتابة فوقه). لم يُحفظ شيء: الحفظ الآن قد يكتب فوق ما تغيّر هناك.",
- "Agent save refused: the file changed on disk and the user is being asked": "رُفض حفظ الوكيل: تغيّر الملف على القرص والمستخدم يُسأل عنه"
+ "Agent save refused: the file changed on disk and the user is being asked": "رُفض حفظ الوكيل: تغيّر الملف على القرص والمستخدم يُسأل عنه",
+ "Agent: moving %1 into %2": "الوكيل: نقل %1 إلى %2",
+ "Could not move the document: %1": "تعذّر نقل المستند: %1"
 }

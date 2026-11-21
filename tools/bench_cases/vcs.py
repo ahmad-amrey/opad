@@ -19,6 +19,21 @@ def versioned(root, document):
     return document("git/model")
 
 
+def shared_folder(root, document, name="own"):
+    """Set up repository on a document beside other files (the own-folder question): <name>/model.opad with a box, a note,
+    another document and a folder named model (the move takes "model 2"); git's global config the run's own with an
+    author, so setting up asks no name."""
+    folder = root / name
+    folder.mkdir(exist_ok=True)
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    (folder / "notes.txt").write_text("not the document's", encoding="utf-8")
+    (folder / "model").mkdir(exist_ok=True)
+    (folder / "model" / "keep.txt").write_text("a folder that was there first", encoding="utf-8")
+    shutil.copy(doc, folder / "other.opad")
+    (root / f"{name}-global").write_text("[user]\n\tname = OPAD Bench\n\temail = bench@example.com\n", encoding="utf-8")
+    return doc
+
+
 def compared(root, document, name="compare"):
     """Compare (UI-58): <name>/model.opad with four parts, committed when git is there and copied to first.opad; the
     bench makes Box1 longer, adds Sphere1 and saves, then moves Box2 and deletes Box3 without saving."""
@@ -261,6 +276,11 @@ CASES = [
     # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
     ("git", versioned, {"OPAD_BENCH_GIT": "{prefix}", "OPAD_BENCH_CLI": "{cli}", "GIT_CONFIG_GLOBAL": "{root}/git-global",
                         "GIT_CONFIG_NOSYSTEM": "1"}),
+    # Set up repository on a document that shares its folder: the own-folder question, Cancel, Use this folder, then Move with
+    # an unsaved change into "model 2" (the name "model" is taken) and the repository made there (GitOwnFolderBench.cpp).
+    ("own-folder", shared_folder, {"OPAD_BENCH_OWN_FOLDER": "{prefix}", "OPAD_BENCH_KEEP_BOX": "gitOwnFolder", "GIT_CONFIG_GLOBAL": "{root}/own-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("own-folder-ar", lambda root, document: shared_folder(root, document, "own-ar"),
+     {"OPAD_BENCH_OWN_FOLDER": "{prefix}", "OPAD_BENCH_KEEP_BOX": "gitOwnFolder", "GIT_CONFIG_GLOBAL": "{root}/own-ar-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
     # Compare: OPAD_BENCH_COMPARE_GIT says whether the case could commit (git on PATH); the bench then expects HEAD as A.
     ("compare", compared, {"OPAD_BENCH_COMPARE": "{prefix}", "OPAD_BENCH_COMPARE_GIT": "1" if shutil.which("git") else "0",
                            "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),

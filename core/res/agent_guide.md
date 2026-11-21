@@ -296,6 +296,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   `master`): commits to them and merges into them are refused (`protected_branch`), pushes of them when the user set
   that. Do not ask to get around it: `git_branch_create` a branch of your own (it switches to it), commit there, push
   it, and tell the user it is ready to merge. A fast-forward `git_pull` of a protected branch is allowed.
+- `git_init` (live) on the document's folder refuses (`shared_folder`) when other files share it: ask the user, then
+  call it again with `own_folder: true` (the document moves into a new folder of its own first, `moved_to`) or
+  `own_folder: false` (the repository takes in the whole folder).
 - `git_commit` stages exactly `paths` (or everything with `all`); it refuses an empty commit. `git_switch`,
   `git_merge` and `git_pull` refuse uncommitted changes rather than carry or discard them: commit first.
 - Merges of `.opad` files go through OPAD's record-aware driver. Preview first (`preview: true`): it lists what

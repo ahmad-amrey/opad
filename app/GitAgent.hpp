@@ -68,5 +68,10 @@ bool receipted(const std::string& name, const opad::json& args = opad::json::obj
 bool changesFiles(const std::string& name);  // may rewrite files of the work tree (live: the document follows)
 // Runs one tool; throws Refused (or std::exception for anything else).
 opad::json run(const std::string& name, const opad::json& args, const Call& call);
+// git_init's folder when call.repo is the live document's own folder: that folder when it holds only the document (and its
+// <name>.opad.* sidecars); otherwise `own_folder` decides: false the folder anyway, true a new folder beside it
+// (ownfolder::plan) that the caller moves the document into first (AppDocument::moveTo), absent Refused shared_folder.
+// Any other folder: call.repo (own_folder then refused as invalid).
+QString initFolder(const opad::json& args, const Call& call);
 
 }  // namespace gitagent

@@ -3,6 +3,9 @@ bridge of a hidden desktop window (opad-cli mcp --live).
 
 usage: python tools/test_agent_ergonomics.py APP CLI [--only git,...]
 
+shared: git_init on a document beside other files refuses (shared_folder) until own_folder says; true moves it into a
+folder of its own (the window's move) and makes the repository there.
+
 git: a merge preview and a resolve listing need no request_id and change nothing, the live revision included (also after
 a refused merge into a protected branch); a pull preview needs none either.
 sizes: replies stay small on a linked board of many parts: import and model_batch with verbosity compact give counts, the
@@ -203,6 +206,40 @@ def check_open(app, cli, root):
         desktop.close()
 
 
+def check_shared(app, cli, root):
+    """git_init on a document that shares its folder: refused (shared_folder, nothing made) until own_folder says; true
+    moves the document into a new folder beside it ("model" is taken: "model 2") through the window's own move and makes
+    the repository there alone; the other files stay; the window's document is the moved one."""
+    project = root / "project"
+    project.mkdir(parents=True)
+    document = project / "model.opad"
+    subprocess.run([str(cli), "new", str(document)], check=True, capture_output=True)
+    (project / "notes.txt").write_text("not the document's", encoding="utf-8")
+    (project / "model").mkdir()
+    environment = git_environment(root)
+    os.environ.update(environment)
+    desktop = Desktop(app, cli, root / "desktop", document=document, environment=environment)
+    client = None
+    try:
+        client = desktop.bind(cli)
+        refused = client.raw("git_init", request_id=rid())
+        assert refused["isError"] and refused["structuredContent"]["error"]["code"] == "shared_folder", refused
+        assert "notes.txt" in refused["structuredContent"]["error"]["message"] and not (project / ".git").exists(), refused
+        made = client.call("git_init", own_folder=True, request_id=rid())
+        moved = project / "model 2"
+        assert made["result"]["state"] == "initialized" and Path(made["result"]["moved_to"]) == moved / "model.opad", made
+        assert (moved / ".git").exists() and (moved / "model.opad").exists() and not document.exists() and not (project / ".git").exists(), made
+        assert (project / "notes.txt").exists() and (project / "model").is_dir(), "the other files stay"
+        client = rebind(desktop, client, cli)
+        status = client.call("git_status")["result"]
+        assert status.get("branch"), status  # bound to the moved document, in its repository
+        print("shared: git_init refused on a shared folder, own_folder true moves the document into model 2 and makes the repository there: PASS", flush=True)
+    finally:
+        if client:
+            client.close()
+        desktop.close()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("app", type=Path)
@@ -214,7 +251,7 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="opad-agent-ergonomics-"))  # outside any repository: the git checks make their own
     only = set(filter(None, args.only.split(",")))
     try:
-        for name, check in [("git", check_git), ("sizes", check_sizes), ("open", check_open)]:
+        for name, check in [("git", check_git), ("shared", check_shared), ("sizes", check_sizes), ("open", check_open)]:
             if not only or name in only:
                 check(app, cli, root / name)
     finally:
