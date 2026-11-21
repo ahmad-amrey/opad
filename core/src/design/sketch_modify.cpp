@@ -26,6 +26,7 @@
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -177,7 +178,35 @@ namespace {
 // The kernel's offset of the chain `ids` of `sk`, appended to `into` (which may be `sk`): the curves made, in order.
 std::vector<int> offset_into(const Sketch& sk,Sketch& into,const std::vector<int>& ids,double distance,bool round) {
   if(!std::isfinite(distance)||std::fabs(distance)<1e-9)throw Error("offset distance must be nonzero");
-  auto wire=sketch_wire(sk,Frame{},ids);BRepOffsetAPI_MakeOffset offset(wire,round?GeomAbs_Arc:GeomAbs_Intersection);
+  auto wire=sketch_wire(sk,Frame{},ids);
+  // An open chain offsets to one side (the sign picks which), as a parallel copy: the kernel's closed result for an open
+  // wire went round both sides with end caps (a "racetrack"). A closed chain offsets inward or outward.
+  TopoDS_Vertex first,last;
+  TopExp::Vertices(wire,first,last);
+  const bool open=!first.IsNull() && !last.IsNull() && !first.IsSame(last);
+  // Straight lines along one line give the kernel no plane to offset in: they move along their normal by hand, their shared
+  // ends shared again (positive: to the left of the first line's direction).
+  if(open) {
+    std::vector<const SkEntity*> lines;
+    for(int id:ids)if(const SkEntity* e=sk.entity(id);e && e->type==SkEntity::Type::Line && e->p.size()==2)lines.push_back(e);
+    if(!lines.empty() && lines.size()==ids.size()) {
+      const SkPoint *a=sk.point(lines[0]->p[0]),*b=sk.point(lines[0]->p[1]);
+      const double len=std::hypot(b->x-a->x,b->y-a->y);
+      bool collinear=len>1e-12;
+      const double ux=collinear?(b->x-a->x)/len:1,uy=collinear?(b->y-a->y)/len:0;
+      for(const SkEntity* e:lines)
+        for(int pid:e->p){const SkPoint* q=sk.point(pid);collinear=collinear && std::fabs((q->x-a->x)*uy-(q->y-a->y)*ux)<1e-9;}
+      if(collinear) {
+        std::map<int,int> moved;  // source point -> its offset copy
+        std::vector<int> made;
+        auto copy=[&](int pid){auto it=moved.find(pid);if(it!=moved.end())return it->second;const SkPoint* q=sk.point(pid);
+          return moved[pid]=into.add_point(q->x-uy*distance,q->y+ux*distance);};
+        for(const SkEntity* e:lines)made.push_back(into.add_line(copy(e->p[0]),copy(e->p[1])));
+        return made;
+      }
+    }
+  }
+  BRepOffsetAPI_MakeOffset offset(wire,round?GeomAbs_Arc:GeomAbs_Intersection,open?Standard_True:Standard_False);
   offset.Perform(distance);if(!offset.IsDone()||offset.Shape().IsNull())throw Error("that offset leaves no curves");
   const auto made=append_sketch_shape(into,offset.Shape());
   if(made.empty())throw Error("that offset leaves no curves");
@@ -211,6 +240,16 @@ double samples_apart(const std::vector<gp_Pnt>& a,const std::vector<gp_Pnt>& b) 
 std::vector<int> offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round) {
   const Sketch source=sk;
   return offset_into(source,sk,ids,distance,round);
+}
+
+double offset_side(const Sketch& sk,const std::vector<int>& ids,double distance,bool round,double tx,double ty) {
+  const double d=std::fabs(distance);
+  Sketch plus,minus;
+  std::vector<int> mp,mm;
+  const bool p=try_offset(sk,plus,ids,d,round,mp),m=try_offset(sk,minus,ids,-d,round,mm);
+  if(!p || !m)return p?d:-d;
+  const std::vector<gp_Pnt> toward{gp_Pnt(tx,ty,0)};
+  return samples_apart(toward,curve_samples(plus,mp))<=samples_apart(toward,curve_samples(minus,mm))?d:-d;
 }
 
 int offset_relationship(Sketch& sk,const std::vector<int>& ids,double distance,bool round,const std::string& expr) {

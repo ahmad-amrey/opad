@@ -16,6 +16,9 @@ def newer_file(root, document):
 
 
 CASES = [
+    # Renaming a row in the browser shows the editor's text alone, the editor on the name's place (BrowserRenameBench.cpp).
+    ("browser-rename", "box", {"OPAD_BENCH_BROWSER_RENAME": "1"}),
+    ("browser-rename-ar", "box", {"OPAD_BENCH_BROWSER_RENAME": "1", "OPAD_LANG": "ar"}),
     # A new empty .opad with plain --bench-select (no other switch): nothing to select, hide or pick, and it ends quietly
     # (an appearance op with an empty target used to escape the event loop and abort).
     ("select-empty", lambda root, document: document("select-empty"), {}),

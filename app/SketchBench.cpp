@@ -34,5 +34,6 @@ OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_APPLY, sketchApply, benchApply)             
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_POINTER, sketchPointer, benchPointer)              // TODO 11 wave 3, P5 and P6
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_ONESHOT, sketchOneShot, benchOneShot)              // one-shot tools close after Apply
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_MEASURE, sketchMeasure, benchMeasure)              // D measures, hovered constraints named
+OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_CHAINDIM, sketchChainDim, benchChainDim)           // double-click chains, live dimension
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_FILLET, sketchFillet, benchFillet)                 // fillets on a drawing-like profile
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_MOVEMENT, sketchMovement, benchMovement)           // least movement
