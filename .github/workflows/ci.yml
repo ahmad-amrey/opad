@@ -2,7 +2,7 @@
 # (docs/releasing.md).
 #
 # Two branches. dev takes changes freely: merging into it runs nothing. A development build is published on demand:
-# Actions > Build > Run workflow on dev with "Publish" ticked builds, tests and install-checks every platform and, only
+# Actions > Build, test and release > Run workflow on dev with "Publish" ticked builds, tests and install-checks every platform and, only
 # when all pass, publishes a GitHub pre-release `vX.Y.(Z+1)-dev.<build>` (`vX.Y.Z-rc.<build>`, the release candidate,
 # when the version is new) that installed copies set to "Offer development builds" are told about. main only moves
 # forward to such a tested commit of dev ("Promote dev to main", .github/workflows/promote.yml, a fast-forward), so it
@@ -34,7 +34,19 @@
 # Actions are pinned to exact commits; update the SHA and the version comment together. The check to require in the
 # main ruleset is "Tested" alone (it fails when the version checks or any platform failed or were cancelled); dev
 # requires none.
-name: Build
+name: Build, test and release
+# Each run's title says what it is (the Actions list shows it): a pull request's check, a pre-release, a plain build, or
+# main's release run.
+run-name: >-
+  ${{ github.event_name == 'pull_request'
+      && format('Pull request #{0} check: {1}', github.event.pull_request.number, github.event.pull_request.title)
+    || (github.event_name == 'workflow_dispatch' && inputs.publish)
+      && format('Pre-release: publish a development build from {0}', github.ref_name)
+    || github.event_name == 'workflow_dispatch'
+      && format('Build and test {0} (nothing published)', github.ref_name)
+    || github.ref_type == 'tag'
+      && format('Release {0} (tag pushed by hand)', github.ref_name)
+    || 'Release: main moved (publishes if the version changed)' }}
 
 on:
   pull_request:

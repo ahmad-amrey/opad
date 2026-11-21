@@ -5,7 +5,7 @@ without waiting. A *development build* is made on demand: building, testing and 
 published only when all of it passes. **`main`** holds the latest release: it only moves forward to such a fully tested
 commit of `dev` (*Promote dev to main*, a fast-forward), and the version in `CMakeLists.txt` then decides whether that
 publishes a release. Both run in GitHub Actions: `.github/workflows/ci.yml`
-(the "Build" workflow) and `.github/workflows/promote.yml` ("Promote dev to main").
+(the "Build, test and release" workflow) and `.github/workflows/promote.yml` ("Promote dev to main").
 
 ## One version, written once
 
@@ -28,12 +28,12 @@ development build shows as its notes; a release turns it into `## [X.Y.Z] - YYYY
 | Event | Version checks | Builds, unit tests, install tests | Publishes |
 |---|---|---|---|
 | Merge or push into `dev` | none | none | nothing |
-| Actions > Build > Run workflow on `dev`, **Publish** ticked | yes | Windows, Linux, macOS (reused if this exact code was built already, below) | when everything passes: a **development build**, pre-release `vA.B.C-dev.<build>`, or the **release candidate** `vX.Y.Z-rc.<build>` when the version is new |
+| Actions > Build, test and release > Run workflow on `dev`, **Publish** ticked | yes | Windows, Linux, macOS (reused if this exact code was built already, below) | when everything passes: a **development build**, pre-release `vA.B.C-dev.<build>`, or the **release candidate** `vX.Y.Z-rc.<build>` when the version is new |
 | *Promote dev to main* | `dev`'s commit passed that full run (`Tested`), its version is new, `main` is in `dev`'s history | none (it only moves `main`) | nothing by itself |
 | Push to `main` (the promotion) | yes | none: the commit is `dev`'s, already built | the **release** `vX.Y.Z`, from the release candidate's very packages |
 | Pull request into `main` (a hotfix only) | yes; "Merging this pull request publishes OPAD X.Y.Z" | Windows, Linux, macOS | nothing (the merge publishes) |
 | Tag `vX.Y.Z` pushed by hand | the tag must equal the version and be on `main` | as for `main` | the release |
-| Actions > Build > Run workflow, **Publish** not ticked (any branch) | yes | Windows, Linux, macOS ("rebuild" builds even code that was built before) | nothing |
+| Actions > Build, test and release > Run workflow, **Publish** not ticked (any branch) | yes | Windows, Linux, macOS ("rebuild" builds even code that was built before) | nothing |
 
 The version checks, in seconds, before any build:
 
@@ -54,7 +54,7 @@ and passed (or this code was already built and passed, below); it fails when any
 
 ## Development builds and the release candidate
 
-A development build is published by *Actions > Build > Run workflow* on `dev` with **Publish** ticked, only when every
+A development build is published by *Actions > Build, test and release > Run workflow* on `dev` with **Publish** ticked, only when every
 platform builds and passes its tests and install checks. It is a GitHub **pre-release** tagged with a SemVer
 pre-release version: `vA.B.C-dev.<build>`
 for a development build (A.B.C is the next patch after the released version on `dev`) and `vX.Y.Z-rc.<build>` for the
@@ -147,7 +147,7 @@ the release would never run. On your computer:
    sentences are what the update notice in OPAD shows. The headings under the version are free; only the
    `## [X.Y.Z] - date` line is read.
 2. Merge its pull request into `dev` (no checks to wait for).
-3. *Actions > Build > Run workflow* on `dev` with **Publish** ticked. When every platform passes, the run publishes
+3. *Actions > Build, test and release > Run workflow* on `dev` with **Publish** ticked. When every platform passes, the run publishes
    **OPAD X.Y.Z release candidate (build N)**. Install it (or let a copy set to *Offer development builds* offer it) and
    test it on your machines.
 4. When it is good: *Actions > Promote dev to main > Run workflow*. `main` moves to that commit, and the run on `main`
