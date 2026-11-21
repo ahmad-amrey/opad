@@ -16,6 +16,9 @@ as a commit log.
 - **Version control in a folder of its own.** Setting up version control for a document that shares its folder with
   other files now offers to move it into a folder of its own first, so the repository holds just your design. AI agents
   setting up version control ask you first too, then move the design or use the folder as it is.
+- **Linked files travel with your design.** They are now saved with paths relative to the design, so a repository no
+  longer carries your user name or folder layout. OPAD tells you when linked files sit outside the repository and can
+  copy them in, and moving a design into its own folder offers to copy its linked files along.
 - **Double-click selects the chain:** in a sketch, double-click a curve to select every curve connected to it end to
   end (Shift or Ctrl+double-click adds the chain to the selection).
 - **Offsetting an open curve or chain** in a sketch makes a single parallel copy on the side you point to, instead of a
