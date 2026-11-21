@@ -60,5 +60,11 @@
   "With %1 held (%2 or %1+click) the tool stays open for another use; with nothing to apply, %2 repeats the last command": "مع الضغط على %1 (%2 أو النقر مع %1) تبقى الأداة مفتوحة لاستخدام آخر؛ وحين لا يوجد ما يُطبَّق يكرر %2 آخر أمر",
   "Saves and closes; with %1 held (%1+click, %2) another one starts at once": "يحفظ ويغلق؛ ومع الضغط على %1 (النقر مع %1، %2) يبدأ آخر فورًا",
   "Select a planar face (with %1 held, another after it)": "حدد وجهًا مستويًا (مع الضغط على %1، وجهًا آخر بعده)",
-  "%1 held: another after it": "مع الضغط على %1: آخر بعده"
+  "%1 held: another after it": "مع الضغط على %1: آخر بعده",
+  "ribbon|design.mesh_solid": "شبكة إلى مجسم",
+  "ribbon|design.sketch": "رسم تخطيطي",
+  "ribbon|design.regenerate": "إعادة توليد",
+  "ribbon|design.edit": "تحرير ميزة",
+  "ribbon|design.draft": "ميل",
+  "ribbon|design.sweep": "سحب بمسار"
 }
