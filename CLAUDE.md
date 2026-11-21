@@ -595,8 +595,10 @@ run's packages (`run-id`); only successful runs of ci.yml in this repo whose hea
 UCRT64/CLANG64), Linux = OCCT from source + AppImage + `opad-deb`, macOS = Homebrew + dmg (macos-15, Apple silicon);
 each job tees build.log and annotates errors on failure; the Windows installer and the .deb are installed, updated and
 removed in the job with a check that settings/data survive. Caches: restore at the start, deps saved right after the
-configure, ccache saved `always()`; PR caches are PR-scoped, so `warm-*` jobs build missing deps on main when a merge
-reused a build. Actions pinned by SHA (update with the version comment). For each release write the changelog section
+configure, ccache saved `always()`; PR caches are PR-scoped and only main's runs save main's, so a PR run uploads
+`caches-<system>` (deps tar + its cache key + ccache tar) and, when a merge reused that run, `warm-*` on main download
+it and `cache/save` it under main (same runner OS: a cache is found only on the system that saved it); without it they
+build the missing deps. Actions pinned by SHA (update with the version comment). For each release write the changelog section
 (for users: added, changed, fixed, notes; the opening sentences are the update notice's summary). The workflow file is
 not called build*.yml: `.gitignore`'s `build*` would hide it; public docs need a `!/docs/<name>` line there.
 Traps met on the UCRT64 runner (GCC 16, mingw-w64 v14, Qt 6.12 static): GCC 16 -O3 builds an OCCT that faults in
