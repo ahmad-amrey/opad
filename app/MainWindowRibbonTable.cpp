@@ -111,7 +111,9 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
   group("design.assemble", "components", tr("Components"),
         {{"design.newcomponent", L, {"design.componentFromSelection"}}, {"assembly.activate"}, {"assembly.activateRoot", S}, {"assembly.activeVisibility", S},
          {"design.reparent", S}});
-  group("design.assemble", "explode", tr("Explode"), {{"assembly.explode"}, {"assembly.explodePlay", S}, {"assembly.explodeOff", S}});
+  // Play and Collapse in Exploded view's menu (they are the Explode tab's own while an explode is shown): the tab fits at
+  // 1600 px with every group large, Organise's labels included.
+  group("design.assemble", "explode", tr("Explode"), {{"assembly.explode", L, {"assembly.explodePlay", "assembly.explodeOff"}}});
   group("design.assemble", "position", tr("Position"), {{"design.move"}, {"design.align"}});  // Move / copy, as on Solid > Modify; Align
   group("design.assemble", "appearance", tr("Appearance"),
         {{"design.colour"}, {"inspect.material", S}, {"design.opacity", S}, {"edit.hide", S}, {"view.isolate", S}, {"design.lock", S}});
