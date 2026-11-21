@@ -614,7 +614,9 @@ filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`,
 
 ## CI and releases (`.github/workflows/ci.yml`, `promote.yml`, docs/releasing.md)
 
-Branches: **pull requests target `dev`** (never `main`). Each push to `dev` publishes a development build, a GitHub
+Branches: **work goes into `dev`** (never `main`); `dev` runs no checks (its ruleset only blocks force pushes and
+deletion), so changes merge freely. A development build is made on demand, Build > Run workflow on `dev` with `publish`:
+every platform built, tested and install-checked, and only then a GitHub
 pre-release `vA.B.(C+1)-dev.<build>` (the release candidate `vX.Y.Z-rc.<build>` when the version is new; notes: `[Unreleased]`, or the version's section for the release
 candidate; marker `<!-- opad-build: N; opad-version: X.Y.Z -->`; ten kept). `main` = the latest release: it moves only by
 *Actions > Promote dev to main* (promote.yml: checks Tested on dev's commit, `main` ancestor of `dev`, a new dated
@@ -623,8 +625,8 @@ workflow may use, the deploy key being the only bypass of the `main` ruleset (PR
 `main-history`, blocks force pushes and deletion with no bypass; a
 GITHUB_TOKEN push would start no workflow), or by a hotfix PR into `main` (then merge `main` back into `dev`). Builds
 carry OPAD_BUILD_NUMBER (run number of the run that built them) and OPAD_BUILD_COMMIT; a promotion reuses the release
-candidate's packages, so a release and its candidate share (version, build). Merging into `dev`, and promoting, are
-Ahmad's (a session may merge into `dev` only when he says so for that work).
+candidate's packages, so a release and its candidate share (version, build). Promoting is Ahmad's; work is merged into `dev` with the coordinating session's go-ahead (Ahmad's, or a session he
+authorised).
 The version's one source is `project(opad VERSION X.Y.Z)`; a version is released
 when it has a published release (tag `vX.Y.Z`), and the workflow creates both: the push to `main` that changes the
 version (compared with `github.event.before`) to one without a release publishes it (`gh release create v$VERSION
