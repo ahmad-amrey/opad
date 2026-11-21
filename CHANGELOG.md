@@ -5,7 +5,12 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
-## [Unreleased]
+## [0.10.1] - 2026-11-22
+
+Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,
+dimensions between lines draw properly, and Sketch fillet says why a corner can't be rounded. Version control keeps each
+design in a folder of its own, with linked files saved by relative paths, and OPAD can offer you development builds
+before they ship.
 
 ### Added
 - **Development builds, if you want them.** *Help > Offer development builds* makes OPAD offer the builds of the
