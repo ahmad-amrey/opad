@@ -245,7 +245,8 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   Shift+D (migration `shortcuts/measureDefaultsVersion`). `SketchMeasure.cpp`: picks in `m_picked` as Dimension's (Esc and
   Backspace step back alike), `measureResult()` drawn in `updateTransient` and written in the steps. A constraint's badge
   or a dimension's value hovered (`Hit::Dimension`): `hoverTip` puts `constraintTip` in the status bar's hover text at once
-  and a QToolTip after 500 ms. Bench `sketch-measure`.
+  and a QToolTip after 500 ms, also in Trim/Extend/Split (`tipTarget`: their clicks take the curve, `constraintAt` names the
+  badge). Bench `sketch-measure`.
 - Least movement (`SolveOptions::moves`, solver.cpp `movement_stages`): a constraint added (`applyConstraint`: last pick
   first, then the other picks) or a dimension changed (`commitDimensionEdit`) solves with only that geometry movable (the
   held variables' column scale 0, so they keep their values exactly), then with the curves sharing its points, then with
