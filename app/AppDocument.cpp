@@ -507,6 +507,9 @@ bool AppDocument::save(bool overwriteDisk) {
     emit saveBlocked(true);
     return false;
   }
+  // Linked files recorded by an absolute path that their relative one finds (an older build's) are saved relative from now
+  // on, as one undo step, as Save As does (asset_path_edits): Document::save would append them past the undo stack.
+  followAssetPaths(path());
   doc.save();
   markSaved();
   wroteDisk();
@@ -519,6 +522,7 @@ bool AppDocument::save(bool overwriteDisk) {
 bool AppDocument::followAssetPaths(const QString& destination) {
   const std::filesystem::path folder(QFileInfo(destination).absolutePath().toStdU16String());
   bool stepped=false;
+  opad::rebase_asset_paths(doc,folder);  // linked files not saved yet, first: the edits below are written from the destination
   if(auto edits=opad::asset_path_edits(doc,folder);!edits.empty()) {  // saved elsewhere: the linked files' saved paths follow, one undo step
     opad::design::Plan moved;moved.ops=std::move(edits);
     const bool locked=readOnly;  // a read-only document's copy: the copy's paths follow too (it is this session's file once saved)
@@ -527,7 +531,6 @@ bool AppDocument::followAssetPaths(const QString& destination) {
     readOnly=locked;
     stepped=true;
   }
-  opad::rebase_asset_paths(doc,folder);  // linked files not saved yet
   return stepped;
 }
 

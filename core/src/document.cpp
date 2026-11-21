@@ -805,8 +805,10 @@ void Document::save() {
 
 void Document::save_as(const std::filesystem::path& p) {
   header.format = kFormatVersion;  // migrate on save (F9)
-  for (auto& edit : asset_path_edits(*this, p.parent_path())) append(std::move(edit));  // saved elsewhere: linked paths follow
+  // Ops not saved yet first (their paths read from where the document is now), then the edits of saved ones (already
+  // written from the destination: a rebase after them would read those as from here).
   rebase_asset_paths(*this, p.parent_path());
+  for (auto& edit : asset_path_edits(*this, p.parent_path())) append(std::move(edit));  // saved elsewhere: linked paths follow
   write_text_file(p, serialize());
   path = p;
   persisted_ops_ = ops.size();

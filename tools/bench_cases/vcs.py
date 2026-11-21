@@ -34,6 +34,21 @@ def shared_folder(root, document, name="own"):
     return doc
 
 
+def shared_linked(root, document, name="own-linked"):
+    """The own-folder question for a document that links a file beside it: <name>/model.opad (a box) linking part.step there,
+    and notes.txt; an author in git's global config of the run."""
+    folder = root / name
+    folder.mkdir(exist_ok=True)
+    document(f"{name}-part", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
+             ("export", "--format", "step", "--out", str(folder / "part.step")))
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    subprocess.run([str(document.cli), "import", str(doc), str(folder / "part.step"), "--link", "true"], check=True, capture_output=True,
+                   env={**os.environ, "OPAD_CACHE_DIR": str(root / f"{name}-cli-cache")})
+    (folder / "notes.txt").write_text("not the document's", encoding="utf-8")
+    (root / f"{name}-global").write_text("[user]\n\tname = OPAD Bench\n\temail = bench@example.com\n", encoding="utf-8")
+    return doc
+
+
 def compared(root, document, name="compare"):
     """Compare (UI-58): <name>/model.opad with four parts, committed when git is there and copied to first.opad; the
     bench makes Box1 longer, adds Sphere1 and saves, then moves Box2 and deletes Box3 without saving."""
@@ -281,6 +296,13 @@ CASES = [
     ("own-folder", shared_folder, {"OPAD_BENCH_OWN_FOLDER": "{prefix}", "OPAD_BENCH_KEEP_BOX": "gitOwnFolder", "GIT_CONFIG_GLOBAL": "{root}/own-global", "GIT_CONFIG_NOSYSTEM": "1"}),
     ("own-folder-ar", lambda root, document: shared_folder(root, document, "own-ar"),
      {"OPAD_BENCH_OWN_FOLDER": "{prefix}", "OPAD_BENCH_KEEP_BOX": "gitOwnFolder", "GIT_CONFIG_GLOBAL": "{root}/own-ar-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
+    # The same with a linked file beside it: the question offers to copy it into the new folder (checked); copied and relinked by
+    # a relative path, or (unchecked) left outside, said by a notice once set up, whose action copies it (GitOwnFolderBench.cpp).
+    ("own-folder-linked", shared_linked, {"OPAD_BENCH_OWN_FOLDER_LINKED": "copy", "OPAD_BENCH_KEEP_BOX": "gitOwnFolder",
+                                          "GIT_CONFIG_GLOBAL": "{root}/own-linked-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("own-folder-linked-keep", lambda root, document: shared_linked(root, document, "own-linked-keep"),
+     {"OPAD_BENCH_OWN_FOLDER_LINKED": "keep", "OPAD_BENCH_KEEP_BOX": "gitOwnFolder", "GIT_CONFIG_GLOBAL": "{root}/own-linked-keep-global",
+      "GIT_CONFIG_NOSYSTEM": "1"}),
     # Compare: OPAD_BENCH_COMPARE_GIT says whether the case could commit (git on PATH); the bench then expects HEAD as A.
     ("compare", compared, {"OPAD_BENCH_COMPARE": "{prefix}", "OPAD_BENCH_COMPARE_GIT": "1" if shutil.which("git") else "0",
                            "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),

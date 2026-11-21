@@ -388,5 +388,9 @@
   "reading…": "جارٍ القراءة…",
   "not loaded": "غير محمّل",
   "%1 of %2 parts of %3 are not loaded: click to read the file": "%1 من %2 من أجزاء %3 غير محمّلة: انقر لقراءة الملف",
-  "Parts not loaded: %1 of %2": "أجزاء غير محمّلة: %1 من %2"
+  "Parts not loaded: %1 of %2": "أجزاء غير محمّلة: %1 من %2",
+ "Copying linked files into the project": "نسخ الملفات المرتبطة إلى المشروع",
+ "copy linked files into the project": "نسخ الملفات المرتبطة إلى المشروع",
+ "%n linked file(s) could not be copied (not found); they stay linked where they were": "تعذّر نسخ %n من الملفات المرتبطة (غير موجودة)؛ وتبقى مرتبطة في أماكنها",
+ "The linked files could not be copied: %1": "تعذّر نسخ الملفات المرتبطة: %1"
 }

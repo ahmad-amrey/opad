@@ -180,7 +180,14 @@ Move / Use this folder / Cancel; the document alone with its `<name>.opad.*` sid
 saves it into `<name>` (next free name) beside it with `saveAsync` (linked paths follow, unsaved changes go along), moves the
 sidecars, removes the old file, `documentMoved` moves the recent entry; the trusted folders are left alone (linked files left
 behind get the trust question at the next open; the move's toast says so). An agent's live `git_init` there refuses `shared_folder` unless `own_folder` says
-(`gitagent::initFolder`; true: `AgentBridge` runs `moveTo`, then `git_init` again; `moved_to` in the result). `ctest -R own-folder`, benches own-folder(-ar). `QMainWindow::separator:vertical` is the *upright* bar (named after its shape).
+(`gitagent::initFolder`; true: `AgentBridge` runs `moveTo`, then `git_init` again; `moved_to` in the result). `ctest -R own-folder`, benches own-folder(-ar).
+Linked file paths are git friendly (`place_file` in assets.cpp): `path` relative to the document alone, `abs` only without
+one (another drive, a share, an unsaved document: relative at its first save), a derived file in OPAD's cache as `cache`; an
+import's `source_path` saved relative too; an older document's absolute ones go at its next save (`asset_path_edits`, one undo
+step via `followAssetPaths`; its old lines stay: append-only). `rebase_asset_paths` runs before the edits and leaves a relative
+path that only resolves from the destination (already written from there). In a repository, `Vcs::checkOutside` toasts the
+linked files outside it with Copy into the repository (`AssetsArea::copyIntoProject` = Pack, one step); the own-folder question
+offers the same copy (checked). Benches own-folder-linked(-keep), `ctest -R "assets|formats"`. `QMainWindow::separator:vertical` is the *upright* bar (named after its shape).
 
 UI check without driving the desktop (the user works on it, see memory): `OPAD_BENCH_UISHOT=<png>` with
 `--bench-select` saves `MainWindow::grab()` (widgets only, the native viewport is blank); `OPAD_BENCH_WORKSPACE=1`

@@ -96,6 +96,13 @@ class AssetsArea : public AreaController {
   void replace(const std::string& import);
   void embed(const std::string& import);
   void pack(const std::string& import);
+  // The linked files (not embedded) a repository at `top` would not hold: found outside it, or recorded by an absolute path
+  // only (another drive, a share), from the monitor's last look; a clone would miss them. By import, in the log's order.
+  std::vector<std::string> outside(const QString& top) const;
+  // Copies these linked files into the project (Pack, assets/ beside the document, a KiCad board with its project and models)
+  // and relinks them by relative paths, as one step to undo; files that cannot be copied (missing) are left as they are.
+  // `then(ok, copied, error)`: ok when the step was made (copied may be fewer than asked).
+  void copyIntoProject(const std::vector<std::string>& imports, std::function<void(bool ok, int copied, const QString& error)> then = {});
   void reveal(const std::string& import);
   void copyPath(const std::string& import);
   void trust(const std::string& import);

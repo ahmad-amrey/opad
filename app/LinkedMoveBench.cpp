@@ -219,7 +219,7 @@ OPAD_BENCH(OPAD_BENCH_LINKED_MOVE, linkedMove) {
   require(wrote && same, "saved and read again: the same text and places, nothing to regenerate");
 
   // 5. Synced from next/<file> (a newer board) when there is one: the place the Move gave it is kept.
-  const QString dir = QFileInfo(QString::fromStdString(opad::asset_of(doc->doc, import).value("abs", ""))).absolutePath();
+  const QString dir = QFileInfo(QString::fromStdWString(opad::locate_asset(doc->doc, opad::asset_of(doc->doc, import)).wstring())).absolutePath();
   const QString next = QFileInfo(doc->path()).absolutePath() + "/next/" + file;
   if (QFileInfo::exists(next) && area) {
     // Written anew (now as its time: a copy keeps the time, and a hash remembered by path, size and time would match).

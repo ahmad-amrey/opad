@@ -55,10 +55,16 @@ class GitWatch : public QObject {
   // folder of its own (ownfolder::plan, the mover set below); then the Set up repository dialog.
   void setUp();
   // Moves the open document to `file` (in a new folder beside it): `done(ok, error)` once it is saved there and the old file
-  // is gone (VcsArea: AppDocument::saveAsync, so linked files' paths follow it). `unsaved`: the document has unsaved changes
-  // (the question says they are saved with it). Without a mover Set up repository never offers the move.
-  using Mover = std::function<void(const QString& file, std::function<void(bool ok, const QString& error)> done)>;
-  void setMover(Mover mover, std::function<bool()> unsaved = {}) { m_mover = std::move(mover); m_unsaved = std::move(unsaved); }
+  // is gone (VcsArea: AppDocument::moveTo, so linked files' paths follow it), its linked files copied in first when
+  // `copyLinked` (AssetsArea::copyIntoProject). `unsaved`: the document has unsaved changes (the question says they are saved
+  // with it); `linked`: how many files it links (the question offers to copy them, checked). Without a mover Set up
+  // repository never offers the move.
+  using Mover = std::function<void(const QString& file, bool copyLinked, std::function<void(bool ok, const QString& error)> done)>;
+  void setMover(Mover mover, std::function<bool()> unsaved = {}, std::function<int()> linked = {}) {
+    m_mover = std::move(mover);
+    m_unsaved = std::move(unsaved);
+    m_linked = std::move(linked);
+  }
   void setUpDriver();  // this clone's merge and diff driver (and LFS hooks when the attributes use LFS)
   void cloneRepository();  // the Clone repository dialog: an address and a folder, then clone, set up, openRequested
   void locateGit();    // a file dialog, then useProgram
@@ -113,4 +119,5 @@ class GitWatch : public QObject {
   std::function<void(QMenu*)> m_extend;
   Mover m_mover;
   std::function<bool()> m_unsaved;
+  std::function<int()> m_linked;
 };

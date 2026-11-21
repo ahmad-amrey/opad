@@ -211,6 +211,20 @@ std::string relative_to(fs::path file, const fs::path& base) {
   return rel.empty() ? std::string() : utf8(rel);
 }
 
+// Where a linked file is, as the document records it (git friendly): relative to the document's folder with forward slashes
+// whenever there is such a path, nothing else (an absolute path would put the user's name and folders into commits and differ
+// per clone); the absolute path only when there is none: another drive, a network share, a document not saved yet
+// (rebase_asset_paths makes that relative at its first save).
+void place_file(json& a, const fs::path& file, const fs::path& dir) {
+  if (const std::string rel = relative_to(file, dir); !rel.empty()) {
+    a["path"] = rel;
+    a.erase("abs");
+  } else {
+    a["abs"] = utf8(file);
+    a.erase("path");
+  }
+}
+
 std::string place_id(const std::string& op, const std::string& place) {
   std::string h = sha256_hex("opad-asset-node|" + op + "|" + place);
   h[12] = '5';
@@ -473,7 +487,8 @@ bool cancelled_error(const std::exception& e) { return std::string(e.what()).fin
 std::vector<fs::path> candidates(const Document& doc, const json& asset) {
   std::vector<fs::path> out;
   if (!asset.is_object()) return out;
-  const std::string rel = asset.value("path", ""), abs = asset.value("abs", "");
+  const std::string rel = asset.value("path", ""), abs = asset.value("abs", ""), cached = asset.value("cache", "");
+  if (!cached.empty()) out.push_back((cache_dir() / path_from_utf8(cached)).lexically_normal());  // a derived file in OPAD's cache
   if (const fs::path dir = doc_dir(doc); !dir.empty()) {
     if (!rel.empty()) out.push_back((dir / path_from_utf8(rel)).lexically_normal());
     if (const fs::path name = path_from_utf8(rel.empty() ? abs : rel).filename(); !name.empty()) {
@@ -483,6 +498,16 @@ std::vector<fs::path> candidates(const Document& doc, const json& asset) {
   }
   if (!abs.empty()) out.push_back(path_from_utf8(abs));
   return out;
+}
+
+// Where the document records the file: beside it by its path, else its absolute path, else (a derived file) its place in
+// OPAD's cache; empty when it records none.
+fs::path recorded_place(const Document& doc, const json& asset) {
+  const std::string rel = asset.value("path", ""), abs = asset.value("abs", ""), cached = asset.value("cache", "");
+  if (!rel.empty() && !doc.path.empty()) return (doc_dir(doc) / path_from_utf8(rel)).lexically_normal();
+  if (!abs.empty()) return path_from_utf8(abs).lexically_normal();
+  if (!cached.empty()) return (cache_dir() / path_from_utf8(cached)).lexically_normal();
+  return {};
 }
 
 // An asset read through another file (asset.derived): a board exported to STEP by kicad-cli, a file a converter turns into
@@ -500,7 +525,7 @@ fs::path locate_derived(const Document& doc, const json& derived, const AssetOpt
 // A derived file made anew from the source (missing here, or the source changed): the hook runs the converter.
 fs::path derive_again(const json& asset, const fs::path& source, const AssetOptions& opt) {
   const json& dv = *derived_of(asset);
-  if (!opt.derive) throw Error("the file is read through " + builder_name(dv) + ", which is not available here: " + dv.value("path", dv.value("abs", std::string())));
+  if (!opt.derive) throw Error("the file is read through " + builder_name(dv) + ", which is not available here: " + dv.value("path", dv.value("abs", dv.value("cache", std::string()))));
   if (opt.progress && !opt.progress(-1, "converting")) throw Error("cancelled");
   fs::path made = opt.derive(asset, source, opt.progress);
   std::error_code ec;
@@ -508,10 +533,18 @@ fs::path derive_again(const json& asset, const fs::path& source, const AssetOpti
   return fs::absolute(made).lexically_normal();
 }
 
+// A derived file in OPAD's own cache (kicad-cli's export) is recorded by its place there ("cache"), which every machine has:
+// a path from the document into the user's folders would differ per clone (and name the user).
 void place_derived(json& dv, const fs::path& file, const std::string& sha, const fs::path& dir) {
-  dv["abs"] = utf8(file);
-  if (const std::string rel = relative_to(file, dir); !rel.empty()) dv["path"] = rel;
-  else dv.erase("path");
+  const fs::path cache = cache_dir();
+  if (!cache.empty() && inside(file, cache, false)) {
+    dv["cache"] = utf8(fs::absolute(file).lexically_normal().lexically_relative(fs::absolute(cache).lexically_normal()));
+    dv.erase("path");
+    dv.erase("abs");
+  } else {
+    place_file(dv, file, dir);
+    dv.erase("cache");
+  }
   dv["sha256"] = sha;
 }
 
@@ -560,7 +593,7 @@ AssetState status_of(const Document& doc, const EffectiveOp& e, const AssetOptio
         if (!st.derived.empty()) st.derived_sha256 = file_sha256(st.derived);
         if (st.derived.empty() && !opt.derive) {
           st.state = "missing";
-          st.reason = "the file read in its place is missing and " + builder_name(*dv) + " is not available here: " + dv->value("path", dv->value("abs", std::string()));
+          st.reason = "the file read in its place is missing and " + builder_name(*dv) + " is not available here: " + dv->value("path", dv->value("abs", dv->value("cache", std::string())));
         } else if (st.state == "ok" && st.derived.empty() && st.unbound == 0) {
           st.reason = "the file read in its place is missing: it is made again when it is read next";  // its shapes are here: nothing to sync
         } else if (st.state == "ok" && st.derived_sha256 != dv->value("sha256", "")) {
@@ -757,8 +790,7 @@ ImportResult link(Document& doc, const fs::path& file, const fs::path& derived, 
   const std::string sha = file_sha256(abs);
   const std::string kind = kind_of(abs);
   json asset = {{"v", 1}, {"kind", kind}};
-  if (const std::string rel = relative_to(abs, doc_dir(doc)); !rel.empty()) asset["path"] = rel;
-  asset["abs"] = utf8(abs);
+  place_file(asset, abs, doc_dir(doc));
   asset["sha256"] = sha;
   asset["size"] = fs::file_size(abs);
   asset["storage"] = "linked";
@@ -844,11 +876,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
       asset["kind"] = kind;
       asset.erase("models_sha256");
     }
-  auto place = [&](json& a) {
-    a["abs"] = utf8(where);
-    if (const std::string rel = relative_to(where, doc_dir(doc)); !rel.empty()) a["path"] = rel;
-    else a.erase("path");
-  };
+  auto place = [&](json& a) { place_file(a, where, doc_dir(doc)); };
   const std::string models = models_of(where, asset, opt);
   const bool same = sha == asset.value("sha256", "") && (!asset.contains("models_sha256") || models == asset.value("models_sha256", ""));
   const json* dv = derived_of(asset);
@@ -856,7 +884,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   design::Plan plan;
   if (same && (!dv || (!made.empty() && file_sha256(made) == dv->value("sha256", "")))) {
     plan.report = {{"import", id}, {"sha256", sha}, {"up_to_date", true}};  // the file synced last: at most it moved
-    if (!file.empty() && utf8(where) != asset.value("abs", "")) {
+    if (!file.empty() && lower(utf8(where)) != lower(utf8(recorded_place(doc, asset)))) {
       place(asset);
       plan.ops.push_back(design::make_edit_op(id, {{"asset", asset}}));
     }
@@ -1166,9 +1194,12 @@ json pack_asset(Document& doc, const std::string& import_id, const std::string& 
     copy(source, target);
   }
   asset["storage"] = "project";
-  if (target != source) asset["from"] = utf8(source);
-  asset["abs"] = utf8(target);
-  asset["path"] = relative_to(target, dir);
+  if (target != source) {  // where it was copied from, as a path is recorded
+    json from;
+    place_file(from, source, dir);
+    asset["from"] = from.contains("path") ? from["path"] : from["abs"];
+  }
+  place_file(asset, target, dir);
   if (const json* dv = derived_of(asset)) {  // the file read in its place too: a clone opens without the converter
     const fs::path made = locate_asset(doc, *dv, any);
     if (made.empty()) throw Error("the file read in its place is missing: sync it first");
@@ -1287,7 +1318,6 @@ std::vector<json> asset_path_edits(const Document& doc, const fs::path& dir) {
   std::vector<json> out;
   if (dir.empty() || doc.path.empty()) return out;
   const fs::path base = fs::absolute(dir).lexically_normal();
-  if (lower(utf8(base)) == lower(utf8(doc_dir(doc).lexically_normal()))) return out;  // saved where it is: nothing moves
   std::set<std::string> deleted;
   for (const auto& o : doc.ops)
     if (o.type == "delete") deleted.insert(o.data.value("target", ""));
@@ -1301,12 +1331,14 @@ std::vector<json> asset_path_edits(const Document& doc, const fs::path& dir) {
     if (i >= doc.persisted_ops() || deleted.count(import)) continue;  // not saved yet: rewritten in place (rebase_asset_paths)
     const json asset = asset_of(doc, import);
     if (!asset.is_object() || asset.value("storage", "linked") == "embedded") continue;
-    const fs::path found = locate_asset(doc, asset);  // where the document finds it from its own folder now
+    // Where the document finds it from its own folder now (also from an old absolute path: saved as a relative one from then
+    // on, so a document of an older build gets clean at its next save); not found, it stays as recorded.
+    const fs::path found = locate_asset(doc, asset);
     if (found.empty()) continue;
     json moved = asset;
-    moved["abs"] = utf8(fs::absolute(found).lexically_normal());
-    if (const std::string rel = relative_to(found, base); rel.empty()) moved.erase("path");
-    else moved["path"] = rel;
+    place_file(moved, fs::absolute(found).lexically_normal(), base);
+    if (const json* dv = derived_of(asset); dv && !dv->contains("cache"))
+      if (const fs::path made = locate_asset(doc, *dv); !made.empty()) place_derived(moved["derived"], fs::absolute(made).lexically_normal(), dv->value("sha256", ""), base);
     if (moved != asset) out.push_back(design::make_edit_op(import, {{"asset", moved}}));
   }
   return out;
@@ -1315,19 +1347,40 @@ std::vector<json> asset_path_edits(const Document& doc, const fs::path& dir) {
 void rebase_asset_paths(Document& doc, const fs::path& dir) {
   if (dir.empty()) return;
   const fs::path base = fs::absolute(dir);
+  // Where an op not saved yet records its file: its absolute path (linked before the document had a folder), else its path
+  // from the folder the document is in now.
+  // A relative path that finds its file from `dir` and not from here was written from there already (Save As appends its
+  // edits of saved links from the destination before saving): left as it is, or it would be moved twice.
+  std::error_code ec;
+  auto from_here = [&](const std::string& rel) {
+    const fs::path here = (doc_dir(doc) / path_from_utf8(rel)).lexically_normal(), there = (base / path_from_utf8(rel)).lexically_normal();
+    return !fs::exists(here, ec) && fs::exists(there, ec) ? there : here;
+  };
+  auto file_of = [&](const json& a) {
+    if (a.contains("abs")) return path_from_utf8(a["abs"].get<std::string>()).lexically_normal();
+    if (const std::string rel = a.value("path", ""); !rel.empty() && !doc.path.empty()) return from_here(rel);
+    return fs::path();
+  };
   for (size_t i = doc.persisted_ops(); i < doc.ops.size(); ++i) {
     const Op& o = doc.ops[i];
-    const bool import = o.type == "import" && o.data.contains("asset");
+    const bool import = o.type == "import";
     const bool edit = o.type == "edit" && o.data["set"].contains("asset");
     if (!import && !edit) continue;
     json data = o.data;
-    json& asset = import ? data["asset"] : data["set"]["asset"];
-    if (!asset.is_object() || !asset.contains("abs")) continue;
-    const std::string rel = relative_to(path_from_utf8(asset["abs"].get<std::string>()), base);
-    if (rel.empty() ? !asset.contains("path") : asset.value("path", "") == rel) continue;
-    if (rel.empty()) asset.erase("path");
-    else asset["path"] = rel;
-    doc.rewrite_op(i, std::move(data));
+    const json before = data;
+    // Where an import was read from (any import, linked or copied): relative to the document too when it can be.
+    if (import && data.contains("source_path") && data["source_path"].is_string()) {
+      fs::path from = path_from_utf8(data["source_path"].get<std::string>());
+      if (from.is_relative() && !doc.path.empty()) from = from_here(data["source_path"].get<std::string>());
+      if (from.is_absolute())
+        if (const std::string rel = relative_to(from.lexically_normal(), base); !rel.empty()) data["source_path"] = rel;
+    }
+    if (json* asset = import ? (data.contains("asset") && data["asset"].is_object() ? &data["asset"] : nullptr) : &data["set"]["asset"]; asset && asset->is_object()) {
+      if (const fs::path file = file_of(*asset); !file.empty()) place_file(*asset, file, base);
+      if (asset->contains("derived") && (*asset)["derived"].is_object() && !(*asset)["derived"].contains("cache"))
+        if (const fs::path made = file_of((*asset)["derived"]); !made.empty()) place_file((*asset)["derived"], made, base);
+    }
+    if (data != before) doc.rewrite_op(i, std::move(data));
   }
 }
 

@@ -962,6 +962,74 @@ TEST(paths_follow_save_as) {
   CHECK_THROWS(d.append({{"op", "edit"}, {"target", last_import(d).id}, {"set", {{"nodes", {{{"type", "body"}, {"id", "x"}}}}}}}));
 }
 
+// Git-friendly paths: a linked file is recorded by its path relative to the document alone, no absolute path (no user name or
+// folders in a commit, the same text in every clone); by an absolute path only when there is no relative one (another drive),
+// kept so through a save. An older build's asset with both still reads (its path first), and the next save records the path
+// alone (an edit: the saved line stays); saved again, nothing more.
+TEST(paths_relative_only) {
+  Files f;
+  const std::string folder = f.dir.filename().string();  // "opad-assets-<uuid>": never in a document's text
+  const fs::path step = f.dir / "lib" / "model.step";
+  two_boxes(step, 5);
+  Document d = Document::create();
+  d.save_as(f.dir / "work" / "design.opad");
+  link_file(d, step);
+  const json a = last_import(d).data["asset"];
+  CHECK_EQ(a["path"], "../lib/model.step");
+  CHECK(!a.contains("abs"));
+  d.save();
+  CHECK(read_text_file(f.dir / "work" / "design.opad").find(folder) == std::string::npos);
+  CHECK_EQ(asset_status(Document::load(f.dir / "work" / "design.opad"))[0].file.lexically_normal(), step.lexically_normal());
+  {  // The app's Save As: the edits of saved links appended first (written from the destination), then saved: moved once.
+    Document app = Document::load(f.dir / "work" / "design.opad");
+    const std::string linked_id = last_import(app).id;
+    for (auto& e : asset_path_edits(app, f.dir / "deep" / "er")) app.append(std::move(e));
+    app.save_as(f.dir / "deep" / "er" / "design.opad");
+    CHECK_EQ(asset_of(app, linked_id)["path"], "../../lib/model.step");
+  }
+  // Linked before the document had a folder: absolute, then relative alone at the first save.
+  Document fresh = Document::create();
+  link_file(fresh, step);
+  CHECK(last_import(fresh).data["asset"].contains("abs") && !last_import(fresh).data["asset"].contains("path"));
+  fresh.save_as(f.dir / "lib" / "fresh.opad");
+  CHECK(last_import(fresh).data["asset"]["path"] == "model.step" && !last_import(fresh).data["asset"].contains("abs"));
+#ifdef _WIN32
+  {  // Another drive: no relative path, the absolute one kept through a save.
+    Document other = Document::create();
+    link_file(other, step);
+    json data = other.ops.back().data;
+    const std::string drive = fs::absolute(f.dir).root_name().string() == "Q:" ? "R:" : "Q:";
+    data["asset"]["abs"] = drive + "/elsewhere/model.step";
+    other.rewrite_op(other.ops.size() - 1, data);
+    other.save_as(f.dir / "work" / "other.opad");
+    CHECK(last_import(other).data["asset"]["abs"] == drive + "/elsewhere/model.step" && !last_import(other).data["asset"].contains("path"));
+  }
+#endif
+  // An older build's document: path and abs both, as it wrote them. It reads (path first), and its next save drops abs.
+  const fs::path part = f.dir / "old" / "parts" / "a.step";
+  two_boxes(part, 0);
+  Document old = Document::create();
+  old.save_as(f.dir / "old" / "design.opad");
+  link_file(old, part);
+  const std::string id = last_import(old).id;
+  old.save();
+  json both = asset_of(old, id);
+  both["abs"] = path_to_utf8(fs::absolute(part).lexically_normal());
+  old.append(design::make_edit_op(id, {{"asset", both}}));
+  write_text_file(f.dir / "old" / "design.opad", old.serialize());  // as an older build saved it: no clean-up
+  Document again = Document::load(f.dir / "old" / "design.opad");
+  CHECK(asset_of(again, id).contains("abs"));
+  CHECK_EQ(asset_status(again)[0].state, "ok");
+  const size_t before = again.ops.size();
+  again.save();
+  CHECK(again.ops.size() == before + 1 && again.ops.back().type == "edit");
+  CHECK(asset_of(again, id)["path"] == "parts/a.step" && !asset_of(again, id).contains("abs"));
+  Document clean = Document::load(f.dir / "old" / "design.opad");
+  CHECK_EQ(asset_status(clean)[0].state, "ok");
+  clean.save();
+  CHECK_EQ(clean.ops.size(), before + 1);  // nothing more to clean
+}
+
 // Assets in git (UI-69): a linked file deleted from its work tree comes back from the last commit that has it, as it was synced;
 // Track with Git LFS writes its pattern into .gitattributes. Skipped without git (and the LFS part without git-lfs).
 TEST(recover_from_git_and_lfs) {

@@ -2,10 +2,14 @@
 // Linked assets (TODO 11 UI-67): a file imported by reference rather than by copy, for a STEP or a board one designs
 // around without editing it. Its import op carries an `asset` object:
 //   {"v":1, "kind":"step|iges|parasolid|brep|mesh|drawing|kicad_pcb|image", "path":"<relative to the document, forward slashes>",
-//    "abs":"<absolute fallback>", "sha256":"<the file's>", "size":N, "storage":"linked|project|embedded",
+//    "abs":"<absolute: only when there is no relative path>", "sha256":"<the file's>", "size":N, "storage":"linked|project|embedded",
 //    "builder":{"name":"opad","version":1,"options":{...how it was read}}, "synced":"<time>",
 //    "models_sha256":"<a KiCad board: its 3D models' names and contents as found>",
 //    "derived":{"kind":"step","path","abs","sha256","builder":{"name":"kicad-cli",...}}}
+// Paths are git friendly: "path" whenever the file has one relative to the document (same drive), never also "abs" (it
+// would put the user's name and folders into commits and differ per clone); "abs" alone for another drive, a share, or a
+// document not saved yet (made relative at its first save). A derived file in OPAD's cache is "cache":<path in it>. Older
+// documents with both still read (path first); their next save records the path alone (asset_path_edits).
 // `derived`: the shapes come from another file made from the source by a converter (a board exported by kicad-cli); the
 // source is what is watched and synced, the derived file what is read; AssetOptions::derive makes it again.
 // and its bodies never enter the body store: they are read from the file whenever the document opens (load_assets, on the

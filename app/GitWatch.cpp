@@ -445,11 +445,20 @@ void GitWatch::askOwnFolder(const QString& file, const QStringList& others, cons
   cancel->setObjectName("gitOwnFolderCancel");
   box->setDefaultButton(move);
   box->setEscapeButton(cancel);
-  connect(box, &QMessageBox::buttonClicked, this, [this, box, move, here, file, target](QAbstractButton* clicked) {
+  // Its linked files would be left outside the new folder (a clone would miss them, and they get the trust question): copied
+  // in (Pack: assets/ beside it, relinked by relative paths; copies, so other documents using them keep working).
+  QPointer<QCheckBox> copy;
+  if (const int linked = m_linked ? m_linked() : 0; linked > 0) {
+    copy = new QCheckBox(tr("Also copy its %n linked file(s) into the new folder (recommended for version control)", nullptr, linked), box);
+    copy->setObjectName("gitOwnFolderCopy");
+    copy->setChecked(true);
+    box->setCheckBox(copy);
+  }
+  connect(box, &QMessageBox::buttonClicked, this, [this, box, move, here, file, target, copy](QAbstractButton* clicked) {
     if (clicked == here) return setUpDialog();
     if (clicked != move || QFileInfo(m_file) != QFileInfo(file)) return;  // Cancel, or another document by now
     ++m_busy;
-    m_mover(target, [self = QPointer<GitWatch>(this), target](bool ok, const QString& error) {
+    m_mover(target, copy && copy->isChecked(), [self = QPointer<GitWatch>(this), target](bool ok, const QString& error) {
       if (!self) return;
       --self->m_busy;
       if (!ok) return self->failed(tr("Could not move the document"), error);
