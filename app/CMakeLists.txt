@@ -101,8 +101,12 @@ if(OPAD_STATIC)
   # plugin where the platform has one (CUPS on Linux; Windows prints from QtPrintSupport itself, through winspool). TLS
   # (the update check asks GitHub over HTTPS, UpdateCheck.hpp): Windows' own Schannel backend only, since the OpenSSL one
   # alone carries OpenSSL; no network information plugin.
+  # Platforms: Windows' own, and offscreen for headless runs (git's askpass answered by OPAD_BENCH_ASKPASS in the
+  # git-client test, benches without a desktop); only the default one would come in otherwise.
   if(WIN32)
-    qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin tls Qt6::QSchannelBackendPlugin EXCLUDE_BY_TYPE iconengines networkinformation)
+    qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin tls Qt6::QSchannelBackendPlugin
+                      platforms Qt6::QWindowsIntegrationPlugin Qt6::QOffscreenIntegrationPlugin
+                      EXCLUDE_BY_TYPE iconengines networkinformation)
   else()
     qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin EXCLUDE_BY_TYPE iconengines tls networkinformation)
   endif()
