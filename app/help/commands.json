@@ -1884,6 +1884,20 @@
    "keywords": ["Qt", "licence", "license", "version"]
   },
   {
+   "id": "help.checkUpdates",
+   "title": "Check for updates",
+   "summary": "Asks GitHub whether a newer version of OPAD has been released.",
+   "details": "A newer version comes as a notice: What's new shows its release notes, Download opens its page, and Skip this version keeps the automatic check quiet about it. Only the latest release's version and notes are fetched; nothing about you or your files is sent. Nothing is downloaded or installed by itself.",
+   "keywords": ["update", "new version", "upgrade", "release", "download"]
+  },
+  {
+   "id": "help.autoUpdates",
+   "title": "Check for updates automatically",
+   "summary": "Lets OPAD look for a newer version by itself, at most once a day.",
+   "details": "When it is on, OPAD asks GitHub about 20 seconds after it starts, if a day has passed since the last check, and tells you only when a newer version is out. Turn it off to never contact GitHub on your behalf; Check for updates still works when you choose it.",
+   "keywords": ["update", "automatic", "notify", "new version", "privacy"]
+  },
+  {
    "id": "help.about",
    "title": "About OPAD",
    "summary": "Shows the OPAD version, its licence and the libraries it is built on.",

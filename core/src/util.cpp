@@ -1,6 +1,10 @@
 #include "opad/util.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <charconv>
+#include <clocale>
+#include <locale.h>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -13,6 +17,10 @@
 #include <sstream>
 
 #include "opad/version.hpp"
+
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 
 namespace opad {
 
@@ -114,6 +122,31 @@ std::string default_author() {
 }
 
 std::string version_string() { return OPAD_VERSION; }
+
+const char* parse_double(const char* first, const char* last, double& out) {
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+  const auto r = std::from_chars(first, last, out);
+  return r.ec == std::errc() ? r.ptr : nullptr;
+#else
+  // strtod wants a terminated string and reads the locale's decimal point: a short copy, and the C locale by hand.
+  char buffer[128];
+  const size_t n = std::min<size_t>(size_t(last - first), sizeof buffer - 1);
+  if (n == 0 || first[0] == ' ' || first[0] == '\t' || first[0] == '\n' || first[0] == '+') return nullptr;  // as from_chars
+  std::memcpy(buffer, first, n);
+  buffer[n] = '\0';
+  static const locale_t c_locale = newlocale(LC_ALL_MASK, "C", nullptr);
+  char* end = nullptr;
+  const double v = strtod_l(buffer, &end, c_locale);
+  if (end == buffer) return nullptr;
+  const char* lead = buffer + (buffer[0] == '-');
+  if (lead[0] == '0' && (lead[1] == 'x' || lead[1] == 'X')) {  // from_chars reads no hex: the 0 alone, as it does
+    out = buffer[0] == '-' ? -0.0 : 0.0;
+    return first + (lead - buffer) + 1;
+  }
+  out = v;
+  return first + (end - buffer);
+#endif
+}
 
 // ---------------------------------------------------------------- sha256
 namespace {

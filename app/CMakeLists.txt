@@ -1,6 +1,9 @@
 # PrintSupport is required: Print (UI-86) and Plot to a printer (UI-88). MSYS2's qt6-base and qt6-static, Debian's
 # qt6-base-dev and Homebrew's qt all ship it.
 find_package(Qt6 COMPONENTS Widgets Gui Network PrintSupport QUIET)
+if(NOT Qt6_FOUND AND OPAD_REQUIRE_APP)  # again, loud: CMake then says which dependency of Qt's own config is missing
+  find_package(Qt6 REQUIRED COMPONENTS Widgets Gui Network PrintSupport)
+endif()
 if(NOT Qt6_FOUND)
   set(_opad_qt_missing "")
   foreach(_opad_qt_module Widgets Gui Network PrintSupport)
@@ -13,6 +16,9 @@ if(NOT Qt6_FOUND)
   return()
 endif()
 if(NOT OPAD_OCCT_VIS_LIBS)
+  if(OPAD_REQUIRE_APP)
+    message(FATAL_ERROR "OPAD: OCCT visualisation toolkits (TKV3d/TKOpenGl) not found (OPAD_REQUIRE_APP)")
+  endif()
   message(WARNING "OPAD: OCCT visualisation toolkits (TKV3d/TKOpenGl) not found; skipping the desktop app")
   return()
 endif()
@@ -88,13 +94,22 @@ if(APPLE)
   target_link_libraries(opad PRIVATE "-framework Cocoa")
 endif()
 if(OPAD_STATIC)
-  target_compile_definitions(opad PRIVATE OPAD_SINGLE_FILE=1)  # portable by default: settings and cache beside the exe
+  target_compile_definitions(opad PRIVATE OPAD_SINGLE_FILE=1)  # the single-file build (settings in the user's folders as any build: AppData.hpp)
   # Static Qt links every plugin of every type it knows by default; OPAD reads PNG (built into QtGui) and writes
   # PNG/JPEG screenshots, so the other image formats (TIFF alone drags in zstd, lzma, jbig, lerc, libdeflate) and
   # the SVG icon engine stay out. The Windows platform and style plugins come in as usual, and so does the print support
-  # plugin where the platform has one (CUPS on Linux; Windows prints from QtPrintSupport itself, through winspool). No TLS
-  # or network information plugins either: OPAD talks only through local sockets, and the OpenSSL backend alone carries OpenSSL.
-  qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin EXCLUDE_BY_TYPE iconengines tls networkinformation)
+  # plugin where the platform has one (CUPS on Linux; Windows prints from QtPrintSupport itself, through winspool). TLS
+  # (the update check asks GitHub over HTTPS, UpdateCheck.hpp): Windows' own Schannel backend only, since the OpenSSL one
+  # alone carries OpenSSL; no network information plugin.
+  # Platforms: Windows' own, and offscreen for headless runs (git's askpass answered by OPAD_BENCH_ASKPASS in the
+  # git-client test, benches without a desktop); only the default one would come in otherwise.
+  if(WIN32)
+    qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin tls Qt6::QSchannelBackendPlugin
+                      platforms Qt6::QWindowsIntegrationPlugin Qt6::QOffscreenIntegrationPlugin
+                      EXCLUDE_BY_TYPE iconengines networkinformation)
+  else()
+    qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin EXCLUDE_BY_TYPE iconengines tls networkinformation)
+  endif()
 endif()
 install(TARGETS opad RUNTIME DESTINATION bin BUNDLE DESTINATION .)
 
@@ -102,3 +117,6 @@ if(WIN32 AND NOT OPAD_STATIC)
   include(${PROJECT_SOURCE_DIR}/cmake/portable.cmake)  # target opad-portable
 endif()
 include(${PROJECT_SOURCE_DIR}/cmake/single.cmake)  # target opad-single: the one-file deliverable of each OS
+if(UNIX AND NOT APPLE AND NOT OPAD_STATIC AND TARGET opad-cli)
+  include(${PROJECT_SOURCE_DIR}/cmake/deb.cmake)  # target opad-deb: the Debian/Ubuntu installer
+endif()

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The .opad file type for Linux desktops (installed by the Debian package, cmake/deb_stage.cmake). -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-opad">
+    <comment>OPAD design</comment>
+    <glob pattern="*.opad"/>
+    <icon name="opad"/>
+  </mime-type>
+</mime-info>

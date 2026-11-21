@@ -19,6 +19,7 @@
 #include <QTimer>
 #include <QSurfaceFormat>
 
+#include "AppData.hpp"
 #include "CompareMode.hpp"
 #include <cstring>
 
@@ -28,6 +29,7 @@
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
+#include "SettingsBackup.hpp"
 #include "StartUp.hpp"
 #include "opad/core.hpp"
 #include "opad/drawing/paint.hpp"
@@ -138,21 +140,15 @@ int main(int argc, char** argv) {
   QApplication::setApplicationVersion(QString::fromStdString(opad::version_string()));
   QApplication::setWindowIcon(icons::appIcon());
   opad::drawing::install_painter();  // PDF and PNG drawings (export, on workers too)
-  // Portable runs keep settings and cache beside the exe instead of the registry and %LOCALAPPDATA%, so the program
-  // can move between machines: always in the single-file build (<exe dir>/opad-data), and in the folder package
-  // when the `opad.portable` marker sits beside the exe (<exe dir>/data).
+  // Settings and data in the user's own folders, or beside the exe when an `opad.portable` marker is there (AppData.hpp).
   const QString exeDir = QApplication::applicationDirPath();
-  QString dataDir;
-#ifdef OPAD_SINGLE_FILE
-  dataDir = exeDir + "/opad-data";
-#endif
-  if (QFile::exists(exeDir + "/opad.portable")) dataDir = exeDir + "/data";
-  if(!qEnvironmentVariableIsEmpty("OPAD_BENCH_SETTINGS")) dataDir=qEnvironmentVariable("OPAD_BENCH_SETTINGS");
-  if (!dataDir.isEmpty()) {
-    QSettings::setDefaultFormat(QSettings::IniFormat);
-    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dataDir);
-    if (qEnvironmentVariableIsEmpty("OPAD_CACHE_DIR"))
-      qputenv("OPAD_CACHE_DIR", QDir::toNativeSeparators(dataDir + "/cache").toLocal8Bit());
+  // What a single-file build before 0.9.0 kept in <exe dir>/opad-data is copied over once.
+  if (const QString adopted = appdata::start(exeDir); !adopted.isEmpty()) trace::log("startup: settings copied from " + adopted);
+  {
+    QSettings settings;
+    // A copy of the settings before this version's migrations change anything (SettingsBackup.hpp)
+    const QString kept = settingsbackup::keepBeforeChange(settings, QApplication::applicationVersion(), settingsbackup::defaultDir(settings));
+    if (!kept.isEmpty()) trace::log("startup: settings of an earlier version kept in " + kept);
   }
   i18n::install(app);  // before any widget exists: translator and layout direction (needs the names above for QSettings)
   if (askpass) return GitWatch::askpassDialog(argc, argv);

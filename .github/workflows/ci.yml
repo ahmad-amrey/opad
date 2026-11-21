@@ -1,0 +1,740 @@
+# Builds and tests OPAD on Windows, Linux and macOS for every pull request to main and every push to it, and publishes
+# the releases (docs/releasing.md).
+#
+# Releases follow the version in CMakeLists.txt (project(opad VERSION X.Y.Z)), the one place it is written: when a push
+# to main changes it to a version without a published release, normally the merge of the pull request that raised it,
+# the run creates the tag vX.Y.Z on that commit and publishes the release: the CHANGELOG.md section of X.Y.Z, a downloads table
+# (tools/release_downloads.md), GitHub's list of merged pull requests, and the packages. A pull request that raises the
+# version must keep it above the latest release and bring its dated "## [X.Y.Z] - YYYY-MM-DD" section, the newest in
+# the changelog; its check then says "Merging this pull request publishes OPAD X.Y.Z". Pushing a vX.Y.Z tag on a
+# commit of main by hand publishes too (a release lost to a failed run).
+#
+# Each successful build is recorded under the git tree hash of the code it built (a "tested-<tree>" artifact). When a
+# later run sees exactly the same code, typically the push of a merged pull request that was up to date with main, it
+# skips the builds and the release publishes the packages of that earlier run. Anything that differs is built and
+# tested again. Run the workflow by hand with "rebuild" to build anyway.
+#
+# Packages: Windows = installer (installer/opad.iss) and single-file exe (windows-static-ucrt64 preset: Qt and OCCT
+# linked in); Linux = Debian package (opad-deb) and AppImage (linux-single); macOS = dmg (macos-single). OCCT 7.9.2 is
+# built from source on Linux and statically on Windows, once: the Actions cache keeps it, and ccache keeps the compiled
+# sources; macOS takes Homebrew's. The simulation engines, Python module and plugins are off in the Windows and Linux
+# packages.
+#
+# Actions are pinned to exact commits; update the SHA and the version comment together. The check to require in the
+# main ruleset is "Tested" alone (it fails when the version checks or any platform failed or were cancelled).
+name: Build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Build even if this exact code was built before
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request replaces its run. Runs on main and tags each have their own group (by commit):
+# GitHub keeps one pending run per group and cancels the older pending one, which on main could be the release.
+concurrency:
+  group: build-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CCACHE_MAXSIZE: 1500M
+  # Packages of a tag are the release's; those of other runs are kept a week (a release reusing them takes them then).
+  ARTIFACT_DAYS: ${{ github.ref_type == 'tag' && 30 || 7 }}
+  MSYS2_PACKAGES: >-
+    mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-ccache
+    mingw-w64-ucrt-x86_64-qt6-static mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-nlohmann-json
+    mingw-w64-ucrt-x86_64-rapidjson mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-freetype mingw-w64-ucrt-x86_64-zstd
+    mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-openssl
+    mingw-w64-ucrt-x86_64-libwebp mingw-w64-ucrt-x86_64-libtiff mingw-w64-ucrt-x86_64-libjpeg-turbo
+    mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-brotli mingw-w64-ucrt-x86_64-pcre2 mingw-w64-ucrt-x86_64-vulkan-headers
+    mingw-w64-ucrt-x86_64-gdb
+  APT_PACKAGES: >-
+    cmake ninja-build g++ pkg-config ccache qt6-base-dev libqt6opengl6-dev nlohmann-json3-dev libfreetype-dev
+    libfontconfig-dev libharfbuzz-dev libzstd-dev libgl-dev libglu1-mesa-dev libx11-dev libxext-dev libxi-dev
+    rapidjson-dev libeigen3-dev file dpkg-dev patchelf
+  BREW_PACKAGES: cmake ninja ccache opencascade qt nlohmann-json pybind11 python
+  LINUX_CONFIGURE: -DOPAD_CHRONO=OFF -DOPAD_NETGEN=OFF -DOPAD_BUILD_PYTHON=OFF -DOPAD_BUILD_PLUGINS=OFF
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+      tree: ${{ steps.reuse.outputs.tree }}
+      reuse-run: ${{ steps.reuse.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read and check the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          version=$(sed -n 's/^project(opad VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ -z "$version" ]; then
+            echo "::error file=CMakeLists.txt::no version in project(opad VERSION ...)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version $version"
+
+          # The changelog and the version move together: its newest version section must be this version (only
+          # [Unreleased] may sit above it). A section the version does not announce would never be released.
+          newest=$(tr -d '\r' < CHANGELOG.md | sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' | head -1)
+          if [ "$newest" != "$version" ]; then
+            echo "::error file=CHANGELOG.md::the newest changelog section is [${newest:-none}] but CMakeLists.txt says $version. Raise the version to match, or keep the entries under [Unreleased]."
+            exit 1
+          fi
+
+          # Released versions are the published releases (a tag whose release run failed is not one). Any failure to
+          # ask stops the job: an empty answer must never read as "nothing released yet".
+          answer=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name')
+          versions=$(printf '%s\n' "$answer" | sed -n 's/^v\([0-9][0-9.]*\)$/\1/p')
+          latest=$(printf '%s\n' "$versions" | sed '/^$/d' | sort -V | tail -1)
+          if printf '%s\n' "$versions" | grep -qxF "$version"; then released=true; else released=false; fi
+          tag=$(git ls-remote --tags --refs origin "v$version")
+          echo "Latest release: ${latest:-none}; $version already released: $released; tag v$version: ${tag:+exists}"
+
+          release=false
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match the project version $version"
+              exit 1
+            fi
+            release=true
+          elif [ "$released" = false ]; then
+            # A new version: it must move forward and come with dated release notes.
+            if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]; then
+              echo "::error file=CMakeLists.txt::version $version is lower than the latest release $latest"
+              exit 1
+            fi
+            if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+              # Only the push that changed the version publishes it, on its own commit: a later push never releases
+              # code under notes that do not describe it (re-run the run of the push that raised it, docs/releasing.md).
+              previous=""
+              if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+                git fetch --quiet --depth=1 origin "$BEFORE"
+                previous=$(git show "$BEFORE:CMakeLists.txt" | sed -n 's/^project(opad VERSION \([0-9.]*\).*/\1/p')
+              fi
+              if [ "$previous" = "$version" ]; then
+                echo "::warning::$version is not released, but this push did not change the version, so it publishes nothing. Re-run the run of the push that raised it, or push the tag v$version on that commit."
+              elif [ -n "$tag" ]; then
+                echo "::error::the tag v$version exists without a published release: delete it (git push origin :refs/tags/v$version) and re-run, or re-run the tag's own run"
+                exit 1
+              else
+                release=true
+              fi
+            elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              echo "::notice title=Release::Merging this pull request publishes OPAD $version."
+            fi
+          fi
+          if [ "$release" = true ] || [ "$released" = false ]; then
+            if ! sh tools/changelog_section.sh "$version" > /dev/null; then
+              echo "::error file=CHANGELOG.md::version $version needs a '## [$version] - YYYY-MM-DD' section with its release notes"
+              exit 1
+            fi
+            if ! tr -d '\r' < CHANGELOG.md | grep -qE "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*$"; then
+              echo "::error file=CHANGELOG.md::date the section of $version: '## [$version] - YYYY-MM-DD' (the day it is published)"
+              exit 1
+            fi
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+      - name: Look for an earlier build of exactly this code
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REBUILD: ${{ inputs.rebuild && 'true' || 'false' }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "Code tree: $tree"
+          if [ "$REBUILD" = true ]; then
+            echo "Rebuild requested."
+            exit 0
+          fi
+          # A build is reused only from a run whose commit has exactly this tree. ci.yml is part of the tree, so the
+          # packages were made by the same reviewed workflow that is running now, never by a branch or fork whose own
+          # workflow could have produced anything. A pull request's run counts when its branch was up to date with
+          # main (its head then has the tree of the merge).
+          run=""
+          candidates=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=tested-$tree&per_page=20" \
+            --jq '.artifacts[] | select(.expired | not) | .workflow_run.id' | sort -u)
+          for id in $candidates; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" \
+              --jq '[.conclusion, .path, .head_repository.full_name, .head_sha] | @tsv' > run.tsv
+            IFS=$'\t' read -r conclusion path head_repo head_sha < run.tsv
+            if [ "$conclusion" != success ] || [ "$path" != .github/workflows/ci.yml ] \
+               || [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+              echo "Run $id: not a successful run of this workflow in this repository; ignored."
+              continue
+            fi
+            head_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$head_sha" --jq .tree.sha)
+            if [ "$head_tree" != "$tree" ]; then
+              echo "Run $id built commit $head_sha with different code; ignored."
+              continue
+            fi
+            packages=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts?per_page=50" --jq '
+              [.artifacts[] | select(.expired | not) | .name
+                            | select(. == "windows" or . == "linux" or . == "macos")] | length')
+            if [ "$packages" != 3 ]; then
+              echo "Run $id built this code, but its packages have expired; ignored."
+              continue
+            fi
+            run=$id
+            break
+          done
+          if [ -z "$run" ]; then
+            echo "No earlier build of exactly this code; building it."
+            exit 0
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Reusing an earlier build::This exact code was built and tested in run $run ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run), so the builds are skipped."
+
+  windows:
+    name: Windows
+    needs: version
+    if: needs.version.outputs.reuse-run == ''
+    runs-on: windows-latest
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true  # third_party/libredwg (DWG); not its own nested submodules
+      # The runner's MSYS2 in C:\msys64, where the presets expect it. UCRT64, not MINGW64: MSYS2 is retiring MINGW64 and
+      # ships the static Qt only for UCRT64 and CLANG64 now (presets windows-static-ucrt64 / windows-single-ucrt64).
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          release: false
+          update: true
+          install: ${{ env.MSYS2_PACKAGES }}
+      - id: gcc
+        run: echo "version=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
+      - name: Restore the static OCCT
+        id: deps
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/windows-static-ucrt64/occt/install
+          key: occt-static-windows-ucrt64-gcc${{ steps.gcc.outputs.version }}-${{ hashFiles('cmake/occt_static.cmake', 'cmake/occt_source.cmake') }}
+      - name: Restore ccache
+        id: ccache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .ccache
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
+      - name: Configure
+        run: cmake --preset windows-static-ucrt64 -DOPAD_REQUIRE_APP=ON
+      # Saved now, whatever the steps after it do: a failing test must not throw away what the configure built.
+      - name: Save the static OCCT
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/windows-static-ucrt64/occt/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Build
+        # -k 0: every compile error of the run at once, not just the first.
+        run: set -o pipefail; cmake --build --preset windows-static-ucrt64 -- -k 0 2>&1 | tee build.log
+      # git: the runner's Git for Windows (MSYS2's own git answers with /tmp/... paths, which a Windows program cannot use).
+      - name: Test
+        id: test
+        run: |
+          export PATH="$PATH:/c/Program Files/Git/cmd"
+          ctest --preset windows-static-ucrt64
+      # A test that crashed says nothing (its output is lost with the process): run each failed test program once more
+      # under gdb for a backtrace.
+      - name: Backtraces of the failed tests
+        if: failure() && steps.test.outcome == 'failure'
+        run: |
+          cd build/windows-static-ucrt64
+          export PATH="$PATH:/c/Program Files/Git/cmd"
+          export OPAD_MESHSOLID_DEBUG=1  # mesh-solid says why a fit or an attempt was refused
+          for name in $(sed 's/^[0-9]*://' Testing/Temporary/LastTestsFailed.log); do
+            exe="bin/opad-test-$name.exe"
+            [ -f "$exe" ] || continue
+            echo "::group::$name"
+            timeout 600 gdb -q -batch -ex run -ex "thread apply all bt 30" -ex "x/8i \$pc" -ex "info registers" --args "$exe" 2>&1 | tail -220 || true
+            echo "::endgroup::"
+          done
+      - name: Single-file exes
+        run: set -o pipefail; cmake --build --preset windows-single-ucrt64 2>&1 | tee -a build.log
+      - name: Report build errors
+        if: failure()
+        shell: bash
+        run: test -f build.log && grep -E "error:|Error |FAILED|undefined reference" build.log | head -15 | sed 's/^/::error::/' || true
+      # The installer (installer/opad.iss): per user, Start menu entry, uninstaller; the user's settings are never touched.
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc /Q "/DAppVersion=${{ needs.version.outputs.version }}" "/DSourceDir=../build/windows-static-ucrt64/single" "/DOutputDir=../build/windows-static-ucrt64/installer" installer/opad.iss
+          if ($LASTEXITCODE) { throw "ISCC failed" }
+      # Silent install, update over it and uninstall, as a user would, without MSYS2 on PATH; the settings (registry,
+      # HKCU\Software\opad\OPAD) and the data folder (%LOCALAPPDATA%\opad\OPAD) must come out as they went in.
+      - name: Test install, update and uninstall keep settings
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem build\windows-static-ucrt64\installer\*-setup.exe | Select-Object -First 1).FullName
+          $app = "$env:LOCALAPPDATA\Programs\OPAD"
+          $key = "HKCU:\Software\opad\OPAD\ci"
+          $data = "$env:LOCALAPPDATA\opad\OPAD\ci-kept.txt"
+          New-Item -Force $key | Out-Null
+          Set-ItemProperty $key -Name kept -Value "1500"
+          New-Item -ItemType File -Force $data -Value "kept" | Out-Null
+
+          Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          if (-not (Test-Path "$app\OPAD.exe")) { throw "not installed per user in $app" }
+          $v = & "$app\opad-cli.exe" version
+          if ($LASTEXITCODE) { throw "the installed opad-cli did not run" }
+          Write-Host "Installed: $v"
+          Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          if (-not (Test-Path "$app\OPAD.exe")) { throw "the update removed the app" }
+
+          Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          for ($i = 0; $i -lt 30 -and (Test-Path "$app\OPAD.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$app\OPAD.exe") { throw "the uninstall left the app behind" }
+          if ((Get-ItemProperty $key -Name kept -ErrorAction SilentlyContinue).kept -ne "1500") { throw "settings were changed or removed" }
+          if ((Get-Content $data -Raw) -ne "kept") { throw "the data folder was changed or removed" }
+          Write-Host "Per-user install, update and uninstall OK; settings kept."
+      - name: Save ccache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+          if-no-files-found: error
+          path: |
+            build/windows-static-ucrt64/installer/*.exe
+            build/windows-static-ucrt64/single/*.exe
+            build/windows-static-ucrt64/single/THIRD-PARTY-NOTICES.txt
+
+  linux:
+    name: Linux
+    needs: version
+    if: needs.version.outputs.reuse-run == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      APPIMAGE_EXTRACT_AND_RUN: 1  # linuxdeploy is an AppImage itself; no FUSE on the runner
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+      - name: linuxdeploy
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cd "$HOME/.local/bin"
+          curl -fsSL -o linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-plugin-qt https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-qt
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - id: gcc
+        run: echo "version=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
+      - name: Restore OCCT
+        id: deps
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/linux/occt/install
+          key: occt-linux-gcc${{ steps.gcc.outputs.version }}-${{ hashFiles('cmake/occt_bundled.cmake', 'cmake/occt_source.cmake') }}
+      - name: Restore ccache
+        id: ccache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
+      - name: Configure
+        run: cmake --preset linux $LINUX_CONFIGURE -DOPAD_REQUIRE_APP=ON
+      # Saved now, whatever the steps after it do: a failing test must not throw away what the configure built.
+      - name: Save OCCT
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/linux/occt/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Build
+        run: set -o pipefail; cmake --build --preset linux 2>&1 | tee build.log
+      - name: Test
+        run: QT_QPA_PLATFORM=offscreen ctest --preset linux
+      - name: AppImage
+        run: set -o pipefail; cmake --build --preset linux-single 2>&1 | tee -a build.log
+      - name: Debian package
+        run: set -o pipefail; cmake --build --preset linux --target opad-deb 2>&1 | tee -a build.log
+      - name: Report build errors
+        if: failure()
+        run: test -f build.log && grep -E "error:|Error |FAILED|undefined reference" build.log | head -15 | sed 's/^/::error::/' || true
+      # apt install, reinstall (an update) and remove, as a user would; the settings (~/.config/opad/OPAD.conf) and the
+      # data folder (~/.local/share/opad/OPAD) must come out as they went in.
+      - name: Test install, update and removal keep settings
+        run: |
+          deb=$(ls build/linux/single/*.deb | head -1)
+          dpkg-deb --info "$deb"
+          settings="$HOME/.config/opad/OPAD.conf"
+          data="$HOME/.local/share/opad/OPAD/ci-kept.txt"
+          mkdir -p "$(dirname "$settings")" "$(dirname "$data")"
+          printf '[ci]\nkept=1500\n' > "$settings"
+          echo kept > "$data"
+
+          sudo apt-get install -y "./$deb"
+          opad-cli version
+          test -x /usr/bin/opad
+          sudo apt-get install -y --reinstall "./$deb"
+          sudo apt-get remove -y opad
+          if [ -e /usr/bin/opad-cli ] || [ -e /usr/bin/opad ] || dpkg-query -W -f='${Status}' opad 2>/dev/null | grep -q 'install ok installed'; then
+            echo "::error::apt-get remove left OPAD behind"; exit 1
+          fi
+          grep -q 1500 "$settings" || { echo "::error::settings were changed or removed"; exit 1; }
+          grep -q kept "$data" || { echo "::error::the data folder was changed or removed"; exit 1; }
+          echo "Install, update and removal OK; settings kept."
+      - name: Save ccache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+          if-no-files-found: error
+          path: |
+            build/linux/single/*.deb
+            build/linux/single/*.AppImage
+            build/linux/single/THIRD-PARTY-NOTICES.txt
+
+  # As verified on an Apple-silicon Mac (CLAUDE.md "macOS (Apple silicon, Homebrew)"): Homebrew's OCCT and Qt, the plain
+  # macos preset (Chrono and Netgen built at the first configure, kept in the cache), its unit tests, then the dmg
+  # (arm64, ad-hoc signed, every library inside the app).
+  macos:
+    name: macOS
+    needs: version
+    if: needs.version.outputs.reuse-run == ''
+    runs-on: macos-15  # Apple silicon
+    timeout-minutes: 300
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true  # third_party/libredwg (DWG)
+      - name: Packages
+        run: brew install $BREW_PACKAGES
+      - id: cc
+        run: echo "version=$(clang -dumpversion)" >> "$GITHUB_OUTPUT"
+      - name: Restore the simulation engines
+        id: deps
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            build/macos/eigen
+            build/macos/chrono/install
+            build/macos/netgen/install
+          key: sim-engines-macos-clang${{ steps.cc.outputs.version }}-${{ hashFiles('cmake/sim_engines.cmake') }}
+      - name: Restore ccache
+        id: ccache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .ccache
+          key: ccache-macos-${{ github.sha }}
+          restore-keys: ccache-macos-
+      - name: Configure
+        run: cmake --preset macos -DOPAD_REQUIRE_APP=ON
+      # Saved now, whatever the steps after it do: a failing test must not throw away what the configure built.
+      - name: Save the simulation engines
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            build/macos/eigen
+            build/macos/chrono/install
+            build/macos/netgen/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Build
+        run: set -o pipefail; cmake --build --preset macos 2>&1 | tee build.log
+      - name: Test
+        run: QT_QPA_PLATFORM=offscreen ctest --preset macos
+      - name: dmg
+        run: set -o pipefail; cmake --build --preset macos-single 2>&1 | tee -a build.log
+      - name: Report build errors
+        if: failure()
+        run: test -f build.log && grep -E "error:|Error |FAILED|undefined reference" build.log | head -15 | sed 's/^/::error::/' || true
+      - name: Smoke-test the dmg
+        run: |
+          dmg=$(ls build/macos/single/*.dmg | head -1)
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/opad-dmg "$dmg"
+          ls /tmp/opad-dmg
+          # The app's program, wherever the volume puts the bundle, and every library inside: none may name a library
+          # outside the dmg by an absolute path (Homebrew, the build tree). Search paths (LC_RPATH) that point outside
+          # are reported as warnings: harmless while every @rpath library is also inside.
+          exe=$(find /tmp/opad-dmg -path '*/Contents/MacOS/*' -type f -perm -u+x | head -1)
+          test -n "$exe" || { echo "::error::no app program in the dmg"; exit 1; }
+          echo "Program: $exe"
+          bad=0
+          while IFS= read -r f; do
+            file "$f" | grep -q Mach-O || continue
+            # The libraries it loads (LC_LOAD_DYLIB and kin), not its own install name (LC_ID_DYLIB, unused at run time).
+            outside=$(otool -l "$f" | awk '/cmd LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD|LOAD_UPWARD)_DYLIB$/{getline; getline; print $2}'               | grep -v -E '^(@rpath|@executable_path|@loader_path)/|^/usr/lib/|^/System/' || true)
+            if [ -n "$outside" ]; then echo "::error::$f links outside the dmg: $outside"; bad=1; fi
+            rpaths=$(otool -l "$f" | awk '/cmd LC_RPATH/{getline; getline; print $2}' | grep -v '^@' || true)
+            if [ -n "$rpaths" ]; then echo "::warning::$f searches outside the dmg: $rpaths"; fi
+          done < <(find /tmp/opad-dmg -type f \( -perm -u+x -o -name '*.dylib' \))
+          test "$bad" = 0
+          hdiutil detach /tmp/opad-dmg
+      - name: Save ccache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+          if-no-files-found: error
+          path: |
+            build/macos/single/*.dmg
+            build/macos/single/THIRD-PARTY-NOTICES.txt
+
+  # The one check to require in the main ruleset. It always runs, so a failed or cancelled build fails it; a skipped job
+  # would count as passing.
+  tested:
+    name: Tested
+    if: always()
+    needs: [version, windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check every build passed or was reused
+        env:
+          VERSION_RESULT: ${{ needs.version.result }}
+          REUSED_RUN: ${{ needs.version.outputs.reuse-run }}
+          WINDOWS: ${{ needs.windows.result }}
+          LINUX: ${{ needs.linux.result }}
+          MACOS: ${{ needs.macos.result }}
+        run: |
+          echo "Version: $VERSION_RESULT, Windows: $WINDOWS, Linux: $LINUX, macOS: $MACOS"
+          if [ "$VERSION_RESULT" != success ]; then
+            echo "::error::the version checks failed"
+            exit 1
+          fi
+          if [ -n "$REUSED_RUN" ]; then
+            echo "Built and tested earlier in run $REUSED_RUN."
+            exit 0
+          fi
+          if [ "$WINDOWS" != success ] || [ "$LINUX" != success ] || [ "$MACOS" != success ]; then
+            echo "::error::not every platform built and passed"
+            exit 1
+          fi
+      - name: Record that this code built and passed everywhere
+        if: needs.version.outputs.reuse-run == ''
+        run: echo "${{ github.run_id }}" > tested.txt
+      - if: needs.version.outputs.reuse-run == ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-${{ needs.version.outputs.tree }}
+          path: tested.txt
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+  release:
+    name: Release
+    # Explicit status checks: a plain condition implicitly requires every upstream job to have succeeded, and the
+    # platform jobs behind Tested are skipped when an earlier build is reused.
+    if: >-
+      !cancelled() && needs.version.outputs.release == 'true'
+      && needs.version.result == 'success' && needs.tested.result == 'success'
+    needs: [version, tested]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check the tag is on main
+        if: github.ref_type == 'tag'
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main; tag a commit from main to release"
+            exit 1
+          fi
+      - name: Download the packages (from this run or the earlier build)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+          pattern: "{windows,linux,macos}"
+          run-id: ${{ needs.version.outputs.reuse-run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Collect the packages
+        run: |
+          mkdir dist
+          # An artifact keeps the folders below its paths' common root: found by name.
+          find artifacts -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' \) -exec cp {} dist/ \;
+          # Names without the version (OPAD-0.9.0-macos.dmg -> OPAD-macos.dmg): the README links to
+          # releases/latest/download/<name>, which then always reaches the newest release.
+          for f in dist/*; do
+            fixed="${f/-$VERSION/}"
+            [ "$f" = "$fixed" ] || mv "$f" "$fixed"
+          done
+          for os in windows linux macos; do
+            notice=$(find "artifacts/$os" -name THIRD-PARTY-NOTICES.txt | head -1)
+            cp "$notice" "dist/THIRD-PARTY-NOTICES-$os.txt"
+          done
+          (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          ls -l dist
+          for f in OPAD-windows-x64-setup.exe OPAD-macos.dmg OPAD-linux-amd64.deb; do
+            test -f "dist/$f" || { echo "::error::$f is missing (the README and the update check link to it)"; exit 1; }
+          done
+      - name: Release notes
+        run: |
+          sh tools/changelog_section.sh "$VERSION" > notes.md
+          sed "s/@VERSION@/$VERSION/g" tools/release_downloads.md >> notes.md
+          cat notes.md
+      - name: Publish the release
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "OPAD $VERSION" \
+              --notes-file notes.md --generate-notes
+          else
+            # Creates the vX.Y.Z tag on this commit of main. Tags created with the workflow's token start no new run.
+            gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --title "OPAD $VERSION" \
+              --notes-file notes.md --generate-notes
+          fi
+
+  # Caches made on a pull request stay with it; those made on main are the ones every pull request reads. When a merge
+  # reuses its pull request's build, main builds nothing, so a dependency whose recipe changed would be built again by
+  # every later pull request: these jobs build on main just the dependencies main's cache does not have yet (a lookup,
+  # then nothing, when it has them). ccache on main is refreshed by main's own builds, or by running the workflow with
+  # "rebuild" on main.
+  warm-windows:
+    name: Warm cache (Windows)
+    needs: version
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.reuse-run != ''
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          release: false
+          update: true
+          install: ${{ env.MSYS2_PACKAGES }}
+      - id: gcc
+        run: echo "version=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
+      - id: deps
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/windows-static-ucrt64/occt/install
+          key: occt-static-windows-ucrt64-gcc${{ steps.gcc.outputs.version }}-${{ hashFiles('cmake/occt_static.cmake', 'cmake/occt_source.cmake') }}
+          lookup-only: true
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: cmake --preset windows-static-ucrt64
+      - if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/windows-static-ucrt64/occt/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+  warm-linux:
+    name: Warm cache (Linux)
+    needs: version
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.reuse-run != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - id: gcc
+        run: echo "version=$(gcc -dumpfullversion)" >> "$GITHUB_OUTPUT"
+      - id: deps
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/linux/occt/install
+          key: occt-linux-gcc${{ steps.gcc.outputs.version }}-${{ hashFiles('cmake/occt_bundled.cmake', 'cmake/occt_source.cmake') }}
+          lookup-only: true
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES
+          cmake --preset linux $LINUX_CONFIGURE
+      - if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/linux/occt/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+  warm-macos:
+    name: Warm cache (macOS)
+    needs: version
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.reuse-run != ''
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - id: cc
+        run: echo "version=$(clang -dumpversion)" >> "$GITHUB_OUTPUT"
+      - id: deps
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            build/macos/eigen
+            build/macos/chrono/install
+            build/macos/netgen/install
+          key: sim-engines-macos-clang${{ steps.cc.outputs.version }}-${{ hashFiles('cmake/sim_engines.cmake') }}
+          lookup-only: true
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          brew install $BREW_PACKAGES
+          cmake --preset macos
+      - if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            build/macos/eigen
+            build/macos/chrono/install
+            build/macos/netgen/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}

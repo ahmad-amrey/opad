@@ -18,7 +18,16 @@ set(CMAKE_FIND_LIBRARY_SUFFIXES .a ${CMAKE_FIND_LIBRARY_SUFFIXES})  # an archive
 # HarfBuzz's own CMake config names its import library outright (libharfbuzz.dll.a, an imported DLL), so Qt's
 # FindWrapSystemHarfbuzz must fall back to pkg-config, whose -lharfbuzz the static link resolves to the archive.
 set(CMAKE_DISABLE_FIND_PACKAGE_harfbuzz ON)
-# QtNetwork names OpenSSL on its link interface only for the TLS backend plugins, which the executables do not import
-# (app/ and cli/CMakeLists.txt): an empty WrapOpenSSL target keeps libssl and libcrypto off the link lines, and so out
-# of the third-party notices, as they are out of the exes.
+# Qt finds OpenSSL through WrapOpenSSL. Its TLS backend plugin is not imported (HTTPS goes through Windows' Schannel,
+# app/CMakeLists.txt), so libssl stays out; but from Qt 6.12 (MSYS2 UCRT64's qt6-static) QtCore itself hashes through
+# OpenSSL (QCryptographicHash), so the target carries libcrypto's archive and what it needs (pkg-config --static), and
+# nothing when there is no libcrypto (an older Qt does without it). An archive brings only the objects a link uses.
 add_library(WrapOpenSSL::WrapOpenSSL INTERFACE IMPORTED GLOBAL)
+find_package(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+  pkg_check_modules(OPAD_CRYPTO QUIET libcrypto)
+  if(OPAD_CRYPTO_FOUND)
+    set_target_properties(WrapOpenSSL::WrapOpenSSL PROPERTIES INTERFACE_LINK_LIBRARIES "${OPAD_CRYPTO_STATIC_LDFLAGS}")
+    message(STATUS "OPAD: static libcrypto for QtCore: ${OPAD_CRYPTO_STATIC_LDFLAGS}")
+  endif()
+endif()

@@ -432,7 +432,9 @@ TEST(ribbon_tab_row) {
     QTabBar* tabs = bar.tabBar();
     auto whole = [&] { return tabs->width() >= tabs->sizeHint().width() && (rtl ? bar.cluster()->geometry().right() < tabs->x() : bar.cluster()->x() > tabs->geometry().right()); };
     CHECK(tabs->count() == 6 && gear && branch->parentWidget() == bar.cluster() && undoButton->popupMode() == QToolButton::MenuButtonPopup && undoButton->menu() == &steps && !saveButton->menu());
-    CHECK(!bar.searchField()->compact() && bar.searchField()->width() == SearchField::kFull && inOrder() && whole());
+    // Full = as wide as its words (SearchField::kFull at least): the offscreen font of a static Qt is wider than Segoe UI.
+    CHECK(!bar.searchField()->compact() && bar.searchField()->width() == bar.searchField()->fullWidth() &&
+          bar.searchField()->width() >= SearchField::kFull && inOrder() && whole());
     CHECK(bar.selectButton()->menu() == &more && bar.strip()->isAncestorOf(bar.selectButton()) && !bar.strip()->isAncestorOf(bar.searchField()));
     for (SegmentButton* b : bar.strip()->findChildren<SegmentButton*>()) {
       SegmentButton labelled(b->defaultAction(), "1", false);  // as the filters showed before: the name and the key

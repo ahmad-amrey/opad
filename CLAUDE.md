@@ -71,7 +71,7 @@ FreeType). `cmake/static.cmake`: `-static`, function sections + `--gc-sections`,
 imports every plugin by default: `qt_import_plugins` keeps only qjpeg of the image formats (TIFF alone wants zstd,
 lzma, jbig, lerc, libdeflate) and no icon engine. Target `opad-single` (`cmake/single.cmake`) copies the exes to
 `build/windows-static/single/OPAD-<ver>-windows-x64.exe` and fails if `objdump -p` shows a non-Windows import
-(`single_check.cmake`). `OPAD_SINGLE_FILE` makes the app portable without the marker: data in `<exe dir>/opad-data`.
+(`single_check.cmake`). Settings live in the user's folders as for any build ("Where settings live").
 Python module and plugins are off in this preset. Linux/macOS `opad-single` = AppImage (linuxdeploy) / dmg
 (macdeployqt) over the shared build; written, not run here.
 
@@ -536,6 +536,56 @@ files: `Viewport::setSideExtras` adds panes C and D (views on the same context, 
 with `view` 'C'/'D' only there, the session's own objects masked out; 3 panes = columns A | C | B, 4 = a 2x2 grid),
 filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`, the files in `m_variantDocs`). `opad-cli variants`,
 `ctest -R "variants|xt"`, bench `compare-files` (OPAD_BENCH_COMPARE_FILES).
+
+## CI and releases (`.github/workflows/ci.yml`, docs/releasing.md)
+
+The version's one source is `project(opad VERSION X.Y.Z)`; a version is released
+when it has a published release (tag `vX.Y.Z`), and the workflow creates both: the push to `main` that changes the
+version (compared with `github.event.before`) to one without a release publishes it (`gh release create v$VERSION
+--target $GITHUB_SHA`), so merging the pull request that raises the version releases it; a later push never does (re-run
+or hand-push the tag). Pushes to main and tags get a concurrency group per commit (a pending main run is never cancelled).
+Version job: the newest CHANGELOG.md version heading must equal the version (`[Unreleased]` may sit above), an untagged
+version must be above the latest tag and have a dated non-empty section (`## [X.Y.Z] - YYYY-MM-DD`,
+`tools/changelog_section.sh`); a PR then gets the notice "Merging this pull request publishes OPAD X.Y.Z"; a hand-pushed
+tag must equal the version and be on main. Build once: a run that passed everywhere uploads `tested-<git tree>`; a later
+run with the same tree (a merged PR that was up to date with main) skips the platform jobs and the release downloads that
+run's packages (`run-id`); only successful runs of ci.yml in this repo whose head commit has that tree count. `Tested`
+(always runs) is the one required check. Windows = `windows-static-ucrt64` (MSYS2 has the static Qt only for
+UCRT64/CLANG64), Linux = OCCT from source + AppImage + `opad-deb`, macOS = Homebrew + dmg (macos-15, Apple silicon);
+each job tees build.log and annotates errors on failure; the Windows installer and the .deb are installed, updated and
+removed in the job with a check that settings/data survive. Caches: restore at the start, deps saved right after the
+configure, ccache saved `always()`; PR caches are PR-scoped, so `warm-*` jobs build missing deps on main when a merge
+reused a build. Actions pinned by SHA (update with the version comment). For each release write the changelog section
+(for users: added, changed, fixed, notes; the opening sentences are the update notice's summary). The workflow file is
+not called build*.yml: `.gitignore`'s `build*` would hide it; public docs need a `!/docs/<name>` line there.
+
+## Update check (`app/UpdateCheck.*`, `app/UpdatesArea.cpp`)
+
+Help > Check for updates and the automatic check (setting `updates/autoCheck`, ~20 s after start and hourly while open,
+due once a day; only a check that got an answer counts) ask GitHub's latest-release API anonymously, compare the tag with
+the app version and offer a newer one in a toast (What's new = the release body, Download = this system's installer from
+the release, `installerAssetName`: setup exe / Apple-silicon dmg / .deb on x86-64 Debian-family, else the page; Skip this
+version = `updates/skipVersion`); the browser downloads, the user installs. When the API refuses (403/429: the 60/h
+anonymous limit is per address), the version comes from the HEAD redirect of `releases/latest` (no notes; What's new
+opens the page). The Download / What's new buttons open only github.com/ahmad-amrey/opad/releases/ URLs
+(`safeReleaseUrl`); links inside the notes open as they are. One notice at a time (`m_notice`); a user's check during the
+automatic one is answered by it (`m_userAsked`). The Windows single exe (no `unins000.exe` beside it) downloads
+`OPAD-windows-x64.exe`, an installed copy the setup. No automatic check while
+any `OPAD_BENCH*` variable is set or with `OPAD_NO_UPDATE_CHECK`; `OPAD_UPDATE_URL` / `OPAD_UPDATE_PAGE_URL` point the two
+requests elsewhere (bench `updates`; `ctest -R update-check` runs a fake GitHub on a local socket). HTTPS needs Qt's TLS
+plugin: the static build imports `Qt6::QSchannelBackendPlugin`, the portable stage copies `tls/qschannelbackend.dll`.
+Asset names are fixed by the release job's renames (version-free); renaming one means the README links and
+`installerAssetName` too.
+
+## Where settings live (`app/AppData.*`)
+
+Every build, single-file included, keeps settings in Qt's native place (registry `HKCU\Software\opad\OPAD`,
+`~/.config/opad/OPAD.conf`, the macOS plist), data in `AppLocalDataLocation`, templates in `AppDataLocation` (roaming
+on Windows: `templates::folder()`); the cache is `opad::cache_dir()`. Only
+an `opad.portable` file beside the exe (or `OPAD_BENCH_SETTINGS`) switches to INI + cache in `<exe dir>/data`
+(`appdata::start` = use + adopt, from main and from opad-cli through `gitagent::useAppSettings`). Single-file builds
+before 0.9.0 used `<exe dir>/opad-data`: `appdata::adoptOldPortable` copies its settings (when the native ones are
+empty), templates and data folders (not the cache, not `agent/`) once and leaves it. A dev build and an installed copy on one machine share the settings. `ctest -R app-data`.
 
 ## Commits
 

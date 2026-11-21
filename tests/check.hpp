@@ -42,6 +42,7 @@ inline int run_all(int argc, char** argv) {
       std::printf("[FAIL] %s: %s\n", c.name, e.what());
       ++failures();
     }
+    std::fflush(stdout);  // stdout is a pipe under ctest: a crash in the next case must not take these lines with it
   }
   std::printf("%d/%d passed\n", passed, ran);
   return failures() == 0 && ran > 0 ? 0 : 1;

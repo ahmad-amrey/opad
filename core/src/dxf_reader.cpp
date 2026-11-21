@@ -80,8 +80,8 @@ double parse_number(std::string_view text) {
   auto s = trimmed(text);
   if (!s.empty() && s.front() == '+') s.remove_prefix(1);
   double v = 0;
-  const auto [end, error] = std::from_chars(s.data(), s.data() + s.size(), v);
-  if (error != std::errc() || end != s.data() + s.size() || !std::isfinite(v) || std::abs(v) > 1e15)
+  const char* end = parse_double(s.data(), s.data() + s.size(), v);
+  if (!end || end != s.data() + s.size() || !std::isfinite(v) || std::abs(v) > 1e15)
     throw Error("invalid DXF number: " + std::string(s.substr(0, 40)));
   return v;
 }

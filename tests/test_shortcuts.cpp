@@ -337,7 +337,12 @@ TEST(highlight_keys_and_typing) {
   CHECK(keys::pressedBy(QKeySequence("?"),&shiftSlash) && !keys::pressedBy(QKeySequence("/"),&shiftSlash));
   CHECK(keys::pressedBy(QKeySequence("/"),&plain) && !keys::pressedBy(QKeySequence("Ctrl+/"),&plain) && keys::pressedBy(QKeySequence("Ctrl+/"),&ctrlSlash));
   ShortcutEditor dialog({&hover,&xray,&sheet});dialog.show();
+  // A command picked first, as the user does: its key field is off until one is (Qt 6.10 makes the first row current by
+  // itself, Ubuntu's Qt 6.4 does not).
+  auto* tree=dialog.findChild<QTreeWidget*>();
+  for(QTreeWidgetItemIterator it(tree);*it;++it)if((*it)->data(0,Qt::UserRole).toInt()>=0){tree->setCurrentItem(*it);break;}  // a command, not a folder
   auto* binding=dialog.findChild<QKeySequenceEdit*>("shortcutBinding");
+  CHECK(binding->isEnabled());
   QApplication::sendEvent(binding,&shiftSlash);CHECK(binding->keySequence()==QKeySequence("?"));
   binding->clear();QKeyEvent ctrlShift(QEvent::KeyPress,Qt::Key_Question,Qt::ControlModifier|Qt::ShiftModifier);QApplication::sendEvent(binding,&ctrlShift);
   CHECK(binding->keySequence()==QKeySequence("Ctrl+?"));

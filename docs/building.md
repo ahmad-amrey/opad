@@ -38,7 +38,8 @@ ccache (as the compiler launcher) and LLD (as MinGW's linker) are used when they
 
 `cmake --workflow --preset windows-single` writes `build/windows-static/single/OPAD-<version>-windows-x64.exe` (and
 `opad-cli-<version>-windows-x64.exe`): one exe with Qt, OCCT and everything else linked in, nothing to unpack, no MSYS2
-on the target machine. It keeps its settings and cache in an `opad-data` folder beside itself. The build needs
+on the target machine. It keeps its settings and data in the user's folders like any build, or in a `data` folder
+beside itself when an `opad.portable` file sits there (docs/releasing.md). The build needs
 `pacman -S mingw-w64-x86_64-{qt6-static,rapidjson,pkgconf}` on top of the packages above; the first configure
 downloads the OCCT source and builds its toolkits statically into `build/windows-static/occt` (once, about 15
 minutes; the OS packages ship OCCT as DLLs only). The target fails if the exe imports anything but Windows' own DLLs.
@@ -94,6 +95,31 @@ Homebrew formulae (into the bundle, where Help > Third-party licences reads it, 
 FFmpeg, codec, FreeImage or OpenVR libraries as the portable target does. The dmg is built and runs with every library
 inside the bundle (ad-hoc signed, not notarised; it carries neither opad-cli nor the DWG converters); the AppImage target
 is written but has not been run yet.
+
+## Debian package
+
+`cmake --build --preset linux --target opad-deb` (needs `apt install dpkg-dev patchelf`) writes
+`build/linux/single/OPAD-<version>-linux-amd64.deb`: OPAD and the OCCT it built in `/usr/lib/opad`, `opad` and `opad-cli`
+on the PATH, a menu entry, the `.opad` file type; Qt and the other system libraries become its dependencies
+(dpkg-shlibdeps), so `sudo apt install ./OPAD-<version>-linux-amd64.deb` pulls them in. Built for the Ubuntu it is made on
+(24.04 and newer). LibreDWG's converters are left out (GPLv3); DWG then needs `libredwg-tools` or the ODA File Converter.
+
+## Builds on GitHub and releases
+
+`.github/workflows/ci.yml` builds and tests Windows, Linux and macOS on GitHub's machines for every pull request to
+`main` and every push to it, and publishes a release with the packages when a version tag is pushed. How to cut a
+release, the changelog and the protection of `main`: [releasing.md](releasing.md).
+
+### Windows installer
+
+`installer/opad.iss` (Inno Setup 6) wraps the single-file exes into `OPAD-<version>-windows-x64-setup.exe`:
+`iscc /DAppVersion=<version> installer\opad.iss` after `cmake --workflow --preset windows-single` writes it to
+`build/windows-static/installer`. It installs per user, without administrator rights, into
+`%LOCALAPPDATA%\Programs\OPAD`, with a Start menu entry, an optional desktop icon and an uninstaller in Settings > Apps;
+an open OPAD is offered to be closed first. The settings, cache and recovery snapshots live in the user's own folders
+(the registry and `%LOCALAPPDATA%\opad`): the installer never installs, replaces or deletes anything there, so updates
+keep them and uninstalling leaves them. The script's `AppId` must never change (Windows would take the next version for another
+program and install it beside the first).
 
 ## Options
 

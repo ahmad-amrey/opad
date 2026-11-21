@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(opad VERSION 0.1.0 LANGUAGES C CXX)
+project(opad VERSION 0.9.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(OPAD_BUILD_CLI     "Build the opad-cli headless tool"     ON)
 option(OPAD_BUILD_APP     "Build the Qt 6 desktop application"   ON)
+option(OPAD_REQUIRE_APP   "Fail the configure when the desktop app cannot be built (CI) instead of skipping it" OFF)
 option(OPAD_BUILD_PYTHON  "Build the pybind11 'opad' module"     ON)
 option(OPAD_BUILD_PLUGINS "Build the sample C-ABI plugin"        ON)
 option(OPAD_BUILD_TESTS   "Build headless tests"                 ON)

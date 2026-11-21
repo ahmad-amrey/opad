@@ -3,7 +3,8 @@
 #   Windows  OPAD-<version>-windows-x64.exe (+ opad-cli-<version>-windows-x64.exe and THIRD-PARTY-NOTICES.txt, which
 #            the exes also carry compiled in): the static build's executables,
 #            checked to import nothing but Windows' own DLLs (cmake/single_check.cmake). Needs OPAD_STATIC
-#            (preset windows-static); nothing to unpack, settings and cache go to <exe dir>/opad-data.
+#            (preset windows-static); nothing to unpack; settings and data in the user's folders, or in <exe dir>/data
+#            beside an opad.portable file (app/AppData.hpp).
 #   Linux    OPAD-<version>-linux-x86_64.AppImage: linuxdeploy with its Qt plugin bundles the app, Qt, OCCT and
 #            the other libraries the distro build links (needs `linuxdeploy` and `linuxdeploy-plugin-qt` on PATH,
 #            https://github.com/linuxdeploy).

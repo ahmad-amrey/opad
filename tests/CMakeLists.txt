@@ -1,3 +1,7 @@
+# Test programs keep their symbols in the single-file build (cmake/static.cmake strips release links): a test that
+# crashes in CI gets a backtrace with function names. Tests are never shipped.
+string(REPLACE " -s" "" CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}")
+
 add_executable(opad-fixtures fixtures.cpp)
 target_link_libraries(opad-fixtures PRIVATE opad::core)
 
@@ -50,12 +54,28 @@ if(TARGET opad)
   endif()
   add_test(NAME seams COMMAND opad-test-seams)
   set_tests_properties(seams PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+  add_executable(opad-test-settings-backup test_settings_backup.cpp ../app/SettingsBackup.cpp)
+  target_include_directories(opad-test-settings-backup PRIVATE ../app)
+  target_link_libraries(opad-test-settings-backup PRIVATE Qt6::Core)
+  add_test(NAME settings-backup COMMAND opad-test-settings-backup)
+  add_executable(opad-test-app-data test_app_data.cpp ../app/AppData.cpp)
+  target_include_directories(opad-test-app-data PRIVATE ../app)
+  target_link_libraries(opad-test-app-data PRIVATE Qt6::Core)
+  add_test(NAME app-data COMMAND opad-test-app-data)
+  add_executable(opad-test-update-check test_update_check.cpp ../app/UpdateCheck.cpp ../app/UpdateCheck.hpp)
+  set_target_properties(opad-test-update-check PROPERTIES AUTOMOC ON)
+  target_include_directories(opad-test-update-check PRIVATE ../app)
+  target_link_libraries(opad-test-update-check PRIVATE Qt6::Network)
+  if(OPAD_STATIC)  # its fake GitHub is plain HTTP on a local socket: no TLS backend (OpenSSL's would need libssl)
+    qt_import_plugins(opad-test-update-check EXCLUDE_BY_TYPE tls networkinformation)
+  endif()
+  add_test(NAME update-check COMMAND opad-test-update-check)
 endif()
 
 # Core tests: every test_<name>.cpp not built elsewhere in this file is opad-test-<name> (underscores -> dashes) on the
 # core, run as ctest <name>; CONFIGURE_DEPENDS re-globs at each build, so a new test is a new file. Its extra settings
 # (environment, libraries, timeout) go into an optional test_<name>.cmake beside it, included with `target` and `name`.
-set(opad_special_tests app_document associations body_prs seams shortcuts sketch_cache step thumbnails)
+set(opad_special_tests app_data app_document associations body_prs seams settings_backup shortcuts sketch_cache step thumbnails update_check)
 file(GLOB opad_core_tests CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 file(GLOB opad_test_settings CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cmake)
 list(SORT opad_core_tests)

@@ -35,6 +35,17 @@
       }
     },
     {
+      "name": "windows-static-ucrt64",
+      "displayName": "Windows single-file exe on MSYS2 UCRT64 (CI: MINGW64 no longer ships qt6-static)",
+      "inherits": "windows-static",
+      "cacheVariables": {
+        "OPAD_STATIC_PREFIX": "C:/msys64/ucrt64",
+        "CMAKE_PREFIX_PATH": "C:/msys64/ucrt64/qt6-static;C:/msys64/ucrt64",
+        "CMAKE_C_COMPILER": "C:/msys64/ucrt64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/ucrt64/bin/g++.exe"
+      }
+    },
+    {
       "name": "linux",
       "displayName": "Linux (distro packages)",
       "inherits": "base",
@@ -55,6 +66,9 @@
     { "name": "windows-static", "configurePreset": "windows-static" },
     { "name": "windows-single", "displayName": "Windows single-file exe (build/windows-static/single)",
       "configurePreset": "windows-static", "targets": ["opad-single"] },
+    { "name": "windows-static-ucrt64", "configurePreset": "windows-static-ucrt64" },
+    { "name": "windows-single-ucrt64", "displayName": "Windows single-file exe on UCRT64 (build/windows-static-ucrt64/single)",
+      "configurePreset": "windows-static-ucrt64", "targets": ["opad-single"] },
     { "name": "linux", "configurePreset": "linux" },
     { "name": "linux-single", "displayName": "Linux AppImage (build/linux/single)",
       "configurePreset": "linux", "targets": ["opad-single"] },
@@ -67,6 +81,7 @@
     { "name": "windows-gui", "configurePreset": "windows", "output": { "outputOnFailure": true }, "filter": { "include": { "label": "gui" } } },
     { "name": "windows-slow", "configurePreset": "windows", "output": { "outputOnFailure": true, "verbosity": "verbose" }, "filter": { "include": { "label": "slow" } } },
     { "name": "windows-static", "configurePreset": "windows-static", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui|slow" } } },
+    { "name": "windows-static-ucrt64", "configurePreset": "windows-static-ucrt64", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui|slow" } } },
     { "name": "linux", "configurePreset": "linux", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui|slow" } } },
     { "name": "linux-slow", "configurePreset": "linux", "output": { "outputOnFailure": true, "verbosity": "verbose" }, "filter": { "include": { "label": "slow" } } },
     { "name": "macos", "configurePreset": "macos", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui|slow" } } }

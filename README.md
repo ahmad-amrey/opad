@@ -33,8 +33,28 @@ also runs from the command line.
 
 It runs on your own computer, with no account and no server, and is built on Open CASCADE and Qt.
 
+## Download
+
+The newest version, ready to run: no account, no build.
+
+| Your computer | Download | Then |
+|---|---|---|
+| **Windows 10 / 11** (64-bit) | [**OPAD installer**](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-windows-x64-setup.exe) | Run it. OPAD is added to the Start menu, without administrator rights. A later version installs over it and keeps your settings. |
+| Windows, without installing | [OPAD as one file](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-windows-x64.exe) | Put it in any folder and double-click it. An empty `opad.portable` file beside it makes it keep its settings there too. |
+| **macOS 15 or later** (Apple silicon, M1 or newer) | [**OPAD for Mac**](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-macos.dmg) (dmg) | Open it and drag OPAD into Applications. |
+| **Ubuntu / Debian** (24.04 or newer) | [**OPAD for Ubuntu**](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-linux-amd64.deb) (.deb) | Open it in the software centre, or run `sudo apt install ./OPAD-linux-amd64.deb`. OPAD appears in your applications menu. |
+| Other Linux (64-bit) | [OPAD AppImage](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-linux-x86_64.AppImage) | Allow it to run as a program (file Properties, or `chmod +x`), then double-click it. |
+
+**The first time you start it:** these downloads are not code-signed yet, so your system asks first. On Windows, if
+"Windows protected your PC" appears, choose *More info*, then *Run anyway*. On a Mac, right-click OPAD in Applications,
+choose *Open*, then *Open* again.
+
+What is new in each version, older versions and checksums are on the [releases page](https://github.com/ahmad-amrey/opad/releases).
+To build OPAD yourself, see [Installation](#installation).
+
 ## Contents
 
+- [Download](#download)
 - [Features](#features)
   - [Git version control](#git-version-control)
   - [Opening files](#opening-files)
@@ -65,7 +85,7 @@ you did, never a reshuffled file.
 
 ```text
 #opad 2
-{"uuid":"7c1c...","units":"mm","created":"2026-09-15T14:10:40Z","generator":"opad/0.1.0"}
+{"uuid":"7c1c...","units":"mm","created":"2026-09-15T14:10:40Z","generator":"opad/0.9.0"}
 #ops
 {"op":"import","id":"6dda...","by":"alice","source":"gearbox.step","units":"mm","nodes":[...]}
 {"op":"annotation","id":"1ffe...","by":"alice","anchor":{"body":"9dc9...","kind":"face","index":12},"text":"deburr"}
@@ -347,13 +367,16 @@ their animated clips are translated, and Arabic text in drawings is shaped corre
 |---|---|
 | **Windows** (x64) | Built and tested. MSYS2 / MinGW-w64 toolchain. |
 | **Ubuntu 24.04** (also under WSL) | Built and tested. Wayland desktops run through XWayland. |
-| **macOS** | Built and tested. |
+| **macOS** (Apple silicon) | Built and tested. Homebrew packages; Intel Macs are not built. |
 
-There are no published binaries yet: OPAD is built from source (see [Installation](#installation)). Besides the normal
-build there is a portable Windows folder (settings and cache kept beside the program) and a single-file Windows
-executable, and a macOS dmg. An AppImage packaging recipe exists but has not been run yet.
+Ready-made downloads for all three are under [Download](#download), built and tested by GitHub Actions for every
+release. Building from source is described under [Installation](#installation); besides the normal build there is a
+portable Windows folder (settings and cache kept beside the program), the single-file Windows executable and the macOS
+dmg.
 
 ## Installation
+
+Most people want the [ready-made downloads](#download). To build OPAD from source:
 
 ```sh
 git clone --recurse-submodules <this repository>

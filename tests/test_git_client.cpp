@@ -583,6 +583,7 @@ TEST(askpass_answers_git) {
   o.input = "protocol=https\nhost=example.com\n\n";
   const git::Result r = git::run(c, {"credential", "fill"}, o);
   for (const char* k : {"QT_QPA_PLATFORM", "OPAD_BENCH_ASKPASS", "OPAD_TRACE"}) qunsetenv(k);
+  if (!r.ok()) std::printf("  askpass: git said: %s\n", qPrintable(r.error()));
   CHECK(r.ok());
   CHECK(r.out.contains("username=s3cret\n") && r.out.contains("password=s3cret\n"));
   const QString trace = read(log);
@@ -901,6 +902,7 @@ TEST(http_host_sign_in) {
     return c;
   };
   r = git::run(signedIn(dir), push, git::RunOptions::network());
+  if (!r.ok()) std::printf("  sign-in push: git said: %s\n", qPrintable(r.error()));
   CHECK(r.ok());
   CHECK(host.served >= 2 && git::revParse(in(dir), "origin/main") == git::revParse(in(dir), "HEAD"));
   const QString copy = tmp.path() + "/copy";
