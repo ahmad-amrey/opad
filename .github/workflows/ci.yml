@@ -2,7 +2,8 @@
 # publishes the development builds and the releases (docs/releasing.md).
 #
 # Two branches: dev takes every pull request, and each push to it publishes a development build, a GitHub pre-release
-# `dev-<build>` that installed copies set to "Offer development builds" are told about. main only moves forward to a
+# `vX.Y.Z-dev.<build>` (`-rc.<build>` for a release candidate) that installed copies set to "Offer development builds"
+# are told about. main only moves forward to a
 # tested commit of dev ("Promote dev to main", .github/workflows/promote.yml, a fast-forward), so it always holds the
 # latest release.
 #
@@ -38,7 +39,7 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]  # releases only: never a pre-release tag (vX.Y.Z-dev.N, -rc.N)
   workflow_dispatch:
     inputs:
       rebuild:
@@ -214,7 +215,8 @@ jobs:
           newest_dev=0
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/dev ]; then
             newest_dev=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-              --jq '.[] | .tag_name | select(test("^dev-[0-9]+$")) | ltrimstr("dev-")' | sort -n | tail -1)
+              --jq '.[] | .tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-(dev|rc)\\.[0-9]+$")) | split(".") | last' \
+              | sort -n | tail -1)
             newest_dev=${newest_dev:-0}
           fi
           for id in $candidates; do
@@ -767,7 +769,17 @@ jobs:
       - name: Publish the development build
         if: env.DEV == 'true'
         run: |
-          tag="dev-$BUILD"
+          # SemVer pre-releases: the release candidate of an unreleased version, vX.Y.Z-rc.N; otherwise a development
+          # build toward the next patch, vX.Y.(Z+1)-dev.N. N, the build number, is last: two builds never tie, and
+          # 0.10.0 < 0.10.1-dev.20 < 0.10.1-rc.25 < 0.10.1. The binaries say X.Y.Z (build N) either way (the marker).
+          if [ "$RELEASED" = false ]; then
+            tag="v$VERSION-rc.$BUILD"
+            title="OPAD $VERSION release candidate (build $BUILD)"
+          else
+            next=$(printf '%s\n' "$VERSION" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3 + 1 }')
+            tag="v$next-dev.$BUILD"
+            title="OPAD $next development build $BUILD"
+          fi
           if gh release view "$tag" > /dev/null 2>&1; then
             target=$(git rev-list -n 1 "refs/tags/$tag" 2>/dev/null || true)
             if [ "$target" = "$GITHUB_SHA" ]; then
@@ -777,7 +789,6 @@ jobs:
             echo "::error::$tag already exists for another commit (${target:-unknown}): this push's build is not newer. Re-run the workflow on dev with \"rebuild\"."
             exit 1
           fi
-          if [ "$RELEASED" = false ]; then title="OPAD $VERSION release candidate (build $BUILD)"; else title="OPAD development build $BUILD"; fi
           start=()
           if [ -n "$LATEST" ]; then start=(--notes-start-tag "v$LATEST"); fi
           gh release create "$tag" dist/* --prerelease --latest=false --target "$GITHUB_SHA" --title "$title" \
@@ -786,9 +797,11 @@ jobs:
       - name: Keep the ten newest development builds
         if: env.DEV == 'true'
         run: |
+          # Development builds and release candidates (vX.Y.Z-dev.N / -rc.N), newest build first; stable releases never.
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq '.[] | select(.prerelease and (.tag_name | test("^dev-[0-9]+$"))) | .tag_name' \
-            | sort -t- -k2 -n -r | tail -n +11 | while read -r old; do
+            --jq '.[] | select(.prerelease and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-(dev|rc)\\.[0-9]+$")))
+                  | "\(.tag_name | split(".") | last) \(.tag_name)"' \
+            | sort -n -r | tail -n +11 | while read -r _ old; do
                 echo "Removing $old"
                 gh release delete "$old" --cleanup-tag --yes
               done

@@ -8,8 +8,11 @@
 //    the point back, Esc clears. The sketch is the same after all of it: no constraint, no point moved, no undo step.
 //  - Hovering a dimension's value names it in the status bar at once ("Distance dimension: 32 mm") and in a tooltip after a
 //    rest, with what it holds and what a double-click does; off it both go. A badge's text names its constraint.
+//  - In Trim (whose clicks take the curve under a badge) the badge is named all the same: through the view's own mouse
+//    events the status bar and the tooltip name the Horizontal badge, and a click on that spot still trims the line.
 #include <QApplication>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QTimer>
 #include <QToolTip>
 #include <cmath>
@@ -109,9 +112,48 @@ void SketchEditor::benchMeasure() {
             "... and in a tooltip after a rest: " + QToolTip::text().replace('\n', " / "));
       sketchMove(lu + 40, lv + 40, Qt::NoModifier, false);
       check(hover->isEmpty() && m_tipShown == 0, "off it, the hover text goes");
-      disconnect(*connection);
-      trace::log(QString("bench: sketch measure: measuring and naming constraints %1").arg(*ok ? "PASS" : "FAIL"));
-      QCoreApplication::exit(*ok ? 0 : 2);
+
+      // Trim: its clicks take the curve under a badge, yet the badge is named on hover. Through the view's own mouse events.
+      setTool("trim");
+      QPoint badge;
+      for (size_t i = 0; i < m_glyphHits.size() && i < m_glyphAnchors.size(); ++i)
+        if (std::get<0>(m_glyphHits[i]) == horizontal) {
+          const GlyphAnchor& g = m_glyphAnchors[i];
+          badge = m_viewport->widgetPoint(m_frame.to_world(g.u, g.v)) + QPoint(int(std::lround(g.dx)), -int(std::lround(g.dy)));
+        }
+      auto mouse = [this](QEvent::Type type, const QPoint& at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+        QMouseEvent e(type, QPointF(at), QPointF(m_viewport->mapToGlobal(at)), button, buttons, Qt::NoModifier);
+        QApplication::sendEvent(m_viewport, &e);
+      };
+      // Where the badge overlaps its line (a click there is the one the badge used to take): on both, by the view's tests.
+      QPoint spot;
+      const int reach = int(kHandlePixels) - 1;
+      for (int dy = -reach; dy <= reach && spot.isNull(); ++dy)
+        for (int dx = -reach; dx <= reach && spot.isNull(); ++dx) {
+          double su = 0, sv = 0;
+          if (badge.isNull() || !m_viewport->planePoint(QPointF(badge + QPoint(dx, dy)), m_frame, su, sv)) continue;
+          const Hit onCurve = hitTest(su, sv);
+          if (constraintAt(su, sv).id == horizontal && onCurve.kind == Hit::Entity && onCurve.id == line) spot = badge + QPoint(dx, dy);
+        }
+      check(!badge.isNull() && !spot.isNull(), "the Horizontal badge is drawn over its line");
+      badge = spot;
+      mouse(QEvent::MouseMove, badge + QPoint(1, 0), Qt::NoButton, Qt::NoButton);
+      mouse(QEvent::MouseMove, badge, Qt::NoButton, Qt::NoButton);
+      check(m_tool == "trim" && m_hover.kind != Hit::Dimension && hover->startsWith(tr("Horizontal constraint")),
+            "Trim: the pointer on the badge still hovers the curve, and the status bar names the badge: " + *hover);
+      QTimer::singleShot(900, this, [=, this] {
+        check(QToolTip::isVisible() && QToolTip::text().startsWith(tr("Horizontal constraint")), "... and the tooltip after a rest: " + QToolTip::text().section(QChar('\n'), 0, 0));
+        auto said = std::make_shared<QString>();
+        connect(this, &SketchEditor::status, this, [said](const QString& text) { *said = text; });
+        mouse(QEvent::MouseButtonPress, badge, Qt::LeftButton, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, badge, Qt::LeftButton, Qt::NoButton);
+        QTimer::singleShot(300, this, [=, this] {  // said: what the status line said after the click
+          check(m_sk.entity(line) == nullptr, "a click on the same spot still trims the line (the badge never takes the click); status: " + *said);
+          disconnect(*connection);
+          trace::log(QString("bench: sketch measure: measuring and naming constraints %1").arg(*ok ? "PASS" : "FAIL"));
+          QCoreApplication::exit(*ok ? 0 : 2);
+        });
+      });
     });
   });
 }

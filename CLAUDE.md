@@ -248,7 +248,8 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   Shift+D (migration `shortcuts/measureDefaultsVersion`). `SketchMeasure.cpp`: picks in `m_picked` as Dimension's (Esc and
   Backspace step back alike), `measureResult()` drawn in `updateTransient` and written in the steps. A constraint's badge
   or a dimension's value hovered (`Hit::Dimension`): `hoverTip` puts `constraintTip` in the status bar's hover text at once
-  and a QToolTip after 500 ms. Bench `sketch-measure`.
+  and a QToolTip after 500 ms, also in Trim/Extend/Split (`tipTarget`: their clicks take the curve, `constraintAt` names the
+  badge). Bench `sketch-measure`.
 - Least movement (`SolveOptions::moves`, solver.cpp `movement_stages`): a constraint added (`applyConstraint`: last pick
   first, then the other picks) or a dimension changed (`commitDimensionEdit`) solves with only that geometry movable (the
   held variables' column scale 0, so they keep their values exactly), then with the curves sharing its points, then with
@@ -417,6 +418,19 @@ QProcess, no shell, 15 s. Claude Desktop: its claude_desktop_config.json rewritt
 mcpServers.opad, key order kept, <file>.bak first, QSaveFile, nothing written when unchanged). `ctest -R agent-clients`,
 gui case agent-connect (APPDATA / HOME / XDG_CONFIG_HOME / CLAUDE_CONFIG_DIR pointed at the case's folders),
 tools/test_mcp_feedback.py with a real Codex.
+
+## Builds and the update channels (`core/CMakeLists.txt` build_info, `app/UpdateCheck.*`, `app/UpdatesArea.cpp`)
+
+CI passes OPAD_BUILD_NUMBER (the Actions run number) and OPAD_BUILD_COMMIT to the configure step; a generated
+`build_info.cpp` (not version.hpp: ccache) gives `opad::build_number()` / `build_commit()` (a local build: 0 and "").
+`opad-cli version` reports them, About shows "X.Y.Z (build N)", settings backups key on "X.Y.Z+N" when N > 0. Help > Offer
+development builds (`updates/channel` = development) reads the release list (`OPAD_UPDATE_LIST_URL` for tests): stable vX.Y.Z
+and prereleases tagged `vA.B.C-dev.N` (A.B.C the next patch) or `vX.Y.Z-rc.N` (the tag only names it; its -dev/-rc says which,
+N must equal the marker's), keyed by (version, build) from the `<!-- opad-build: N; opad-version: X.Y.Z -->` marker (the
+binary's version: a dev build after 0.10.0 is v0.10.1-dev.N marked 0.10.0; a marker-less stable is build 0, a marker-less or
+otherwise tagged prerelease is ignored), the greatest key above this copy's offered, a stable release before its candidate at
+the same key; the API refused: the stable check. Skip stores a prerelease's tag.
+`ctest -R update-check`, gui case updates.
 
 ## Command help (`app/help/*.json`, `tests/test_help.cpp`)
 
@@ -601,7 +615,7 @@ filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`,
 ## CI and releases (`.github/workflows/ci.yml`, `promote.yml`, docs/releasing.md)
 
 Branches: **pull requests target `dev`** (never `main`). Each push to `dev` publishes a development build, a GitHub
-pre-release `dev-<build>` (notes: `[Unreleased]`, or the version's section when the version is new = the release
+pre-release `vA.B.(C+1)-dev.<build>` (the release candidate `vX.Y.Z-rc.<build>` when the version is new; notes: `[Unreleased]`, or the version's section for the release
 candidate; marker `<!-- opad-build: N; opad-version: X.Y.Z -->`; ten kept). `main` = the latest release: it moves only by
 *Actions > Promote dev to main* (promote.yml: checks Tested on dev's commit, `main` ancestor of `dev`, a new dated
 version; then `git push <sha>:main` with the deploy key PROMOTE_DEPLOY_KEY, a secret of the environment `promote` that only main's copy of the
@@ -673,3 +687,6 @@ empty), templates and data folders (not the cache, not `agent/`) once and leaves
 ## Commits
 
 One-line commit messages, no body or trailer.
+No bare `@word` in a commit message, pull request title, changelog or release text unless it is a real GitHub login meant to be
+notified: GitHub turns it into a mention (the release notes copy pull request titles; macOS's `@rpath` once listed an
+unrelated account as a contributor). Put such words in backticks: `@rpath`, `@executable_path`.

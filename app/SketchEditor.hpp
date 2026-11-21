@@ -331,6 +331,7 @@ class SketchEditor : public QObject, public SketchInput {
   std::optional<snapmarkers::Marker> m_marker;        // the marker drawn where the pointer snapped (none: a dot)
   double m_markerTurn = 0;                            // its turn on the screen (radians): an extension's follows its line
   Hit hitTest(double u, double v) const;
+  Hit constraintAt(double u, double v) const;  // a dimension's value or a constraint's badge there, in any tool
   double tol() const;  // pick distance in sketch units
   int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint and the snap's holds)
   // The constraints a click at `s` adds, for the pictograms beside the pointer (UI-21): the new point's (it reuses a point,
@@ -374,6 +375,7 @@ class SketchEditor : public QObject, public SketchInput {
   // A constraint's badge or a dimension's value under the pointer says what it is (a tooltip after a rest, the status bar's
   // hover text at once): its kind, its value, what it holds, what a click does there.
   void hoverTip();
+  int tipTarget() const;  // the constraint the pointer names now: the hovered one, or in Trim/Extend/Split the badge under it
   QTimer m_tipTimer;
   int m_tipShown = 0;  // the constraint the hover text names (0: none)
   // Least movement for the change being made (SolveOptions::moves, read by solveOptions): a constraint added gives way at

@@ -146,8 +146,11 @@ int main(int argc, char** argv) {
   if (const QString adopted = appdata::start(exeDir); !adopted.isEmpty()) trace::log("startup: settings copied from " + adopted);
   {
     QSettings settings;
-    // A copy of the settings before this version's migrations change anything (SettingsBackup.hpp)
-    const QString kept = settingsbackup::keepBeforeChange(settings, QApplication::applicationVersion(), settingsbackup::defaultDir(settings));
+    // A copy of the settings before this version's migrations change anything (SettingsBackup.hpp); a development build
+    // (build > 0) by version and build, so each one keeps its own copy before it migrates.
+    const int build = opad::build_number();
+    const QString settingsVersion = QApplication::applicationVersion() + (build > 0 ? "+" + QString::number(build) : QString());
+    const QString kept = settingsbackup::keepBeforeChange(settings, settingsVersion, settingsbackup::defaultDir(settings));
     if (!kept.isEmpty()) trace::log("startup: settings of an earlier version kept in " + kept);
   }
   i18n::install(app);  // before any widget exists: translator and layout direction (needs the names above for QSettings)

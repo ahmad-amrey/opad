@@ -4,7 +4,9 @@
 // that says in a line or two what it brings (the notes' opening paragraph or first entries, updates::summarize):
 // What's new shows its notes (the release's CHANGELOG.md section), Skip this version stays
 // quiet about that version (the automatic check only). Download hands this computer's installer (or the release page)
-// to the browser; the user installs it.
+// to the browser; the user installs it. Help > Offer development builds (setting updates/channel) offers the builds of the
+// dev branch too (UpdateCheck.hpp): "OPAD development build N", or "OPAD X.Y.Z release candidate (build N)" while X.Y.Z is
+// not released; Skip this version remembers such a build by its tag.
 #include <QAction>
 #include <QApplication>
 #include <QDesktopServices>
@@ -30,6 +32,7 @@
 #include "Jobs.hpp"
 #include "Toast.hpp"
 #include "UpdateCheck.hpp"
+#include "opad/util.hpp"
 
 namespace {
 
@@ -48,6 +51,8 @@ class Updates : public AreaController {
 
   void buildActions() override {
     m_checker = new updates::Checker(QApplication::applicationVersion(), this);
+    m_checker->setBuild(opad::build_number());
+    m_checker->setDevelopment(QSettings().value(updates::kChannelKey, "stable").toString() == "development");
     // Only a check that got an answer counts for the daily one: offline, it is tried again at the next start or hour.
     QObject::connect(m_checker, &updates::Checker::available, this, [this](const updates::Release& r, bool asked) {
       QSettings().setValue(updates::kLastCheckKey, QDateTime::currentDateTimeUtc());
@@ -69,6 +74,14 @@ class Updates : public AreaController {
     automatic.keywords = {QObject::tr("update"), QObject::tr("new version"), QObject::tr("notify")};
     m_auto = services().addCommand(automatic, [this] { QSettings().setValue(updates::kAutoCheckKey, m_auto->isChecked()); });
     m_auto->setChecked(QSettings().value(updates::kAutoCheckKey, true).toBool());
+    CommandInfo dev{"help.devBuilds", QObject::tr("Offer development builds"), QString()};
+    dev.checkable = true;
+    dev.keywords = {QObject::tr("update"), QObject::tr("development"), QObject::tr("release candidate"), QObject::tr("dev branch"), QObject::tr("channel")};
+    m_dev = services().addCommand(dev, [this] {
+      QSettings().setValue(updates::kChannelKey, m_dev->isChecked() ? "development" : "stable");
+      m_checker->setDevelopment(m_dev->isChecked());
+    });
+    m_dev->setChecked(m_checker->development());
   }
 
   void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
@@ -77,6 +90,7 @@ class Updates : public AreaController {
     QAction* before = services().action("help.about");  // above About, in a group of their own
     help->insertAction(before, m_check);
     help->insertAction(before, m_auto);
+    help->insertAction(before, m_dev);
     help->insertSeparator(before);
   }
 
@@ -111,11 +125,16 @@ class Updates : public AreaController {
     else QMessageBox::information(services().window(), QObject::tr("Updates"), text);
   }
   void offer(const updates::Release& r, bool asked) {
-    if (!asked && QSettings().value(updates::kSkipKey).toString() == r.version) return;
-    trace::log("updates: " + r.version + " is available (this is " + m_checker->current() + ")");
-    const QString text = QObject::tr("OPAD %1 is available").arg(r.version);
+    // A development build is skipped by its tag (v0.10.1-dev.20), a release by its version.
+    const QString skipAs = r.development ? r.tag : r.version;
+    if (!asked && QSettings().value(updates::kSkipKey).toString() == skipAs) return;
+    trace::log("updates: " + updates::displayVersion(r.version, r.build) + " is available (this is " + updates::displayVersion(m_checker->current(), m_checker->build()) + ")");
+    const QString text = !r.development ? QObject::tr("OPAD %1 is available").arg(r.version)
+                         : r.candidate  ? QObject::tr("OPAD %1 release candidate (build %2) is available").arg(r.version).arg(r.build)
+                                        : QObject::tr("OPAD development build %1 is available").arg(r.build);
     // What it brings, then what one has: enough to decide without opening What's new.
-    const QString have = QObject::tr("You have %1.").arg(m_checker->current());
+    const QString have = m_checker->build() > 0 ? QObject::tr("You have %1 (build %2).").arg(m_checker->current()).arg(m_checker->build())
+                                                : QObject::tr("You have %1.").arg(m_checker->current());
     const QString detail = r.summary.isEmpty() ? have : r.summary + QChar(10) + have;
     // Without notes (only the release page answered) What's new is that page. Download is this computer's installer when
     // the release has one, else its page; either opens only GitHub's release addresses of OPAD (safeReleaseUrl).
@@ -124,7 +143,7 @@ class Updates : public AreaController {
       else showNotes(r);
     };
     auto download = [r] { QDesktopServices::openUrl(updates::safeReleaseUrl(r.download.isEmpty() ? r.page : r.download)); };
-    auto skip = [r] { QSettings().setValue(updates::kSkipKey, r.version); };
+    auto skip = [skipAs] { QSettings().setValue(updates::kSkipKey, skipAs); };
     if (hasView()) {
       // One notice at a time: the daily check while the window stays open, or the user asking again, replaces it.
       if (m_notice) m_notice->dismiss();
@@ -172,6 +191,7 @@ class Updates : public AreaController {
   updates::Checker* m_checker = nullptr;
   QAction* m_check = nullptr;
   QAction* m_auto = nullptr;
+  QAction* m_dev = nullptr;  // Offer development builds
   std::optional<updates::Release> m_pending;
   QPointer<Toast> m_notice;  // the notice offering a release, while it shows
 };

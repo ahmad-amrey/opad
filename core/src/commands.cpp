@@ -274,6 +274,8 @@ void register_builtins() {
   reg("version", "OPAD version", json::object(), false, [](Document*, const json&) {
     json j;
     j["version"] = version_string();
+    j["build"] = build_number();
+    j["commit"] = build_commit();
     j["format"] = kFormatVersion;
     return j;
   });

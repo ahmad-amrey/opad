@@ -121,6 +121,79 @@ QString summarize(const QString& notes, int maxChars) {
   return out;
 }
 
+bool parseMarker(const QString& notes, int& build, QString& version) {
+  static const QRegularExpression marker(R"(<!--\s*opad-build:\s*(\d+)\s*;\s*opad-version:\s*v?(\d+(?:\.\d+)*(?:-[0-9A-Za-z.]+)?)\s*-->)");
+  const QRegularExpressionMatch m = marker.match(notes);
+  if (!m.hasMatch()) return false;
+  bool ok = false;
+  build = m.captured(1).toInt(&ok);
+  version = m.captured(2);
+  return ok;
+}
+
+std::vector<Release> parseList(const QByteArray& json, const QString& asset) {
+  std::vector<Release> out;
+  const QJsonDocument doc = QJsonDocument::fromJson(json);
+  if (!doc.isArray()) return out;
+  // A prerelease's tag: vA.B.C-dev.N (a development build; A.B.C the next patch) or vX.Y.Z-rc.N (the release candidate of
+  // X.Y.Z). The tag names it; what orders it is the marker's (version, build): the version the binary says.
+  static const QRegularExpression prereleaseTag(R"(^v\d+\.\d+\.\d+-(dev|rc)\.(\d+)$)");
+  for (const QJsonValue& value : doc.array()) {
+    const QJsonObject o = value.toObject();
+    if (o.value("draft").toBool()) continue;
+    Release r;
+    r.tag = o.value("tag_name").toString().trimmed();
+    r.notes = o.value("body").toString();
+    int build = 0;
+    QString markerVersion;
+    const bool marked = parseMarker(r.notes, build, markerVersion);
+    if (o.value("prerelease").toBool()) {
+      const QRegularExpressionMatch m = prereleaseTag.match(r.tag);
+      if (!m.hasMatch() || !marked || m.captured(2).toInt() != build) continue;  // the tag's build and the marker's agree, or it is left out
+      r.version = markerVersion;
+      r.build = build;
+      r.development = true;
+      r.candidate = m.captured(1) == "rc";
+    } else {
+      r.version = versionOfTag(r.tag);
+      if (r.version.isEmpty()) continue;
+      r.build = marked ? build : 0;  // 0.9.0 and 0.10.0 have none
+    }
+    r.name = o.value("name").toString();
+    if (r.name.isEmpty()) r.name = r.development ? "OPAD development build " + QString::number(r.build) : "OPAD " + r.version;
+    r.summary = summarize(r.notes);
+    r.page = o.value("html_url").toString();
+    r.published = QDateTime::fromString(o.value("published_at").toString(), Qt::ISODate);
+    if (!asset.isEmpty()) {
+      for (const QJsonValue& file : o.value("assets").toArray())
+        if (file.toObject().value("name").toString() == asset) r.download = file.toObject().value("browser_download_url").toString();
+      if (r.download.isEmpty()) r.download = assetDownloadUrl(r.tag, asset);  // the release's files keep their names
+    }
+    out.push_back(r);
+  }
+  return out;
+}
+
+int compareBuilds(const QString& va, int ba, const QString& vb, int bb) {
+  if (const int c = compareVersions(va, vb); c != 0) return c;
+  return ba == bb ? 0 : ba < bb ? -1 : 1;
+}
+
+std::optional<Release> newestAbove(const std::vector<Release>& candidates, const QString& version, int build) {
+  std::optional<Release> best;
+  for (const Release& r : candidates) {
+    if (compareBuilds(r.version, r.build, version, build) <= 0) continue;
+    if (!best) { best = r; continue; }
+    const int c = compareBuilds(r.version, r.build, best->version, best->build);
+    if (c > 0 || (c == 0 && best->development && !r.development)) best = r;  // the stable release before its candidate
+  }
+  return best;
+}
+
+QString displayVersion(const QString& version, int build) {
+  return build > 0 ? QObject::tr("%1 (build %2)").arg(version).arg(build) : version;
+}
+
 int compareVersions(const QString& a, const QString& b) {
   auto split = [](QString v, QList<int>& parts, QString& suffix) {
     v = v.trimmed();
@@ -194,6 +267,35 @@ void Checker::check(bool userAsked) {
   m_userAsked = m_userAsked || userAsked;  // asked while the automatic check runs: that check answers the user
   if (m_reply) return;
   m_apiError.clear();
+  if (m_development) askList();
+  else askLatest();
+}
+
+// The development channel: the list of releases, the newest (version, build) above this copy's.
+void Checker::askList() {
+  QNetworkRequest request{fromEnvironment("OPAD_UPDATE_LIST_URL", kListUrl)};
+  request.setHeader(QNetworkRequest::UserAgentHeader, "OPAD/" + m_current);
+  request.setRawHeader("Accept", "application/vnd.github+json");
+  request.setTransferTimeout(kTimeoutMs);
+  m_reply = m_net->get(request);
+  connect(m_reply, &QNetworkReply::finished, this, [this] { listAnswered(); });
+}
+
+void Checker::listAnswered() {
+  QNetworkReply* reply = std::exchange(m_reply, nullptr);
+  if (!reply) return;
+  reply->deleteLater();
+  const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+  if (reply->error() != QNetworkReply::NoError && status < 400) return emit failed(reply->errorString(), std::exchange(m_userAsked, false));
+  const QByteArray body = reply->error() == QNetworkReply::NoError ? reply->readAll() : QByteArray();
+  if (!QJsonDocument::fromJson(body).isArray()) return askLatest();  // refused (its limit) or not a list: the stable check answers
+  const std::optional<Release> newest = newestAbove(parseList(body, installerAssetName()), m_current, m_build);
+  const bool userAsked = std::exchange(m_userAsked, false);
+  if (newest) emit available(*newest, userAsked);
+  else emit upToDate(displayVersion(m_current, m_build), userAsked);
+}
+
+void Checker::askLatest() {
   QNetworkRequest request{fromEnvironment("OPAD_UPDATE_URL", kLatestUrl)};
   request.setHeader(QNetworkRequest::UserAgentHeader, "OPAD/" + m_current);  // GitHub refuses requests without one
   request.setRawHeader("Accept", "application/vnd.github+json");
@@ -207,7 +309,7 @@ void Checker::apiAnswered() {
   if (!reply) return;
   reply->deleteLater();
   const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-  if (status == 404) return emit upToDate(m_current, std::exchange(m_userAsked, false));  // no published release yet
+  if (status == 404) return emit upToDate(displayVersion(m_current, m_build), std::exchange(m_userAsked, false));  // no published release yet
   if (reply->error() != QNetworkReply::NoError) {
     if (status < 400) return emit failed(reply->errorString(), std::exchange(m_userAsked, false));  // offline, timeout
     // GitHub refused, usually because the anonymous limit is used up: the release page still names the latest version.
@@ -249,7 +351,7 @@ void Checker::pageAnswered() {
 void Checker::finish(const Release& release) {
   const bool userAsked = std::exchange(m_userAsked, false);
   if (compareVersions(release.version, m_current) > 0) emit available(release, userAsked);
-  else emit upToDate(m_current, userAsked);
+  else emit upToDate(displayVersion(m_current, m_build), userAsked);
 }
 
 }  // namespace updates

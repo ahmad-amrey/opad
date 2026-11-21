@@ -274,9 +274,18 @@ QString SketchEditor::constraintTip(int id) const {
   return lines.join('\n');
 }
 
+// Trim, Extend and Split hover the curve under a badge (their clicks take the curve, SketchEditor::hitTest), but the badge
+// is named all the same: a hover-only test at the pointer.
+int SketchEditor::tipTarget() const {
+  if (!m_active || !m_inView) return 0;
+  if (m_hover.kind == Hit::Dimension) return m_hover.id;
+  if (m_tool == "trim" || m_tool == "extend" || m_tool == "split") return constraintAt(m_lastU, m_lastV).id;
+  return 0;
+}
+
 // The hover moved onto a constraint, or off one: the status bar names it at once, the tooltip follows after a rest.
 void SketchEditor::hoverTip() {
-  const int id = m_active && m_hover.kind == Hit::Dimension ? m_hover.id : 0;
+  const int id = tipTarget();
   if (id == m_tipShown) return;
   m_tipShown = id;
   m_tipTimer.stop();
