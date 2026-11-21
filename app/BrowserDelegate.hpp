@@ -2,6 +2,7 @@
 #include <QList>
 #include <QPointer>
 #include <QRegion>
+#include <QPersistentModelIndex>
 #include <QStyledItemDelegate>
 #include <QTimer>
 #include <functional>
@@ -99,6 +100,11 @@ class BrowserDelegate : public QStyledItemDelegate {
   QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return QSize(100, theme::px(28)); }  // taller at a larger text size
   QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& opt, const QModelIndex& index) const override;
   void updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& opt, const QModelIndex& index) const override;
+  void destroyEditor(QWidget* editor, const QModelIndex& index) const override;
+  // The row being renamed: its name is not painted under the editor (it showed at the editor's rounded edges); the count
+  // of such skipped names, for benches.
+  QModelIndex editing() const { return m_editing; }
+  int namesSkipped() const { return m_namesSkipped; }
   bool helpEvent(QHelpEvent* e, QAbstractItemView* view, const QStyleOptionViewItem& opt, const QModelIndex& index) override;
   void addDecorator(browser::Decorator decorator) { m_decorators.push_back(std::move(decorator)); }
   browser::Decoration decoration(const QModelIndex& index) const;  // what the decorators say about a row
@@ -120,4 +126,6 @@ class BrowserDelegate : public QStyledItemDelegate {
   mutable QTimer m_spin;
   mutable QPointer<QWidget> m_spinView;
   mutable QRegion m_spinRegion;
+  mutable QPersistentModelIndex m_editing;
+  mutable int m_namesSkipped = 0;
 };
