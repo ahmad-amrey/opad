@@ -135,7 +135,9 @@ std::vector<Release> parseList(const QByteArray& json, const QString& asset) {
   std::vector<Release> out;
   const QJsonDocument doc = QJsonDocument::fromJson(json);
   if (!doc.isArray()) return out;
-  QString newestStable;
+  // A prerelease's tag: vA.B.C-dev.N (a development build; A.B.C the next patch) or vX.Y.Z-rc.N (the release candidate of
+  // X.Y.Z). The tag names it; what orders it is the marker's (version, build): the version the binary says.
+  static const QRegularExpression prereleaseTag(R"(^v\d+\.\d+\.\d+-(dev|rc)\.(\d+)$)");
   for (const QJsonValue& value : doc.array()) {
     const QJsonObject o = value.toObject();
     if (o.value("draft").toBool()) continue;
@@ -146,15 +148,16 @@ std::vector<Release> parseList(const QByteArray& json, const QString& asset) {
     QString markerVersion;
     const bool marked = parseMarker(r.notes, build, markerVersion);
     if (o.value("prerelease").toBool()) {
-      if (!r.tag.startsWith("dev-") || !marked) continue;  // a development build is known by its marker alone
+      const QRegularExpressionMatch m = prereleaseTag.match(r.tag);
+      if (!m.hasMatch() || !marked || m.captured(2).toInt() != build) continue;  // the tag's build and the marker's agree, or it is left out
       r.version = markerVersion;
       r.build = build;
       r.development = true;
+      r.candidate = m.captured(1) == "rc";
     } else {
       r.version = versionOfTag(r.tag);
       if (r.version.isEmpty()) continue;
       r.build = marked ? build : 0;  // 0.9.0 and 0.10.0 have none
-      if (newestStable.isEmpty() || compareVersions(r.version, newestStable) > 0) newestStable = r.version;
     }
     r.name = o.value("name").toString();
     if (r.name.isEmpty()) r.name = r.development ? "OPAD development build " + QString::number(r.build) : "OPAD " + r.version;
@@ -168,8 +171,6 @@ std::vector<Release> parseList(const QByteArray& json, const QString& asset) {
     }
     out.push_back(r);
   }
-  // A development build of a version not released yet is that version's release candidate.
-  for (Release& r : out) r.candidate = r.development && (newestStable.isEmpty() || compareVersions(r.version, newestStable) > 0);
   return out;
 }
 

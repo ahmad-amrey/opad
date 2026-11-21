@@ -425,9 +425,11 @@ CI passes OPAD_BUILD_NUMBER (the Actions run number) and OPAD_BUILD_COMMIT to th
 `build_info.cpp` (not version.hpp: ccache) gives `opad::build_number()` / `build_commit()` (a local build: 0 and "").
 `opad-cli version` reports them, About shows "X.Y.Z (build N)", settings backups key on "X.Y.Z+N" when N > 0. Help > Offer
 development builds (`updates/channel` = development) reads the release list (`OPAD_UPDATE_LIST_URL` for tests): stable vX.Y.Z
-and dev-N prereleases keyed by (version, build) from the `<!-- opad-build: N; opad-version: X.Y.Z -->` marker in their notes
-(a marker-less stable is build 0, a marker-less dev-N is ignored), the greatest key above this copy's offered, a stable
-release before its candidate at the same key; the API refused: the stable check. Skip stores a dev build's tag.
+and prereleases tagged `vA.B.C-dev.N` (A.B.C the next patch) or `vX.Y.Z-rc.N` (the tag only names it; its -dev/-rc says which,
+N must equal the marker's), keyed by (version, build) from the `<!-- opad-build: N; opad-version: X.Y.Z -->` marker (the
+binary's version: a dev build after 0.10.0 is v0.10.1-dev.N marked 0.10.0; a marker-less stable is build 0, a marker-less or
+otherwise tagged prerelease is ignored), the greatest key above this copy's offered, a stable release before its candidate at
+the same key; the API refused: the stable check. Skip stores a prerelease's tag.
 `ctest -R update-check`, gui case updates.
 
 ## Command help (`app/help/*.json`, `tests/test_help.cpp`)

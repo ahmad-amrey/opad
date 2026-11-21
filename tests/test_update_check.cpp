@@ -222,8 +222,10 @@ TEST(no_release_yet_is_up_to_date) {
   qunsetenv("OPAD_UPDATE_PAGE_URL");
 }
 
-// The development channel's list (UpdateCheck.hpp): stable vX.Y.Z releases and dev-N prereleases keyed by (version, build)
-// from CI's marker; a stable release without one is (X.Y.Z, 0), a dev-N without one is left out, drafts too.
+// The development channel's list (UpdateCheck.hpp): stable vX.Y.Z releases and prereleases tagged vA.B.C-dev.N or
+// vX.Y.Z-rc.N, keyed by (version, build) from CI's marker (the version the binary says: a dev build after 0.10.0 is tagged
+// v0.10.1-dev.N and marked 0.10.0); a stable release without a marker is (X.Y.Z, 0); a prerelease without one, with another
+// tag, or whose tag's N is not the marker's, is left out; drafts too.
 namespace {
 QByteArray listEntry(const char* tag, bool pre, const char* body, const char* name = "", bool draft = false) {
   return QString(R"({"tag_name":"%1","name":"%2","body":"%3","html_url":"https://github.com/ahmad-amrey/opad/releases/tag/%1",)"
@@ -250,51 +252,52 @@ TEST(the_marker_names_the_build_and_version) {
 
 TEST(the_list_keys_releases_and_development_builds) {
   const QByteArray list = releaseList({
-      listEntry("dev-130", true, "<!-- opad-build: 130; opad-version: 0.10.2 -->", "OPAD 0.10.2 release candidate (build 130)"),
-      listEntry("dev-126", true, "<!-- opad-build: 126; opad-version: 0.10.1 -->", "OPAD development build 126"),
+      listEntry("v0.10.2-rc.130", true, "<!-- opad-build: 130; opad-version: 0.10.2 -->", "OPAD 0.10.2 release candidate (build 130)"),
+      listEntry("v0.10.2-dev.126", true, "<!-- opad-build: 126; opad-version: 0.10.1 -->", "OPAD 0.10.2 development build 126"),
       listEntry("v0.10.1", false, "## Fixed\\n- Trim\\n\\n<!-- opad-build: 125; opad-version: 0.10.1 -->"),
-      listEntry("dev-125", true, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
-      listEntry("v0.10.0", false, "## Added\\n- Measure"),  // before the marker: build 0
-      listEntry("dev-99", true, "no marker"),                // left out
-      listEntry("v0.11.0", false, "draft", "", true),        // a draft: left out
-      listEntry("nightly", true, "<!-- opad-build: 5; opad-version: 0.1.0 -->"),  // a prerelease that is no dev-N: left out
+      listEntry("v0.10.1-rc.125", true, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
+      listEntry("v0.10.0", false, "## Added\\n- Measure"),                     // before the marker: build 0
+      listEntry("v0.10.1-dev.99", true, "no marker"),                         // left out
+      listEntry("v0.10.1-dev.98", true, "<!-- opad-build: 97; opad-version: 0.10.0 -->"),  // its N and the marker's differ: left out
+      listEntry("dev-96", true, "<!-- opad-build: 96; opad-version: 0.10.0 -->"),         // the old tag: left out
+      listEntry("v0.11.0", false, "draft", "", true),                         // a draft: left out
+      listEntry("nightly", true, "<!-- opad-build: 5; opad-version: 0.1.0 -->"),          // another prerelease: left out
   });
   const auto all = parseList(list, "OPAD-windows-x64-setup.exe");
   CHECK(all.size() == 5);
-  const Release* dev130 = nullptr;
-  const Release* stable0100 = nullptr;
+  const Release *rc = nullptr, *dev = nullptr, *stable = nullptr;
   for (const Release& r : all) {
-    if (r.tag == "dev-130") dev130 = &r;
-    if (r.tag == "v0.10.0") stable0100 = &r;
+    if (r.tag == "v0.10.2-rc.130") rc = &r;
+    if (r.tag == "v0.10.2-dev.126") dev = &r;
+    if (r.tag == "v0.10.0") stable = &r;
   }
-  CHECK(dev130 && dev130->development && dev130->candidate && dev130->version == "0.10.2" && dev130->build == 130);
-  CHECK(dev130->download == assetDownloadUrl("dev-130", "OPAD-windows-x64-setup.exe"));  // no asset listed: its address
-  CHECK(stable0100 && !stable0100->development && stable0100->build == 0);
-  for (const Release& r : all)
-    if (r.tag == "dev-126") CHECK(r.development && !r.candidate);  // 0.10.1 is released: a development build, not a candidate
+  CHECK(rc && rc->development && rc->candidate && rc->version == "0.10.2" && rc->build == 130);
+  CHECK(rc->download == assetDownloadUrl("v0.10.2-rc.130", "OPAD-windows-x64-setup.exe"));  // no asset listed: its address
+  CHECK(dev && dev->development && !dev->candidate && dev->version == "0.10.1" && dev->build == 126);  // the marker's version, not the tag's
+  CHECK(stable && !stable->development && stable->build == 0);
 }
 
 TEST(the_newest_build_above_this_one_is_offered) {
   const QByteArray list = releaseList({
-      listEntry("dev-126", true, "<!-- opad-build: 126; opad-version: 0.10.1 -->"),
+      listEntry("v0.10.2-dev.126", true, "<!-- opad-build: 126; opad-version: 0.10.1 -->"),
       listEntry("v0.10.1", false, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
-      listEntry("dev-125", true, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
+      listEntry("v0.10.1-rc.125", true, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
       listEntry("v0.10.0", false, "no marker"),
   });
   const auto all = parseList(list);
   auto pick = [&](const char* version, int build) { const auto r = newestAbove(all, version, build); return r ? r->tag : QString(); };
-  CHECK(pick("0.10.0", 0) == "dev-126");     // the release 0.10.0 (marker-less, build 0): the newest build after it
-  CHECK(pick("0.10.1", 125) == "dev-126");   // the release (or its candidate): the build after it
-  CHECK(pick("0.10.1", 126).isEmpty());      // the newest itself: nothing
-  CHECK(pick("0.10.1", 0) == "dev-126");     // a local build of 0.10.1 is build 0: everything of 0.10.1 is newer
-  const auto sameKey = parseList(releaseList({listEntry("dev-125", true, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
+  CHECK(pick("0.10.0", 0) == "v0.10.2-dev.126");    // the release 0.10.0 (marker-less, build 0): the newest build after it
+  CHECK(pick("0.10.1", 125) == "v0.10.2-dev.126");  // the release (or its candidate): the build after it
+  CHECK(pick("0.10.1", 126).isEmpty());             // the newest itself: nothing
+  CHECK(pick("0.10.1", 0) == "v0.10.2-dev.126");    // a local build of 0.10.1 is build 0: everything of 0.10.1 is newer
+  const auto sameKey = parseList(releaseList({listEntry("v0.10.1-rc.125", true, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
                                               listEntry("v0.10.1", false, "<!-- opad-build: 125; opad-version: 0.10.1 -->")}));
   const auto chosen = newestAbove(sameKey, "0.10.0", 0);
   CHECK(chosen && chosen->tag == "v0.10.1" && !chosen->development);  // a release and its candidate: the release
 }
 
 TEST(the_development_channel_checks_the_list_and_falls_back_when_refused) {
-  const QByteArray list = releaseList({listEntry("dev-140", true, "<!-- opad-build: 140; opad-version: 0.10.2 -->"),
+  const QByteArray list = releaseList({listEntry("v0.10.2-rc.140", true, "<!-- opad-build: 140; opad-version: 0.10.2 -->"),
                                        listEntry("v0.10.1", false, "<!-- opad-build: 125; opad-version: 0.10.1 -->")});
   FakeGitHub github({{"GET /list", "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(list.size()) +
                                        "\r\nConnection: close\r\n\r\n" + list},
@@ -319,6 +322,7 @@ TEST(the_development_channel_checks_the_list_and_falls_back_when_refused) {
   qunsetenv("OPAD_UPDATE_URL");
   qunsetenv("OPAD_UPDATE_PAGE_URL");
 }
+
 
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);

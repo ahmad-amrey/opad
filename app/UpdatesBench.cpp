@@ -97,12 +97,15 @@ OPAD_BENCH(OPAD_BENCH_UPDATES, updates) {
       case 4: {
         if (!toastWith("Could not check for updates")) return;
         trace::log("bench: updates: a broken answer says the check failed PASS");
-        // The development channel: a list with a release candidate (dev-999 of 99.0.1, not released) and an older release.
+        // The development channel: a list with a release candidate (v99.0.1-rc.999, 99.0.1 not released), a development
+        // build before it (v99.0.1-dev.998, its binary still 99.0.0) and an older release.
         const QString list = QDir::temp().filePath(QString("opad-updates-bench-list-%1.json").arg(QCoreApplication::applicationPid()));
         QFile f(list);
         if (f.open(QIODevice::WriteOnly))
-          f.write(R"json([{"tag_name":"dev-999","name":"OPAD 99.0.1 release candidate (build 999)","body":"<!-- opad-build: 999; opad-version: 99.0.1 -->",)json"
-                  R"json("html_url":"https://github.com/ahmad-amrey/opad/releases/tag/dev-999","draft":false,"prerelease":true},)json"
+          f.write(R"json([{"tag_name":"v99.0.1-rc.999","name":"OPAD 99.0.1 release candidate (build 999)","body":"<!-- opad-build: 999; opad-version: 99.0.1 -->",)json"
+                  R"json("html_url":"https://github.com/ahmad-amrey/opad/releases/tag/v99.0.1-rc.999","draft":false,"prerelease":true},)json"
+                  R"json({"tag_name":"v99.0.1-dev.998","name":"OPAD 99.0.1 development build 998","body":"<!-- opad-build: 998; opad-version: 99.0.0 -->",)json"
+                  R"json("html_url":"https://github.com/ahmad-amrey/opad/releases/tag/v99.0.1-dev.998","draft":false,"prerelease":true},)json"
                   R"json({"tag_name":"v99.0.0","name":"OPAD 99.0.0","body":"","html_url":"https://github.com/ahmad-amrey/opad/releases/tag/v99.0.0","draft":false,"prerelease":false}])json");
         f.close();
         qputenv("OPAD_UPDATE_LIST_URL", QUrl::fromLocalFile(list).toString().toUtf8());
@@ -123,7 +126,7 @@ OPAD_BENCH(OPAD_BENCH_UPDATES, updates) {
         QAction* dev = w.findChild<QAction*>("help.devBuilds");
         dev->trigger();  // back to releases only
         qunsetenv("OPAD_UPDATE_LIST_URL");
-        if (skipped != "dev-999") return finish(false, "Skip this version did not remember the build's tag: " + skipped);
+        if (skipped != "v99.0.1-rc.999") return finish(false, "Skip this version did not remember the build's tag: " + skipped);
         return finish(dev && !dev->isChecked() && QSettings().value(updates::kChannelKey).toString() == "stable",
                       "development builds: a release candidate offered by its version and build, skipped by its tag");
       }
