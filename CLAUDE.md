@@ -49,6 +49,9 @@ Engine file. Wayland runs through XWayland (OCCT's viewer needs X11).
 `brew install cmake ninja opencascade qt nlohmann-json pybind11 python` (OCCT 7.9.3, Qt 6.11), `git submodule update --init
 third_party/libredwg`, then `cmake --workflow --preset macos` (90 unit tests) and `cmake --build --preset macos-single`
 (`build/macos/single/OPAD-<ver>-macos.dmg`, ad-hoc signed, every dylib inside: check with `DYLD_PRINT_LIBRARIES=1`).
+The dmg is the folder `single/volume` (OPAD.app + an `Applications` link) laid out by `cmake/dmg.cmake`: AppleScript has
+Finder place the icons on `app/res/dmg-background.tiff` (`swift tools/make_dmg_background.swift`) in a read-write image,
+then UDZO; when Finder does not answer (2 min timeout, headless) it warns and writes the plain window (`-DOPAD_DMG_LAYOUT=OFF`).
 No pkg-config needed: HarfBuzz falls back to its CMake config. The app is `bin/opad.app/Contents/MacOS/opad`: lookups
 beside the program (dwg2dxf, ccx, opad-cli, the git merge driver) also look beside the bundle, and tests that run the app
 use that path. Traps met: Chrono sets `CMAKE_MACOSX_RPATH OFF` (built with `CMAKE_INSTALL_NAME_DIR=@rpath`, else every

@@ -8,7 +8,8 @@
 #   Linux    OPAD-<version>-linux-x86_64.AppImage: linuxdeploy with its Qt plugin bundles the app, Qt, OCCT and
 #            the other libraries the distro build links (needs `linuxdeploy` and `linuxdeploy-plugin-qt` on PATH,
 #            https://github.com/linuxdeploy).
-#   macOS    OPAD-<version>-macos.dmg: the app bundle with Qt and the dylibs copied in by macdeployqt.
+#   macOS    OPAD-<version>-macos.dmg: the app bundle with Qt and the dylibs copied in by macdeployqt, beside a link to
+#            /Applications in the usual drag-to-install window (cmake/dmg.cmake).
 # On Linux and macOS cmake/bundle_stage.cmake then runs over the bundle: the GPL guard (it fails on FFmpeg, codecs,
 # FreeImage or OpenVR unless OPAD_ALLOW_GPL_DLLS) and THIRD-PARTY-NOTICES.txt from the libraries copied in, inside the
 # bundle and beside it.
@@ -75,6 +76,9 @@ if(WIN32)
     COMMENT "Single-file executables in ${_single_dir}" VERBATIM)
 
 elseif(APPLE)
+  # The dmg's volume as a folder: OPAD.app, and the Applications link that cmake/dmg.cmake adds beside it.
+  set(_single_vol "${_single_dir}/volume")
+  option(OPAD_DMG_LAYOUT "opad-single: lay the dmg window out in Finder (falls back to the plain window when Finder does not answer)" ON)
   get_filename_component(_single_qt_bin "${_single_qmake}" DIRECTORY)
   find_program(OPAD_MACDEPLOYQT NAMES macdeployqt HINTS "${_single_qt_bin}")
   find_program(OPAD_CODESIGN NAMES codesign REQUIRED)
@@ -93,26 +97,27 @@ elseif(APPLE)
   foreach(_plugin IN ITEMS platforms/libqcocoa.dylib imageformats/libqjpeg.dylib styles/libqmacstyle.dylib)
     if(EXISTS "${_single_qt_plugins}/${_plugin}")
       get_filename_component(_plugin_dir "${_plugin}" DIRECTORY)
-      set(_plugin_dest "${_single_dir}/OPAD.app/Contents/PlugIns/${_plugin}")
+      set(_plugin_dest "${_single_vol}/OPAD.app/Contents/PlugIns/${_plugin}")
       list(APPEND _single_plugin_commands
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${_single_dir}/OPAD.app/Contents/PlugIns/${_plugin_dir}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_single_vol}/OPAD.app/Contents/PlugIns/${_plugin_dir}"
         COMMAND ${CMAKE_COMMAND} -E copy "${_single_qt_plugins}/${_plugin}" "${_plugin_dest}")
       list(APPEND _single_plugin_args "-executable=${_plugin_dest}")
     endif()
   endforeach()
   add_custom_target(opad-single
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${_single_dir}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${_single_dir}"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_BUNDLE_DIR:opad>" "${_single_dir}/OPAD.app"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_single_vol}"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_BUNDLE_DIR:opad>" "${_single_vol}/OPAD.app"
     ${_single_plugin_commands}
-    COMMAND "${OPAD_MACDEPLOYQT}" "${_single_dir}/OPAD.app" -always-overwrite -no-codesign
+    COMMAND "${OPAD_MACDEPLOYQT}" "${_single_vol}/OPAD.app" -always-overwrite -no-codesign
             -no-plugins ${_single_plugin_args}
-    COMMAND ${_single_stage} "-DOPAD_BUNDLE=${_single_dir}/OPAD.app" -P "${PROJECT_SOURCE_DIR}/cmake/bundle_stage.cmake"
-    COMMAND ${CMAKE_COMMAND} -E copy "${_single_dir}/OPAD.app/Contents/Resources/THIRD-PARTY-NOTICES.txt" "${_single_dir}"
-    COMMAND "${OPAD_CODESIGN}" --force --deep --sign - "${_single_dir}/OPAD.app"
-    COMMAND "${OPAD_CODESIGN}" --verify --deep --strict "${_single_dir}/OPAD.app"
-    COMMAND "${OPAD_HDIUTIL}" create -volname OPAD -srcfolder "${_single_dir}/OPAD.app"
-            -format UDZO -ov "${_single_dir}/OPAD-${PROJECT_VERSION}-macos.dmg"
+    COMMAND ${_single_stage} "-DOPAD_BUNDLE=${_single_vol}/OPAD.app" -P "${PROJECT_SOURCE_DIR}/cmake/bundle_stage.cmake"
+    COMMAND ${CMAKE_COMMAND} -E copy "${_single_vol}/OPAD.app/Contents/Resources/THIRD-PARTY-NOTICES.txt" "${_single_dir}"
+    COMMAND "${OPAD_CODESIGN}" --force --deep --sign - "${_single_vol}/OPAD.app"
+    COMMAND "${OPAD_CODESIGN}" --verify --deep --strict "${_single_vol}/OPAD.app"
+    COMMAND ${CMAKE_COMMAND} "-DDMG_STAGE=${_single_vol}" "-DDMG_OUT=${_single_dir}/OPAD-${PROJECT_VERSION}-macos.dmg"
+            -DDMG_VOLNAME=OPAD "-DDMG_BACKGROUND=${PROJECT_SOURCE_DIR}/app/res/dmg-background.tiff"
+            "-DDMG_LAYOUT=${OPAD_DMG_LAYOUT}" "-DDMG_HDIUTIL=${OPAD_HDIUTIL}" -P "${PROJECT_SOURCE_DIR}/cmake/dmg.cmake"
     DEPENDS opad
     COMMENT "App bundle + dmg in ${_single_dir}" VERBATIM)
 

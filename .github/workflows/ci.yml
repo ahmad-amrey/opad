@@ -493,11 +493,15 @@ jobs:
         run: |
           dmg=$(ls build/macos/single/*.dmg | head -1)
           hdiutil attach -nobrowse -readonly -mountpoint /tmp/opad-dmg "$dmg"
-          ls /tmp/opad-dmg
+          ls -la /tmp/opad-dmg
+          # The drag-to-install window: the bundle beside a link to /Applications (cmake/dmg.cmake).
+          test -L /tmp/opad-dmg/Applications && test "$(readlink /tmp/opad-dmg/Applications)" = /Applications \
+            || { echo "::error::the dmg has no Applications link to /Applications"; exit 1; }
           # The app's program, wherever the volume puts the bundle, and every library inside: none may name a library
           # outside the dmg by an absolute path (Homebrew, the build tree). Search paths (LC_RPATH) that point outside
-          # are reported as warnings: harmless while every @rpath library is also inside.
-          exe=$(find /tmp/opad-dmg -path '*/Contents/MacOS/*' -type f -perm -u+x | head -1)
+          # are reported as warnings: harmless while every @rpath library is also inside. find -P never follows the
+          # Applications link (it would search the runner's own /Applications).
+          exe=$(find -P /tmp/opad-dmg -path '*.app/Contents/MacOS/*' -type f -perm -u+x | head -1)
           test -n "$exe" || { echo "::error::no app program in the dmg"; exit 1; }
           echo "Program: $exe"
           bad=0
@@ -508,7 +512,7 @@ jobs:
             if [ -n "$outside" ]; then echo "::error::$f links outside the dmg: $outside"; bad=1; fi
             rpaths=$(otool -l "$f" | awk '/cmd LC_RPATH/{getline; getline; print $2}' | grep -v '^@' || true)
             if [ -n "$rpaths" ]; then echo "::warning::$f searches outside the dmg: $rpaths"; fi
-          done < <(find /tmp/opad-dmg -type f \( -perm -u+x -o -name '*.dylib' \))
+          done < <(find -P /tmp/opad-dmg -type f \( -perm -u+x -o -name '*.dylib' \))
           test "$bad" = 0
           hdiutil detach /tmp/opad-dmg
       - name: Save ccache
