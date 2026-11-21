@@ -121,7 +121,7 @@ void MainWindow::buildMenus() {
   m_sketchMenu = menuBar()->addMenu(tr("&Sketch"));
   m_sketchMenu->setObjectName("sketchMenu");
   add(m_sketchMenu, {"sketch.moreCreate", "sketch.moreModify", "sketch.moreConstrain", "sketch.moreReference", "sketch.moreFiles", "-", "sketch.select",
-                     "sketch.dimension", "sketch.construction", "sketch.node", "sketch.copybase", "-", "sketch.showConstraints", "sketch.openEnds", "sketch.constraints",
+                     "sketch.measure", "sketch.dimension", "sketch.construction", "sketch.node", "sketch.copybase", "-", "sketch.showConstraints", "sketch.openEnds", "sketch.constraints",
                      "sketch.snaps", "sketch.selectionOptions", "sketch.panel", "sketch.commandLine", "sketch.replane", "design.alignSketch", "-", "sketch.cancel", "sketch.finish"});
   m_sketchMenu->menuAction()->setVisible(false);
   QMenu* version = menuBar()->addMenu(tr("Ve&rsion"));  // version control's (VcsArea): hidden when no area fills it

@@ -547,7 +547,6 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
   auto grab = std::make_shared<QPointF>();
   list.push_back({[=] { return area->triadShown() && !v->looksPending(); }, [=, &w](bool) {
                     v->benchBodyPoint(s->lid, s->x, s->y);  // a frame for the picker's depth range
-                    const double scale = v->displayScale();
                     const QPointF centre = area->triadPoint(0);
                     const QRect box = area->handle()->geometry().adjusted(-8, -8, 8, 8);
                     double best = 0;
@@ -556,7 +555,10 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                         const QPointF p(v->width() * i / 40.0, v->height() * j / 40.0);
                         const double away = std::hypot(p.x() - centre.x(), p.y() - centre.y());
                         if (away < 70 || away > 400 || box.contains(p.toPoint()) || (best > 0 && away >= best)) continue;
-                        if (v->benchPickAt(qRound(p.x() * scale), qRound(p.y() * scale)) == s->lid) {
+                        // As the press will find it (the nearest body under the pointer): a raised (selected) lid behind
+                        // another body is what OCCT's own pick ranks first, but not what the view takes there.
+                        opad::Ref under;
+                        if (v->referenceAt(p, under) && under.body == s->lid) {
                           best = away;
                           *grab = p;
                         }
@@ -730,7 +732,15 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                           n += b->defaultAction() && ids.contains(b->defaultAction()->objectName());
                       return n;
                     };
-                    const int assemble = buttons("design.assemble", {"assembly.explode", "assembly.explodePlay", "assembly.explodeOff"});
+                    // Exploded view with Play and Collapse in its menu (the Explode tab has them as buttons).
+                    int assemble = 0;
+                    if (RibbonPage* page = w.m_ribbon->page("design.assemble"))
+                      for (QToolButton* b : page->findChildren<QToolButton*>())
+                        if (b->defaultAction() && b->defaultAction()->objectName() == "assembly.explode") {
+                          ++assemble;
+                          if (QMenu* menu = b->menu())
+                            for (QAction* a : menu->actions()) assemble += a->objectName() == "assembly.explodePlay" || a->objectName() == "assembly.explodeOff";
+                        }
                     w.m_ribbon->grab().save(prefix + ".ribbon.png");
                     const int viewTab = buttons("design.view", {"assembly.explode"});
                     // The panel open: its Explode tab comes first in Design, current, with Finish at its end (UI-104); Finish closes both.
@@ -745,7 +755,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     QCoreApplication::processEvents();
                     const bool finished = !area->panel()->isVisible() && !w.m_ribbon->tabIds().contains("design.explode") && area->isOn();
                     require(assemble == 3 && viewTab == 1 && explodeTab == 8 && tabs.value(0) == "design.explode" && current && finished,
-                            QString("Design > Assemble has Exploded view with Play and Collapse (%1), Design > View Exploded view (%2); with the panel open the "
+                            QString("Design > Assemble has Exploded view with Play and Collapse in its menu (%1), Design > View Exploded view (%2); with the panel open the "
                                     "Explode tab first and current (%3) with its eight commands (%4); Finish explode closes both, the parts stay apart (%5)")
                                 .arg(assemble).arg(viewTab).arg(tabs.join(' ')).arg(explodeTab).arg(finished));
                     w.action("assembly.explodeOff")->trigger();

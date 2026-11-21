@@ -60,7 +60,11 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   m_agent->bench();
   auto* agentStatus=new QToolButton(this);
   statusBar()->addPermanentWidget(agentStatus);
-  auto updateAgentStatus=[this,agentStatus]{agentStatus->setText(tr("AI: %1").arg(m_agent->statusSummary()));agentStatus->setToolTip(m_doc->title());};
+  // No client connected: the chip opens Connect an AI client (AgentBridge::settings), and says so.
+  auto updateAgentStatus=[this,agentStatus]{
+    agentStatus->setText(tr("AI: %1").arg(m_agent->statusSummary()));
+    agentStatus->setToolTip(m_agent->clientConnected()?m_doc->title():tr("Connect an AI client: Claude Code, Claude Desktop, Codex or another MCP client")+QStringLiteral("\n")+m_doc->title());
+  };
   connect(m_agent,&AgentBridge::statusChanged,agentStatus,updateAgentStatus);updateAgentStatus();
   // The selection is published only while agent access is on (UI-06): at once when it comes on, and the file goes with it.
   connect(m_agent,&AgentBridge::statusChanged,this,[this]{
@@ -69,7 +73,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     else unpublishSelection();
   });
   m_selPublishing=m_agent->publishesSelection();
-  connect(agentStatus,&QToolButton::clicked,m_agent,&AgentBridge::settings);
+  connect(agentStatus,&QToolButton::clicked,m_agent,[this]{m_agent->settings();});
   connect(m_recovery,&RecoveryManager::status,this,[this](const QString& text){statusBar()->showMessage(text,8000);});
 
   connect(m_doc, &AppDocument::aboutToReplace, this, [this] {

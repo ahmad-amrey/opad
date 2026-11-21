@@ -33,6 +33,7 @@
 #include <QFontMetricsF>
 #include <QPainterPath>
 #include <QCursor>
+#include <QToolTip>
 #include <cmath>
 
 #include "I18n.hpp"
@@ -254,11 +255,11 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   connect(&m_toolPreviewTimer,&QTimer::timeout,this,[this]{if(!m_active)return;if(m_editJob){m_toolPreviewTimer.start();return;}previewTool();});
   connect(m_dimensionHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){m_options["distance"]=text;scheduleToolPreview();emit workflowChanged();});
   m_dimensionHandle->setLabel(tr("Offset"));m_dimensionHandle->setCapturesKeys(false);  // the keys come through sketchKey
-  connect(m_dimensionHandle,&DimensionHandle::accepted,this,[this]{if(m_active && m_tool=="offset" && !m_sel.empty())applyTool();});
+  connect(m_dimensionHandle,&DimensionHandle::accepted,this,[this](bool keep){if(m_active && m_tool=="offset" && !m_sel.empty())applyTool(keep);});
   m_input=new DynamicInput(viewport);
   connect(m_input,&DynamicInput::optionEdited,this,[this](const QString& key,const QString& value){m_options[key]=value;scheduleToolPreview();updateTransient();emit workflowChanged();});
   connect(m_input,&DynamicInput::typedChanged,this,[this]{if(m_active)emit changed();});  // the prompt says what Enter and Esc do now
-  connect(m_input,&DynamicInput::committed,this,[this]{if(!done())m_viewport->setFocus();});
+  connect(m_input,&DynamicInput::committed,this,[this](bool keep){if(!done(keep))m_viewport->setFocus();});
   connect(m_input,&DynamicInput::escaped,this,[this]{escape();});
   connect(m_input,&DynamicInput::undoPoint,this,[this]{undoPoint();});
   connect(m_input,&DynamicInput::valueTyped,this,[this]{if(m_active)retype();});  // the rubber band follows what is typed
@@ -310,6 +311,13 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     if (!m_settings.tracking && !m_settings.extensions) return;  // F12 off: nothing uses them
     sketchsnap::track(m_tracked, m_dwellPoint);
     resnap();
+  });
+  // A constraint's badge or a dimension's value rested on: its tooltip says what it is (hoverTip, SketchMeasure.cpp).
+  m_tipTimer.setSingleShot(true);
+  m_tipTimer.setInterval(500);
+  connect(&m_tipTimer, &QTimer::timeout, this, [this] {
+    if (!m_active || !m_inView || !m_tipShown || m_hover.kind != Hit::Dimension || m_hover.id != m_tipShown) return;
+    QToolTip::showText(QCursor::pos() + QPoint(14, 18), constraintTip(m_tipShown), m_viewport, QRect(), 8000);
   });
   m_relayoutTimer.setSingleShot(true);
   m_relayoutTimer.setInterval(250);
@@ -411,7 +419,8 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 
 void SketchEditor::end() {
   if (!m_active) return;
-  m_toolPreviewTimer.stop();m_dwellTimer.stop();m_relayoutTimer.stop();m_dimensionHandle->hide();forgetTyped();m_input->setFields({});m_input->hide();
+  m_toolPreviewTimer.stop();m_dwellTimer.stop();m_relayoutTimer.stop();m_dimensionHandle->hide();
+  m_hover = Hit{};hoverTip();forgetTyped();m_input->setFields({});m_input->hide();
   m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
   ++m_geometryRevision;++m_fillRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   m_viewport->setEdgeHover(false);
@@ -1193,6 +1202,7 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   const bool redraw = h.kind != m_hover.kind || h.id != m_hover.id || m_tool != "select" || m_placingDim;
   const bool dimensionHover=h.kind==Hit::Dimension||m_hover.kind==Hit::Dimension;
   m_hover = h;
+  hoverTip();
   m_pointer = s;
   m_cursor = typedPoint(s);  // typed values hold it
   m_haveCursor = true;
@@ -1216,6 +1226,7 @@ void SketchEditor::sketchLeave() {
   }
   const bool dimension = m_hover.kind == Hit::Dimension;
   m_hover = Hit{};
+  hoverTip();
   if (dimension) rebuild();
   else updateTransient();
 }
@@ -1449,6 +1460,10 @@ void SketchEditor::sketchDoubleClick(double u, double v) {
 bool SketchEditor::sketchKey(QKeyEvent* e) {
   if (!m_active) return false;
   if (typingKey(e)) return true;  // also while a job runs: a digit never falls through to a shortcut
+  // Shift+Enter applies a one-shot tool and keeps it (sketchkeys::keepsOnShiftEnter); otherwise it is the window's Repeat.
+  if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && (e->modifiers() & ~Qt::KeypadModifier) == Qt::ShiftModifier) {
+    return sketchkeys::keepsOnShiftEnter(keyState()) && done(true);
+  }
   if((e->modifiers()&~Qt::KeypadModifier)!=Qt::NoModifier)return false;  // the keypad's Enter is Enter
   const int key = e->key();
   if (key != Qt::Key_Escape && key != Qt::Key_Return && key != Qt::Key_Enter && key != Qt::Key_Backspace && key != Qt::Key_Delete) return false;
@@ -1790,6 +1805,18 @@ void SketchEditor::rebuild() {
         const double k = len2 < 1e-18 ? 0 : ((qx - ax) * dx + (qy - ay) * dy) / len2;
         d.thin.push_back({W(qx, qy), W(ax + k * dx, ay + k * dy), col});
       }
+    } else if (c.type == T::Offset) {  // a leader from the source to the offset (arrow head on it), on to the value
+      double mu, mv, nu, nv;
+      if (offsetLeader(c, mu, mv, nu, nv)) {
+        const double dx = nu - mu, dy = nv - mv, len = std::hypot(dx, dy);
+        const double tx = len > 1e-9 ? dx / len : 0, ty = len > 1e-9 ? dy / len : 1, nx = -ty, ny = tx;
+        d.thin.push_back({W(mu, mv), W(lu - tx * 8 * px, lv - ty * 8 * px), col});
+        for (double s : {1.0, -1.0}) {  // arrow heads at both curves
+          const double ex = s > 0 ? nu : mu, ey = s > 0 ? nv : mv;
+          d.thin.push_back({W(ex, ey), W(ex - s * (tx * 9 - nx * 3) * px, ey - s * (ty * 9 - ny * 3) * px), col});
+          d.thin.push_back({W(ex, ey), W(ex - s * (tx * 9 + nx * 3) * px, ey - s * (ty * 9 + ny * 3) * px), col});
+        }
+      }
     } else if ((c.type == T::Radius || c.type == T::Diameter) && !c.refs.empty()) {
       const SkEntity* e = m_sk.entity(c.refs[0]);
       if (e && !e->p.empty() && P(e->p[0], ax, ay)) {
@@ -2068,6 +2095,16 @@ void SketchEditor::updateTransient() {
       for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
     }
   }
+  // Measure (SketchMeasure.cpp): what it picked in amber, dashed what the distance runs between, its values beside it.
+  if(const auto measure=measureResult()) {
+    for(int id:m_picked) {
+      if(const auto* e=m_sk.entity(id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.amber});}
+      else if(const auto* p=m_geometry->point(m_sk,id))d.bigPoints.push_back({W(p->x,p->y),t.amber});
+    }
+    if(measure->segment){d.dashed.push_back({W(measure->au,measure->av),W(measure->bu,measure->bv),t.amber});++m_rubberKinds["measure"];}
+    for(int i=0;i<measure->lines.size();++i)
+      d.texts.push_back({W(measure->lu-i*18*ux,measure->lv-i*18*uy),measure->lines[i],i==0?t.amber:t.fg2,true});
+  } else if(m_tool=="measure")for(int id:m_picked)if(const auto* p=m_geometry->point(m_sk,id))d.bigPoints.push_back({W(p->x,p->y),t.amber});
   // Rubber band of the running tool (also from typed values alone: drawing by the keyboard, the pointer not in the view).
   if ((m_haveCursor || !m_typedValues.empty()) && m_tool != "select") {
     const QColor rb = t.hov;

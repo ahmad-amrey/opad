@@ -9,7 +9,7 @@
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/feature.hpp"
 #include <QDialog>
-#include <QDialogButtonBox>
+#include "PanelFooter.hpp"
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QLabel>
@@ -81,8 +81,14 @@ void MainWindow::importDrawing(const QString& path, const QString& parent, bool 
   // Otherwise the plane is chosen first, then the drawing is moved on it before the import op is written.
   cancelTool();
   m_design->pickSketchPlane([this, path, parent, link](opad::json, opad::Frame frame) {
-    m_drawingPlacer->placed = [this, path, parent, link](const opad::Mat4& placement) {
-      beginLoad([this, path] { addRecent(path); m_viewport->fitWhenReady(); });
+    m_drawingPlacer->placed = [this, path, parent, link, frame](const opad::Mat4& placement) {
+      // Placed with Shift held (a tool used once kept open): once it is in, the same drawing again on the same plane.
+      const bool again = m_drawingPlacer->keepOpen();
+      beginLoad([this, path, frame, again] {
+        addRecent(path);
+        m_viewport->fitWhenReady();
+        if (again) m_drawingPlacer->start(path, frame, [this](ToolPanel* panel) { openPanel(panel); });
+      });
       m_doc->startImport(path, parent, placement, {}, link);
     };
     m_drawingPlacer->back = [this, path, parent, link] { QTimer::singleShot(0, this, [this, path, parent, link] { importDrawing(path, parent, link); }); };
@@ -127,8 +133,9 @@ void MainWindow::drawingToSketch() {
   auto* summary=new QLabel(dialog); summary->setObjectName("previewSummary"); summary->setWordWrap(true); summary->hide(); layout->addWidget(summary);
   auto* removeSource=new QCheckBox(tr("Remove source drawing after conversion"),dialog);layout->addWidget(removeSource);
   auto* note=new QLabel(tr("Native curves stay exact. Tolerance controls reconstruction of segmented curves. Corners and construction layers are preserved."),dialog); note->setWordWrap(true); layout->addWidget(note);
-  auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,dialog); buttons->button(QDialogButtonBox::Ok)->setText(tr("Create sketch"));buttons->button(QDialogButtonBox::Ok)->setObjectName("primary"); layout->addWidget(buttons);
-  struct State { opad::json plane; opad::Frame frame; int serial=0; QPointer<Job> job; bool applying=false,closed=false; QString frameError; };
+  // Cancel (Esc) and Create sketch (Enter): it commits and closes; Shift held keeps it for the next drawing (a tool used once).
+  auto* footer=new PanelFooter(dialog); footer->setPrimary(tr("Create sketch")); footer->setShiftKeeps(true); layout->addWidget(footer);
+  struct State { opad::json plane; opad::Frame frame; int serial=0; QPointer<Job> job; bool applying=false,closed=false,keep=false; QString frameError; };
   auto state=std::make_shared<State>(); QPointer<QWidget> guard(dialog);
   const auto generation=m_doc->generation;
   auto layers=[tree] { std::vector<opad::design::DrawingLayer> out; for(int i=0;i<tree->topLevelItemCount();++i) {auto* r=tree->topLevelItem(i); if(r->checkState(0)==Qt::Checked) out.push_back({r->data(0,Qt::UserRole).toString().toStdString(),r->checkState(1)==Qt::Checked});} return out; };
@@ -150,7 +157,7 @@ void MainWindow::drawingToSketch() {
       m_prompt->show();positionOverlays();
     }
     if(!state->frameError.isEmpty())note->setText(state->frameError);
-    buttons->button(QDialogButtonBox::Ok)->setEnabled(!state->applying && !state->plane.is_null() && !layers().empty() && !name->text().trimmed().isEmpty()); };
+    footer->primary()->setEnabled(!state->applying && !state->plane.is_null() && !layers().empty() && !name->text().trimmed().isEmpty()); };
   auto* debounce=new QTimer(dialog); debounce->setSingleShot(true); debounce->setInterval(250);
   auto convert=[=,this](bool commit) {
     if(state->plane.is_null() || layers().empty() || state->applying) return;
@@ -193,7 +200,8 @@ void MainWindow::drawingToSketch() {
       m_design->applyOps(std::move(ops),tr("Convert drawing to sketch"),[=,this](bool applied,const QString& failure) {
         if(!guard || state->closed) return;
         state->applying=false;
-        if(applied) { panel->hide(); if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QTimer::singleShot(500,this,[this,title,state] {
+        if(applied) { panel->hide(); if(state->keep) QTimer::singleShot(0,this,[this]{guarded([this]{drawingToSketch();});});  // Shift: the next drawing
+          if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QTimer::singleShot(500,this,[this,title,state] {
           bool valid=!m_design->sketchActive() && !m_doc->scene.sketches.empty() && m_doc->scene.sketches.back().name==title;
           valid=valid&&sameFrame(m_doc->scene.sketches.back().frame,state->frame);  // exactly the drawing's plane and origin
           if(!valid)trace::log("bench: converted sketch is not in the drawing's frame, or not created");
@@ -209,13 +217,13 @@ void MainWindow::drawingToSketch() {
   connect(debounce,&QTimer::timeout,dialog,[=] { if(preview->isChecked()) convert(false); });
   auto changed=[=,this] { ++state->serial; if(state->job) state->job->cancel(); m_viewport->clearPreviewBodies(); summary->hide(); frameOf(); update(); if(preview->isChecked()) debounce->start(); };
   connect(tree,&QTreeWidget::itemChanged,dialog,changed); connect(tolerance,&QDoubleSpinBox::valueChanged,dialog,changed); connect(preview,&QCheckBox::toggled,dialog,changed); connect(name,&QLineEdit::textChanged,dialog,update);
-  connect(buttons,&QDialogButtonBox::accepted,dialog,[=] { debounce->stop(); convert(true); });
-  connect(buttons,&QDialogButtonBox::rejected,panel,&QWidget::hide);
+  connect(footer,&PanelFooter::accepted,dialog,[=] { debounce->stop(); state->keep=footer->shiftAccepted(); convert(true); });
+  connect(footer,&PanelFooter::cancelled,panel,&QWidget::hide);
   connect(panel,&ToolPanel::visibilityChanged,this,[=,this](bool on) {
     if(on || state->closed) return;
     state->closed=true;++state->serial;debounce->stop();if(state->job) state->job->cancel();
     m_viewport->clearPreviewBodies();
-    m_prompt->hide();panel->deleteLater();
+    m_prompt->hide();panel->setObjectName(QString());panel->deleteLater();  // on its way out: the command again opens a new one
   });
   connect(m_doc,&AppDocument::aboutToReplace,panel,[=]{panel->hide();});
   frameOf(); openPanel(panel); update();

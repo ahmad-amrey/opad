@@ -103,11 +103,12 @@ void MainWindow::buildDesignActions() {
            {"polygon", tr("Polygon"), "polygon"}, {"slot", tr("Slot"), "slot"}, {"ellipse", tr("Ellipse"), "ellipse"}, {"spline", tr("Spline"), "spline"},
            {"point", tr("Point"), "point"}, {"fillet", tr("Sketch fillet"), "fillet"}, {"trim", tr("Trim"), "trim"}, {"mirror", tr("Mirror"), "mirror"},
            {"offset", tr("Offset"), "offset"}, {"project", tr("Project"), "project"},
-           {"dimension", tr("Dimension"), "dimension"}, {"c:horizontal", tr("Horizontal"), "cHorizontal"}, {"c:vertical", tr("Vertical"), "cVertical"},
+           {"measure", tr("Measure"), "distance"}, {"dimension", tr("Dimension"), "dimension"}, {"c:horizontal", tr("Horizontal"), "cHorizontal"}, {"c:vertical", tr("Vertical"), "cVertical"},
            {"c:coincident", tr("Coincident"), "cCoincident"}, {"c:parallel", tr("Parallel"), "cParallel"}, {"c:perpendicular", tr("Perpendicular"), "cPerpendicular"},
            {"c:tangent", tr("Tangent"), "cTangent"}, {"c:equal", tr("Equal"), "cEqual"}, {"c:concentric", tr("Concentric"), "cConcentric"}, {"c:midpoint", tr("Midpoint"), "cMidpoint"},
            {"c:symmetric", tr("Symmetric"), "cSymmetric"}, {"c:collinear", tr("Collinear"), "cCollinear"}, {"c:fix", tr("Fix"), "cFix"}}) {
-    const QMap<QString,QString> keys{{"line","L"},{"rect","R"},{"circle","C"},{"arc3","A"},{"dimension","D"},{"trim","T"},{"offset","O"},{"spline","B"},{"project","P"},{"mirror","Shift+M"},{"slot","U"},{"polygon","N"}};
+    // D measures in a sketch too (Distance's key outside it, inspect.distance); a dimension is Shift+D (migrated, ShortcutEditor).
+    const QMap<QString,QString> keys{{"line","L"},{"rect","R"},{"circle","C"},{"arc3","A"},{"measure","D"},{"dimension","Shift+D"},{"trim","T"},{"offset","O"},{"spline","B"},{"project","P"},{"mirror","Shift+M"},{"slot","U"},{"polygon","N"}};
     QAction* a = addAction("sketch." + QString(tool).replace(':', '.'), text, icon, QKeySequence(keys.value(tool)), [this, t = tool] { m_design->sketch()->setTool(t); }, true);
     a->setProperty("sketchTool", tool);
     tools->addAction(a);
@@ -170,7 +171,7 @@ void MainWindow::buildDesign() {
   });
   auto* parameters=m_design->parametersWidget();
   auto* parametersPanel=new ToolPanel("parameters","fx",&Tokens::sel,tr("Parameters"),parameters,480,this);
-  m_panels<<parametersPanel;m_design->setParametersPanel(parametersPanel);
+  parametersPanel->setPersistent(true);m_panels<<parametersPanel;m_design->setParametersPanel(parametersPanel);
   connect(parameters,&ParametersDialog::closeRequested,parametersPanel,&ToolPanel::hide);
   auto* sketchContent=new SketchPanel(m_design->sketch(),this);
   auto* sketchPanel=new ToolPanel("sketch","sketch",&Tokens::sel,tr("Sketch tools"),sketchContent,620,this);

@@ -50,6 +50,19 @@ TEST(prefix_and_context_conflicts) {
   CHECK(shortcuts::overlaps("sketch.line","view.home"));
   CHECK(shortcuts::scope("view.hidden")==shortcuts::OutsideSketch);CHECK(shortcuts::scope("view.hiddenEdges")==shortcuts::OutsideSketch);
 }
+// D measures in a sketch (sketch.measure) and a sketch dimension is Shift+D: a D saved for Dimension goes back to its
+// default; a command of the user's already on D or Shift+D keeps it and the new default starts without a key.
+TEST(measure_and_dimension_keys_migrate) {
+  QSettings s;s.clear();s.setValue("shortcuts/sketch.dimension","D");
+  shortcuts::migrate(s);CHECK(!s.contains("shortcuts/sketch.dimension"));CHECK(!s.contains("shortcuts/sketch.measure"));
+  s.clear();s.setValue("shortcuts/viewDefaultsVersion",1);  // an install that has run the older migrations
+  s.setValue("shortcuts/sketch.line","D");s.setValue("shortcuts/sketch.trim","Shift+D");
+  shortcuts::migrate(s);CHECK(s.contains("shortcuts/sketch.measure")&&s.value("shortcuts/sketch.measure").toString().isEmpty());
+  CHECK(s.contains("shortcuts/sketch.dimension")&&s.value("shortcuts/sketch.dimension").toString().isEmpty());CHECK(s.value("shortcuts/sketch.line").toString()=="D");
+  s.clear();s.setValue("shortcuts/inspect.distance","D");  // outside a sketch only: no clash
+  shortcuts::migrate(s);CHECK(!s.contains("shortcuts/sketch.measure"));CHECK(!shortcuts::overlaps("sketch.measure","inspect.distance"));
+  s.clear();
+}
 TEST(migration_and_explicit_empty_bindings) {
   QSettings s;s.clear();s.setValue("shortcuts/view.ortho","O");s.setValue("shortcuts/view.top","Alt+Q");s.setValue("shortcuts/view.grid","");
   s.setValue("shortcuts/view.rollleft","");s.setValue("shortcuts/sketch.line","");

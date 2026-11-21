@@ -305,6 +305,38 @@ bool MainWindowBench<exportBench>::run(MainWindow& w, const QString& prefix, con
     check(pages.size() == 2 && pages[0].value("paper", "") == "A4" && pages[1].value("paper", "") == "A3" && docs->lastExport.value("sheets", opad::json::array()).size() == 2 &&
               pdfData.startsWith("%PDF-") && QString::fromLatin1(pdfData).count(QRegularExpression("/Type\\s*/Page(?!s)")) == 2,
           "the drawing as a PDF of two pages, A4 and A3 " + QString::fromStdString(docs->lastExport.dump()).left(400));
+
+    // A sketch beside the plate: Whole document keeps the 3D formats (STEP chosen, as usual), says the sketch is left out,
+    // and the STEP written holds the plate alone; the 2D formats stay a choice. A selection of the plate and the sketch alike.
+    const std::string sketch = w.m_doc->run("sketch", {{"name", "Outline"}, {"geometry", opad::json::parse(R"({"shapes":[{"kind":"rect2","picks":[[-30,-10],[-20,0]]}]})")}}).value("sketch_id", "");
+    settle([&] { return !w.m_jobs->busy(); }, 20000);
+    const QString step = prefix + ".whole.step";
+    QFile::remove(step);
+    qputenv("OPAD_BENCH_EXPORT_OUT", step.toUtf8());
+    w.m_lastExport = opad::json();
+    for (const bool selection : {false, true}) {
+      withDialog([&](QDialog* d) {
+        QRadioButton* whole = nullptr;
+        for (auto* r : d->findChildren<QRadioButton*>())
+          if (r->text().startsWith(QObject::tr("Whole document").left(5))) whole = r;
+        if (!selection && whole) whole->click();
+        QString summary;
+        for (auto* l : d->findChildren<QLabel*>())
+          if (l->text().contains("left out")) summary = l->text();
+        const QString scope = selection ? "a selection of the plate and the sketch" : "Whole document";
+        QRadioButton* chosen = nullptr;
+        for (auto* r : d->findChildren<QRadioButton*>())
+          if (r->isChecked() && !r->property("format").toString().isEmpty()) chosen = r;
+        check(radio(d, "step") && radio(d, "step")->isEnabled() && chosen && chosen->property("format").toString() == "step" && radio(d, "stl")->isEnabled() &&
+                  radio(d, "dxf")->isEnabled(),
+              scope + " with a sketch: STEP is enabled and chosen, STL and DXF enabled");
+        check(summary.contains("1"), scope + ": the summary says the sketch is left out: " + summary);
+        return !selection;
+      }, selection ? std::vector<std::string>{plate, sketch} : std::vector<std::string>{});
+      if (!selection) settle([&] { return !w.m_lastExport.is_null(); }, 30000);
+    }
+    check(w.m_lastExport.value("bodies", 0) == 1 && w.m_lastExport.value("left_out", 0) == 0 && QFile::exists(step),
+          "the STEP holds the plate alone " + QString::fromStdString(w.m_lastExport.dump()).left(300));
   } catch (const std::exception& e) {
     check(false, QString("error: ") + e.what());
   }

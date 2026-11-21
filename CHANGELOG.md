@@ -5,6 +5,46 @@ notes when the pull request that raises the version in `CMakeLists.txt` is merge
 [docs/releasing.md](docs/releasing.md). Changes merged between releases go under `## [Unreleased]`. Entries are written
 for the people using OPAD, not as a commit log.
 
+## [0.10.0] - 2026-11-21
+
+Sketching gets steadier and quicker: adding a constraint moves only what it names, offsets stay tied to their curves,
+D measures without adding anything, and tools used once get out of the way. Connecting Claude or Codex is now a few
+clicks, step by step.
+
+### Added
+
+- **Offsets that follow their curves.** An offset copy made in a sketch is now held to the curves it came from as one
+  rigid piece, so moving or turning the original takes the copy along at the same distance. Its distance label shows
+  next to it; double-click it to make the offset again at another distance. Set the Offset tool's *Relationship* to
+  *None (plain copy)* for a copy that is not held, as before.
+- **Measure in a sketch.** D now starts the Measure tool in a sketch: pick a point or a curve for its position or sizes,
+  or two for the distance or angle between them. Nothing is added to the sketch. Outside a sketch, D is still Distance.
+- **Hover a constraint or a dimension to see what it is.** The status bar names it at once ("Horizontal constraint",
+  "Distance dimension: 32 mm"), and a tooltip adds what it holds, what it is on, and what a click or double-click does.
+- **Connect an AI client, step by step.** With no AI client connected, the AI chip in the status bar opens *Connect an
+  AI client*: one click registers OPAD in Claude Code, Claude Desktop or Codex. Each client shows whether it is
+  connected, not found, registered for another or older OPAD, or pointing at a program that is gone, and *Point it at
+  this OPAD* fixes the last two. Then restart the client, allow access for your document, and ask the AI with the
+  ready-made prompt.
+
+### Changed
+
+- **Adding a constraint or changing a dimension no longer shifts the whole sketch.** What you constrain moves (the
+  second pick first), plus whatever must follow through shared points; everything else stays where it was. A change
+  that cannot be satisfied is still refused.
+- **Tools you use once close when they are done.** The sketch's Apply tools (Offset, Chamfer, Move, Copy, Rotate,
+  Mirror, the patterns and the like), every feature panel, Mesh to solid, Drawing to sketch, placing a drawing or a Canvas picture, KiCad Sync, Note
+  and the section's Pick face end after Apply, OK or Enter. Hold Shift (Shift+Enter, or Shift-click the button) to keep
+  the tool open for another use. Panels that belong to the document, such as Annotations or a pinned Properties panel,
+  stay until you close them.
+- **Sketch Dimension moves to Shift+D**, to make room for Measure. A D saved for Dimension in your settings is reset.
+- **Design > Assemble fits the window** at 1600 px with every label: *Play explode* and *Collapse exploded view* are in
+  the *Exploded view* button's menu, and stay on the Explode tab that shows while an explode is on.
+- **The macOS download opens as the usual install window:** drag OPAD onto the Applications folder beside it.
+- **Export keeps the 3D formats** when the document or the selection also holds drawings or sketches. STEP stays the
+  default, the file holds the 3D bodies, and the summary says how many drawings or sketches were left out. The 2D
+  formats are still there for a view.
+
 ## [0.9.0] - 2026-11-21
 
 First public release: an open-source parametric CAD program whose design files git can diff and merge.

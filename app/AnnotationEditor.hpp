@@ -41,6 +41,9 @@ class AnnotationEditor : public QObject {
   // Takes the viewport's current selection as the target when it is exactly one thing ("selected first, tool second").
   void adoptSelection(const std::vector<opad::Ref>& selection);
 
+ signals:
+  void anotherRequested(bool drawing);  // saved with Shift held: start the next note (or drawing)
+
  protected:
   bool eventFilter(QObject* object, QEvent* event) override;
 
@@ -50,7 +53,7 @@ class AnnotationEditor : public QObject {
   bool anchorTo(opad::Ref target, bool hasPoint);
   void addPoint(const QPointF& point);
   void eraseAt(const QPointF& point);
-  void finish();
+  void finish(bool keep = false);  // keep: Shift held (Shift+Enter, Ctrl+Shift+Enter, Shift+click on Save): another one starts
   void detach();
   void remember(opad::json before);  // one undo step: the stroke list before a change
   void refresh();
@@ -95,6 +98,7 @@ class AnnotationEditor : public QObject {
   std::string m_type = "note";
   bool m_drawingMode = true, m_active = true, m_dragging = false, m_anchored = false, m_eraser = false, m_picking = false;
   bool m_cubePress = false, m_erased = false, m_fitPending = false;
+  bool m_saveShift = false;  // the click on Save had Shift held
   int m_colorIndex = 0, m_widthIndex = 1;
   QPointF m_lastPoint, m_pickPress;
   size_t m_points = 0;

@@ -48,6 +48,15 @@ using namespace opad::design;
 
 namespace {
 
+// A function as an application-wide event filter (true: the event is taken), gone with its parent.
+class KeyHook : public QObject {
+ public:
+  KeyHook(QObject* parent, std::function<bool(QObject*, QEvent*)> filter) : QObject(parent), m_filter(std::move(filter)) { qApp->installEventFilter(this); }
+  bool eventFilter(QObject* watched, QEvent* event) override { return m_filter(watched, event) || QObject::eventFilter(watched, event); }
+ private:
+  std::function<bool(QObject*, QEvent*)> m_filter;
+};
+
 // Kernel workers that may still be reading the document. A cancelled job reports back at once while its thread
 // runs on until the next cancel poll, so "the job finished" is not "nobody reads the document": commits wait
 // for this to reach zero.
@@ -143,7 +152,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
     m_form->setValue(m_handleInput,text.toStdString());m_distanceHandle->setProblem("value",m_form->problem(m_handleInput));
   });
   connect(m_distanceHandle,&DimensionHandle::extraEdited,this,&DesignController::typeValue);  // the taper and the others by the arrow
-  connect(m_distanceHandle,&DimensionHandle::accepted,this,[this]{if(m_featureOn)runPreview(true);});  // Enter in the box: OK
+  connect(m_distanceHandle,&DimensionHandle::accepted,this,[this](bool keep){if(m_featureOn)runPreview(true,keep);});  // Enter in the box: OK (Shift: and another)
   // Typed values (UI-122): while a feature with values is open, digits and Tab over the view or a panel are its, never the
   // filters' or the display styles' keys; the boxes beside the pointer, or by the extrude's arrow while it shows.
   m_values = new ToolValues(viewport, this);
@@ -170,7 +179,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
     if (m_placer->active()) m_placer->typed(key);  // a typed size holds while the pointer sets the others
   };
   // Enter: OK; a primitive's typed footprint goes on to its height first, as a click does (and Tab from its last box).
-  m_values->commit = [this] { if (m_featureOn && !m_placer->keyboardNext()) runPreview(true); };
+  m_values->commit = [this] { if (m_featureOn && !m_placer->keyboardNext()) runPreview(true, m_values->shift); };
   m_values->input()->setTabOut([this] { return m_featureOn && m_placer->active() && m_placer->tabOut(); });
   m_values->escape = [this] { escape(); };
   m_placer = new PrimitivePlacer(doc, viewport, jobs, m_form, m_values, this);
@@ -232,13 +241,25 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(viewport, &Viewport::notesMoved, this, [this] { if (m_triad && m_triad->shown()) placeMoveTriad(); });  // every camera move
   connect(m_form, &FeaturePanel::activeInputChanged, this, &DesignController::activateInput);
   connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
-  connect(m_form, &FeaturePanel::accepted, this, [this] { runPreview(true); });
+  connect(m_form, &FeaturePanel::accepted, this, [this] { runPreview(true, m_form->footer()->shiftAccepted()); });  // Shift+click on OK: and another
   connect(m_form, &FeaturePanel::cancelled, this, &DesignController::endFeature);
   connect(m_form, &FeaturePanel::escapePressed, this, [this] { escape(); });  // one step back, as in the view
   connect(m_sketch, &SketchEditor::status, this, &DesignController::status);
   connect(m_sketch, &SketchEditor::changed, this, &DesignController::stateChanged);
   connect(m_sketch, &SketchEditor::toolChanged, this, &DesignController::stateChanged);
   m_viewport->installEventFilter(this);
+  // Shift+Enter in the feature panel (a field or a button has the keyboard): OK and another, before the window's Repeat
+  // last command takes it (which would start the feature over with its inputs lost). The view's is in eventFilter.
+  new KeyHook(this, [this](QObject* watched, QEvent* event) {
+    if ((event->type() != QEvent::KeyPress && event->type() != QEvent::ShortcutOverride) || !m_featureOn || m_pickPlane || m_sketch->active() || !m_panel) return false;
+    auto* widget = qobject_cast<QWidget*>(watched);
+    auto* key = static_cast<QKeyEvent*>(event);
+    if (!widget || (widget != m_panel && !m_panel->isAncestorOf(widget)) || (key->key() != Qt::Key_Return && key->key() != Qt::Key_Enter) ||
+        (key->modifiers() & ~Qt::KeypadModifier) != Qt::ShiftModifier) return false;
+    key->accept();
+    if (event->type() == QEvent::KeyPress) runPreview(true, true);
+    return true;
+  });
   // Ctrl held while a feature is open: the bodies its preview stands in for, as they are, with the input's picks on them,
   // so a Ctrl+click adds one or takes one back; the preview comes back with the release (and follows the picks then).
   m_viewport->setPreviewPeekGate([this] { return m_featureOn && !m_pickPlane && !m_sketch->active(); });
@@ -258,6 +279,19 @@ DesignController::~DesignController() = default;
 bool DesignController::eventFilter(QObject* watched, QEvent* event) {
   if (watched == m_viewport && m_triad && triadEvent(event)) return true;  // Move's triad pulled
   // The panel says "OK Enter", but after a pick in the view the view has the keyboard: Enter there accepts too.
+  const bool keyEvent = event->type() == QEvent::KeyPress || event->type() == QEvent::ShortcutOverride;
+  if (watched == m_viewport && keyEvent && m_featureOn && !m_pickPlane && !m_sketch->active()) {
+    auto* key = static_cast<QKeyEvent*>(event);
+    const bool enter = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
+    // Shift+Enter in the view: OK, and another of the same kind (runPreview), taken before the window's Repeat last command
+    // (the panel's: the KeyHook in the constructor). The value boxes beside the pointer and by the arrow pass their own
+    // Shift on (ToolValues, DimensionHandle).
+    if (enter && (key->modifiers() & ~Qt::KeypadModifier) == Qt::ShiftModifier) {
+      key->accept();
+      if (event->type() == QEvent::KeyPress && !m_placer->keyboardNext()) runPreview(true, true);
+      return true;
+    }
+  }
   if (watched == m_viewport && event->type() == QEvent::KeyPress && m_featureOn && !m_pickPlane && !m_sketch->active()) {
     auto* key = static_cast<QKeyEvent*>(event);
     if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && key->modifiers() == Qt::NoModifier) {
@@ -1311,7 +1345,7 @@ void DesignController::stretchPreview(double value) {
   m_viewport->setPreviewDisplay(shown);
 }
 
-void DesignController::runPreview(bool commit) {
+void DesignController::runPreview(bool commit, bool keep) {
   if (!m_featureOn) return;
   m_previewTimer.stop();
   // A primitive whose plane is being picked (or whose size the pointer has not given yet) has nothing to show: the
@@ -1335,19 +1369,22 @@ void DesignController::runPreview(bool commit) {
   // A new feature is made in the active component (UI-33): its new bodies, plane or axis go there, in its frame.
   const std::string component = m_editing.empty() ? m_doc->activeComponent() : std::string();
   const std::string stamp = inputs.dump() + "|" + name + "|" + component;
-  auto commitReady = [this, component] {
+  // A feature is normally made once: OK commits and closes it. Shift held with OK or Enter keeps the tool for another, the
+  // same kind started afresh (never after an edit or an Align sketch: those change something that exists).
+  const QString again = keep && m_editing.empty() && m_alignSketch.empty() && m_form->spec() ? QString::fromStdString(m_form->spec()->kind) : QString();
+  auto commitReady = [this, component, again] {
     auto plan = m_readyPlan;
     const QString label = m_form->spec() ? i18n::t(QString::fromStdString(m_form->spec()->label)).toLower() : tr("feature");
     // A new extrusion sketched on its start face commits as that sketch made real and the extrusion from it (one step).
     if (const opad::json now = m_form->inputs(); m_editing.empty() && m_form->spec() && m_form->spec()->kind == "extrude" &&
                                                  now.value("start", "") == "face" && now.value("start_shape", "") == "sketch_on_face")
-      return commitDerived(now, component, label);
+      return commitDerived(now, component, label, again);
     // The new bodies' name, colour and component: the rename / appearance / reparent ops of the same step (B14). No
     // reparent into the component the feature is made in: its bodies are there already.
     opad::json style = m_editing.empty() && m_alignSketch.empty() ? m_form->bodyStyle() : opad::json::object();
     if (!component.empty() && style.value("parent", opad::json()) == opad::json(component)) style.erase("parent");
     const std::string op = m_newId;
-    whenNobodyReads(this, [this, plan, label, style, op] {
+    whenNobodyReads(this, [this, plan, label, style, op, again] {
       try {
         m_viewport->clearPreviewBodies();
         m_doc->setRollback({});
@@ -1355,6 +1392,7 @@ void DesignController::runPreview(bool commit) {
         const opad::json rep = m_doc->commitPlan(std::move(*plan), label);
         const size_t errors = rep.value("errors", opad::json::array()).size();
         endFeature();
+        if (!again.isEmpty()) startFeature(again);
         if (errors > 0) emit notice(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
       } catch (const std::exception& e) {
         m_form->setStatus(i18n::t(QString::fromUtf8(e.what())), true);
@@ -1612,7 +1650,7 @@ void DesignController::runPreview(bool commit) {
 // Start from: Face, Start at: Sketch on face (a new extrusion): the profiles projected onto the start face's plane become a
 // real sketch, on a construction plane when offset, and the extrusion goes from it: design::derived_extrude_ops on a worker,
 // then planned and committed as one step (one undo), with the New body section's name and colour.
-void DesignController::commitDerived(const opad::json& inputs, const std::string& component, const QString& label) {
+void DesignController::commitDerived(const opad::json& inputs, const std::string& component, const QString& label, const QString& again) {
   refreshPlanCopies();
   auto doc = m_planDoc;
   auto scene = m_planScene;
@@ -1624,14 +1662,15 @@ void DesignController::commitDerived(const opad::json& inputs, const std::string
   m_jobs->async(tr("Sketching on the start face"), [doc, scene, inputs, name, component, ops](Progress) {
     Reading reading;
     *ops = derived_extrude_ops(*doc, *scene, hint_refs(*doc, *scene, inputs), name, component);
-  }, [this, ops, label, style](bool ok, const QString& error) {
+  }, [this, ops, label, style, again](bool ok, const QString& error) {
     if (!m_featureOn) return;
     if (!ok) return m_form->setStatus(i18n::t(error), true);
     const std::string extrude = ops->back().value("id", "");
     m_viewport->clearPreviewBodies();
     m_doc->setRollback({});
-    applyOps(*ops, label, [this](bool done, const QString& why) {
+    applyOps(*ops, label, [this, again](bool done, const QString& why) {
       if (done) endFeature();
+      if (done && !again.isEmpty()) startFeature(again);  // Shift kept the tool: another
       else if (m_featureOn) m_form->setStatus(i18n::t(why), true);
     }, [extrude, style](opad::Document&, Plan& plan) {
       if (!style.empty()) style_new_bodies(plan, extrude, style);
@@ -1677,7 +1716,18 @@ void DesignController::startSketch() {
 
 void DesignController::setSketchPanel(ToolPanel* panel) {
   m_sketchPanel=panel;
-  connect(m_sketch,&SketchEditor::toolChanged,this,[this]{if(m_sketch->tool()=="select"){if(m_sketchPanel)m_sketchPanel->hide();}else showSketchPanel();});
+  // A tool that ends (Esc, or Apply on one used once) closes the panel, unless the user had opened one of its pages
+  // (Constraints, Snaps, Select) before: that stays until they close it.
+  connect(m_sketch,&SketchEditor::toolChanged,this,[this]{
+    if(m_sketch->tool()!="select")return showSketchPanel();
+    if(!m_sketchPanel)return;
+    auto* content=m_sketchPanel->findChild<SketchPanel*>();
+    if(content && content->userPage()>0 && m_sketchPanel->isVisible())showSketchPanel(content->pageTitle(content->userPage()));
+    else m_sketchPanel->hide();
+  });
+  connect(panel,&ToolPanel::visibilityChanged,this,[this](bool on){
+    if(!on)if(auto* content=m_sketchPanel->findChild<SketchPanel*>())content->forgetUserPage();  // closed: nothing to come back to
+  });
   connect(m_sketch,&SketchEditor::workflowChanged,this,&DesignController::stateChanged);
   connect(m_sketch,&SketchEditor::changed,this,[this]{if(!m_sketch->active() && m_sketchPanel)m_sketchPanel->hide();});
 }

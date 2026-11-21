@@ -198,6 +198,30 @@ TEST(individual_sketch_exports_in_its_own_plane_even_when_hidden) {
   }
   ExportOptions wrong;wrong.select={id};CHECK_THROWS(export_selection(d,scene,f.dir/"bad.step",wrong));
 }
+// A 3D format with drawings and sketches among the objects (the whole document, or a selection of both kinds) writes the
+// solids and leaves the 2D objects out, counting them in "left_out"; only nothing but 2D objects is refused.
+TEST(three_d_formats_leave_drawings_and_sketches_out) {
+  Files f;auto d=Document::create();
+  const std::string box=commands::run("feature",{{"kind","box"},{"inputs",{{"length","20 mm"},{"width","10 mm"},{"height","5 mm"}}}},&d)["body_ids"][0];
+  const auto dxf=f.dir/"plan.dxf";
+  write_text_file(dxf,"0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nOutline\n10\n0\n20\n0\n11\n20\n21\n10\n0\nENDSEC\n0\nEOF\n");
+  import_file(d,dxf);
+  design::Sketch sk;sk.add_circle(sk.add_point(0,0),4);
+  commands::run("sketch",{{"name","Hole"},{"geometry",sk.to_json()}},&d);
+  const auto scene=resolve(d);
+  std::string drawing;for(const auto& id:scene.all_bodies())if(scene.node(id)->representation=="drawing2d")drawing=id;
+  CHECK(!drawing.empty() && !scene.sketches.empty());
+  for(const auto* format:{"step","stl","obj"}) {
+    ExportOptions whole;whole.format=format;whole.per_body=false;
+    const auto r=export_selection(d,scene,f.dir/(std::string("whole.")+format),whole);
+    CHECK_EQ(r.bodies,1);CHECK_EQ(r.to_json().value("left_out",0),1);
+    ExportOptions mixed=whole;mixed.select={box,scene.sketches[0].id,drawing};
+    const auto m=export_selection(d,scene,f.dir/(std::string("mixed.")+format),mixed);
+    CHECK_EQ(m.bodies,1);CHECK_EQ(m.to_json().value("left_out",0),2);
+  }
+  auto round=Document::create();import_file(round,f.dir/"whole.step");CHECK_EQ(resolve(round).all_bodies().size(),1u);
+  ExportOptions flat;flat.select={scene.sketches[0].id,drawing};CHECK_THROWS(export_selection(d,scene,f.dir/"flat.step",flat));
+}
 TEST(individual_solids_and_meshes_export_without_their_neighbors) {
   Files f;auto d=Document::create();Scene scene;
   cache_shape(d,"box",BRepPrimAPI_MakeBox(10,20,30).Shape());

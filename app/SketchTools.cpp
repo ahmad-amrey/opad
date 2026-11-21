@@ -17,7 +17,11 @@
 #include <TopoDS.hxx>
 #include <gp_Trsf.hxx>
 
+#include <QAbstractSpinBox>
+#include <QComboBox>
 #include <QInputDialog>
+#include <QScopeGuard>
+#include <QLineEdit>
 #include <QKeyEvent>
 #include <QSettings>
 #include <QApplication>
@@ -172,6 +176,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   const Hit hit = hitTest(s.u, s.v);
   if (m_tool.startsWith("c:")) return constraintClick(hit);
   if (m_tool == "dimension") return dimensionClick(hit, s.u, s.v);
+  if (m_tool == "measure") return measureClick(hit);
   if (m_tool == "offset" || m_tool == "node") {
     const Hit h=hitTest(s.u,s.v);
     if(h.kind!=Hit::None) {
@@ -630,6 +635,9 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
     return false;
   }
   const QString name = i18n::t(QString::fromLatin1(SkConstraint::type_name(type)));
+  // Least movement: what was picked last gives way first, then the other picks; the rest of the sketch keeps its place.
+  m_moves = ids.size() > 1 ? std::vector<std::vector<int>>{{ids.back()}, {ids.begin(), ids.end() - 1}} : std::vector<std::vector<int>>{ids};
+  const auto clearMoves = qScopeGuard([this] { m_moves.clear(); });
   return end_change(name.left(1).toUpper() + name.mid(1));
 }
 
@@ -686,7 +694,8 @@ QString SketchEditor::option(const QString& key, const QString& fallback) const 
 }
 
 QString SketchEditor::dimensionText(const SkConstraint& c) const {
-  QString value = c.type == CT::Angle ? units::compact(units::Kind::Angle, c.value * 180.0 / M_PI) : units::compact(units::Kind::Length, c.value);
+  // An offset's sign only says which side the kernel went: its label shows the distance.
+  QString value = c.type == CT::Angle ? units::compact(units::Kind::Angle, c.value * 180.0 / M_PI) : units::compact(units::Kind::Length, c.type == CT::Offset ? std::fabs(c.value) : c.value);
   if (c.type == CT::Radius) value = "R" + value;
   if (c.type == CT::Diameter) value = QString::fromUtf8("Ø") + value;
   const bool plain = plainValue(QString::fromStdString(c.expr));
@@ -695,7 +704,40 @@ QString SketchEditor::dimensionText(const SkConstraint& c) const {
   return value;
 }
 
+bool SketchEditor::offsetLeader(const SkConstraint& c, double& mu, double& mv, double& nu, double& nv) const {
+  if (c.type != CT::Offset || c.sources < 1 || c.sources >= int(c.refs.size())) return false;
+  const SkEntity* source = m_sk.entity(c.refs[0]);
+  if (!source) return false;
+  const auto from = sampled(*source);
+  if (from.empty()) return false;
+  mu = from[from.size() / 2].first;
+  mv = from[from.size() / 2].second;
+  double best = 1e300;
+  for (size_t i = size_t(c.sources); i < c.refs.size(); ++i)
+    if (const SkEntity* e = m_sk.entity(c.refs[i])) {
+      const auto pts = sampled(*e);
+      for (size_t k = 0; k < pts.size(); ++k) {  // the nearest point of each segment, not only of its ends
+        const auto [ax, ay] = pts[k];
+        const auto [bx, by] = k + 1 < pts.size() ? pts[k + 1] : pts[k];
+        const double dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        const double s = l2 < 1e-18 ? 0 : std::clamp(((mu - ax) * dx + (mv - ay) * dy) / l2, 0.0, 1.0);
+        const double x = ax + s * dx, y = ay + s * dy, d = std::hypot(x - mu, y - mv);
+        if (d < best) best = d, nu = x, nv = y;
+      }
+    }
+  return best < 1e299;
+}
+
 void SketchEditor::labelPosition(const SkConstraint& c, double& u, double& v) const {
+  if (c.type == CT::Offset) {  // past the offset, along the leader from its source: it follows the curves
+    double mu, mv, nu, nv;
+    u = v = 0;
+    if (!offsetLeader(c, mu, mv, nu, nv)) return;
+    const double off = 18 * m_viewport->pixelSize(), dx = nu - mu, dy = nv - mv, len = std::hypot(dx, dy);
+    u = nu + (len > 1e-9 ? dx / len : 0) * off;
+    v = nv + (len > 1e-9 ? dy / len : 1) * off;
+    return;
+  }
   if (c.pos[0] != 0 || c.pos[1] != 0) {
     u = c.pos[0];
     v = c.pos[1];
@@ -839,7 +881,7 @@ void SketchEditor::editDimension(int id, bool fresh) {
 
   m_dimEditing = id;
   m_dimFresh = fresh;
-  const QString shown = !c->expr.empty() ? QString::fromStdString(c->expr) : c->type == CT::Angle ? units::editable(units::Kind::Angle, c->value * 180 / M_PI) : units::editable(units::Kind::Length, c->value);
+  const QString shown = !c->expr.empty() ? QString::fromStdString(c->expr) : c->type == CT::Angle ? units::editable(units::Kind::Angle, c->value * 180 / M_PI) : units::editable(units::Kind::Length, c->type == CT::Offset ? std::fabs(c->value) : c->value);
   m_dimEdit->setText(shown);
   m_dimShown = shown;
   m_options["expression"] = shown;
@@ -883,23 +925,36 @@ void SketchEditor::commitDimensionEdit() {
     return rebuild();
   }
   // Signed distances and coordinates (gap log #11) may be negative; sizes may not.
-  const bool mayBeNegative = c->type == CT::Angle || ((c->type == CT::HDistance || c->type == CT::VDistance) && (c->is_signed || c->refs.size() == 1));
+  // An offset relationship: its box shows the distance, the side stays as it is (a negative number goes to the other side);
+  // an expression is taken as typed, sign and all.
+  const bool plain = plainValue(text);
+  const bool offset = c->type == CT::Offset;
+  if (offset && std::fabs(value) < 1e-9) {
+    emit status(tr("An offset needs a distance other than zero"));
+    return rebuild();
+  }
+  if (offset && plain && c->value < 0) value = -value;
+  const bool mayBeNegative = offset || c->type == CT::Angle || ((c->type == CT::HDistance || c->type == CT::VDistance) && (c->is_signed || c->refs.size() == 1));
   if (value <= 0 && !mayBeNegative) {
     emit status(tr("A dimension must be positive"));
     return rebuild();
   }
-  const bool plain = plainValue(text);
   const std::string expr = plain ? std::string() : c->type==CT::Angle?text.toStdString():sketch_parameters(m_sk,paramTable(m_doc->scene)).explicit_length(text.toStdString());
-  if (std::fabs(value - c->value) < 1e-12 && expr == c->expr && c->reference == (option("reference", "0") == "1")) return rebuild();
+  const bool reference = !offset && option("reference", "0") == "1";  // an offset always drives its curves
+  if (std::fabs(value - c->value) < 1e-12 && expr == c->expr && c->reference == reference) return rebuild();
   const int id = c->id;
   begin_change();
   c = m_sk.constraint(id);
   c->value = value;
   c->expr = expr;
-  c->reference = option("reference", "0") == "1";
+  c->reference = reference;
   if (c->reference) c->expr.clear();
   m_panelFieldsDirty = true;
-  if(end_change(tr("Dimension"))) {
+  // Least movement: an offset's copies move (its chain stays), any other dimension's last reference first, then the rest.
+  if (offset) m_moves = {{c->refs.begin() + std::min<std::ptrdiff_t>(c->sources, std::ptrdiff_t(c->refs.size())), c->refs.end()}};
+  else if (!c->refs.empty()) m_moves = {{c->refs.back()}, {c->refs.begin(), c->refs.end()}};
+  const auto clearMoves = qScopeGuard([this] { m_moves.clear(); });
+  if(end_change(offset ? tr("Offset distance") : tr("Dimension"))) {
     if(m_dimFresh && m_undo.size()>1)m_undo.pop_back(); // placement and its value are one user edit
     m_dimFresh=false;m_dimEditing=0;
     return toolPrompt();  // the next dimension (a refusal's reason stays on the status line)
@@ -1343,16 +1398,21 @@ void SketchEditor::mirrorSelection(int axisLine) {
 }
 
 // ---------------------------------------------------------------- offset, project
-// Offsets the selected chain of lines and arcs by a distance (negative = the other side). The copy is plain
-// geometry: dimension it, or constrain it to the original, as needed.
+// Offsets the selected chain of lines and arcs by a distance (negative = the other side). By default the copy is held to
+// the chain by an offset relationship (option "relation": rigid): the two keep their shape and move together, and a
+// double-click on its distance label makes the offset again at another distance. "none" makes plain curves.
 void SketchEditor::offsetSelection() {
   std::vector<int> ids;
   for(int id:m_sel)if(const auto* e=m_sk.entity(id);e && e->type!=ET::Point)ids.push_back(id);
   try {
     if(ids.empty())throw opad::Error("select a connected curve chain first");
-    const double distance=sketch_parameters(m_sk,paramTable(m_doc->scene)).length(option("distance","5 mm").toStdString());
+    const QString text=option("distance","5 mm");
+    const auto table=sketch_parameters(m_sk,paramTable(m_doc->scene));
+    const double distance=table.length(text.toStdString());
     const bool round=option("corners","round")=="round";
-    runSketchEdit(tr("Offset"),[ids,distance,round](Sketch& sk){offset_entities(sk,ids,distance,round);});
+    const bool hold=option("relation","rigid")=="rigid";
+    const std::string expr=plainValue(text)?std::string():table.explicit_length(text.toStdString());
+    runSketchEdit(tr("Offset"),[ids,distance,round,hold,expr](Sketch& sk){if(hold)offset_relationship(sk,ids,distance,round,expr);else offset_entities(sk,ids,distance,round);});
   }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
 }
 
@@ -1382,6 +1442,13 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
     // offers a tool window's keys to) were ambiguous, and neither ran.
     if(widget && key->key()==Qt::Key_Escape && !(key->modifiers()&~Qt::KeypadModifier) && widget->window()!=m_viewport->window() && widget->window()->findChild<SketchPanel*>()){
       key->accept();if(e->type()==QEvent::KeyPress)escape();return true;
+    }
+    // Shift+Enter there (a button had the keyboard, not a text field): apply and keep the tool, before the window's Repeat
+    // takes it (sketchkeys::keepsOnShiftEnter).
+    if(widget && (key->key()==Qt::Key_Return || key->key()==Qt::Key_Enter) && (key->modifiers()&~Qt::KeypadModifier)==Qt::ShiftModifier &&
+       widget->window()!=m_viewport->window() && widget->window()->findChild<SketchPanel*>() && !qobject_cast<QLineEdit*>(widget) &&
+       !qobject_cast<QAbstractSpinBox*>(widget) && !qobject_cast<QComboBox*>(widget) && sketchkeys::keepsOnShiftEnter(keyState())){
+      key->accept();if(e->type()==QEvent::KeyPress)done(true);return true;
     }
   }
   if (o == m_dimEdit && e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {

@@ -266,17 +266,29 @@ def main():
                 time.sleep(.1)
             raise AssertionError(status)
         subprocess.run([str(codex), "mcp", "add", "keep-other", "--", "unrelated-tool"], env=env, cwd=home, check=True, capture_output=True)
-        registration("check", "Not registered")
-        registration("connect", "Registered with Codex.")
-        config = json.loads(subprocess.run([str(codex), "mcp", "get", "opad", "--json"], env=env, cwd=home, check=True, capture_output=True).stdout)
-        assert Path(config["transport"]["command"]).resolve() == cli
-        assert config["transport"]["args"] == ["mcp", "--live", "--discovery", str(desktop.discovery).replace("\\", "/")]
-        registration("connect", "Already registered")
-        registration("remove", "registration removed")
+        def opad_entry():
+            config = json.loads(subprocess.run([str(codex), "mcp", "get", "opad", "--json"], env=env, cwd=home, check=True, capture_output=True).stdout)
+            args = config["transport"]["args"]
+            assert Path(config["transport"]["command"]).resolve() == cli, config
+            assert args[:3] == ["mcp", "--live", "--discovery"] and Path(args[3]).resolve() == Path(desktop.discovery).resolve(), config
+        registration("check", "Not connected")
+        registration("connect", "Connected to this OPAD")
+        opad_entry()
+        registration("connect", "Already connected")
+        registration("remove", "Removed.")
         subprocess.run([str(codex), "mcp", "get", "keep-other", "--json"], env=env, cwd=home, check=True, capture_output=True)
-        subprocess.run([str(codex), "mcp", "add", "opad", "--", "other-installation"], env=env, cwd=home, check=True, capture_output=True)
-        registration("check", "different installation")
+        # Registered for this program but an old discovery folder (a pre-0.9.0 copy): kept on Remove, replaced by Point it at this OPAD.
+        subprocess.run([str(codex), "mcp", "add", "opad", "--", str(cli), "mcp", "--live", "--discovery", str(root / "old-agent")], env=env, cwd=home, check=True, capture_output=True)
+        registration("check", "old data folder")
         registration("remove", "was not removed")
+        registration("point", "Now pointed at this OPAD")
+        opad_entry()
+        # Registered for a program that is gone: Point it at this OPAD or Remove.
+        subprocess.run([str(codex), "mcp", "remove", "opad"], env=env, cwd=home, check=True, capture_output=True)
+        subprocess.run([str(codex), "mcp", "add", "opad", "--", "other-installation"], env=env, cwd=home, check=True, capture_output=True)
+        registration("check", "program is missing")
+        registration("remove", "Removed.")
+        subprocess.run([str(codex), "mcp", "get", "keep-other", "--json"], env=env, cwd=home, check=True, capture_output=True)
         desktop.action("disconnect")
         dropped = client.raw("context")
         assert dropped["isError"] and dropped["structuredContent"]["error"]["code"] == "disconnected", dropped
@@ -286,7 +298,10 @@ def main():
         desktop.action("settings")
         time.sleep(.5)
         assert (desktop.control / "settings.png").exists()
-        print("Settings register/check/remove via real Codex CLI, preserve other servers, refuse foreign removal and disconnect live clients: PASS", flush=True)
+        desktop.action("settings", tab=2)
+        time.sleep(.5)
+        assert (desktop.control / "settings-connect.png").exists()
+        print("Settings register/check/point/remove via real Codex CLI, preserve other servers, refuse foreign removal and disconnect live clients: PASS", flush=True)
     finally:
         client.close()
         desktop.close()

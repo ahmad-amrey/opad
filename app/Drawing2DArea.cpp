@@ -184,6 +184,7 @@ class Drawing2DArea : public AreaController {
     m_layers = new LayersPanel(services());
     m_tool = new ToolPanel("layers", "layers", &Tokens::sel, tr("Layers"), m_layers, 460, services().window());
     m_tool->setDefaultWidth(460);
+    m_tool->setPersistent(true);  // changes apply at once: a tool never closes it
     m_tool->hide();
     services().addPanel(m_tool);
     connect(m_tool, &ToolPanel::visibilityChanged, this, [this](bool on) {

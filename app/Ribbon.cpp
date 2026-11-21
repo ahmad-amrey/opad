@@ -1,5 +1,6 @@
 #include "Ribbon.hpp"
 
+#include <QCoreApplication>
 #include <QAction>
 #include <QButtonGroup>
 #include <QFrame>
@@ -402,6 +403,14 @@ void RibbonBar::showWorkspaceMenu() {
 namespace {
 const QString kDrop = QString::fromUtf8(" ▾");
 constexpr int kInner = 2, kGap = 4;
+// A language's shorter label for a command on the ribbon only ("ribbon|<command id>" in its translation file: Arabic's
+// Design > Solid fits fully labelled at 1600 px); the menus, the palette and help keep the command's full name.
+void ribbonLabel(QAction* a) {
+  const QByteArray key = "ribbon|" + a->objectName().toUtf8();
+  static const char* const context = "i18n";  // i18n::t's (the translator ignores it); a constant: no tr() literal
+  const QString label = QCoreApplication::translate(context, key.constData());
+  if (label != QString::fromUtf8(key)) a->setIconText(label);
+}
 }  // namespace
 
 RibbonGroup::RibbonGroup(const RibbonLayout::Group& group, QWidget* parent) : QWidget(parent), m_title(group.title) {
@@ -417,6 +426,7 @@ RibbonGroup::RibbonGroup(const RibbonLayout::Group& group, QWidget* parent) : QW
   for (const RibbonLayout::Item& item : group.items) {
     QAction* a = item.action;
     if (!a) continue;
+    ribbonLabel(a);
     QToolButton* b = tool();
     if (QMenu* menu = a->menu()) {
       // A menu button drops the action's menu down itself. As the button's default action it showed Qt's fallback:

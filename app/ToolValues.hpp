@@ -24,6 +24,7 @@ class ToolValues : public QObject {
   static DynamicInput::Field box(const QString& key, const QString& label, const QString& value);  // such a box
   std::function<void(const QString& key, const QString& value)> edited;  // typed into a box, or the value before put back
   std::function<void()> commit;                                          // Enter in a box
+  bool shift = false;  // that Enter had Shift (keep a one-shot tool open), read in commit
   std::function<void()> escape;                                          // Esc with nothing typed left
   void setHandle(DimensionHandle* handle);  // takes the keys while it shows
   DynamicInput* input() const { return m_input; }

@@ -51,7 +51,7 @@ class DimensionHandle : public QWidget {
  signals:
   void valueChanged(const QString& expression);
   void extraEdited(const QString& key, const QString& value);
-  void accepted();  // Enter in a box: apply the operation
+  void accepted(bool shift);  // Enter in a box: apply the operation (shift: Shift+Enter, keep the tool open)
   void dragFinished();  // the arrow let go after a drag
  protected:
   void showEvent(QShowEvent*) override;

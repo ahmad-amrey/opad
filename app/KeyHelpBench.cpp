@@ -153,7 +153,7 @@ OPAD_BENCH(OPAD_BENCH_KEYHELP, keyhelp) {
     check(clips::resolvedKeys("view.home", 0.9) == QList<QStringList>({{help::title("view.home")}}) && !homeSteps.isEmpty() && clips::caption(homeSteps[0]) == chooseHome,
           "the library's Home clip: Home by its name, \"" + (homeSteps.isEmpty() ? QString() : clips::caption(homeSteps[0])) + "\"");
     const QString isolate = help::expand(help::find("view.isolate")->details);
-    check(!isolate.contains("()") && !isolate.contains(" (") && isolate.contains(help::title("view.unisolate")), "Isolate's details without Exit isolate's key: \"" + isolate + "\"");
+    check(!isolate.contains("()") && !isolate.contains(help::title("view.unisolate") + " (") && isolate.contains(help::title("view.unisolate")), "Isolate's details without Exit isolate's key: \"" + isolate + "\"");
     clips::Options o;
     o.rtl = rtl;
     clips::frame("view.fit", 1.0, {576, 324}, 1, o).save(prefix + ".library-fit.png");

@@ -374,6 +374,27 @@
     {"to": 4.8, "caption": "Type the value: the line follows"}
    ]
   },
+  {
+   "id": "sketch.measure", "duration": 4.4, "extent": [-30, -14, 30, 14],
+   "setup": {"curves": [{"line": [[-20, -6], [12, -6]]}, {"point": [0, 6]}]},
+   "expect": {"entities": {"line": 1, "point": 1}, "points": [[-20, -6], [12, -6], [0, 6]], "status": "Distance", "tool": "measure",
+              "during": [{"t": 1.6, "readouts": ["Length 32"], "entities": {"line": 1, "point": 1}}, {"t": 3.0, "readouts": ["Distance 12"], "preview": {"measure": 1}}]},
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "poly", "points": [[-20, -6], [12, -6]], "color": "glow", "width": 6.5, "from": 0.5, "to": 0.9, "fade": 0.08},
+    {"el": "poly", "dots": true, "points": [[-20, -6], [12, -6]], "color": "fg", "keys": [[0.9, {"color": "amber"}]]},
+    {"el": "poly", "dots": true, "points": [[0, 6], [0, 6]], "color": "fg", "keys": [[2.0, {"color": "amber"}]]},
+    {"el": "label", "at": [-4, -2.5], "value": "32 mm", "size": 8, "color": "amber", "from": 0.95, "to": 2.0},
+    {"el": "poly", "points": [[0, 6], [0, -6]], "color": "amber", "dash": true, "from": 2.05},
+    {"el": "label", "at": [5, 0], "value": "12 mm", "size": 8, "color": "amber", "from": 2.05},
+    {"use": "sketchDraw", "args": {"badge": "distance", "keys": [[0, {"pos": [-24, 8]}], [0.9, {"pos": [-6, -6], "click": 1}], [1.9, {"pos": [0, 6]}], [2.0, {"pos": [0, 6], "click": 1}], [2.6, {"pos": [0, 6]}], [3.6, {"pos": [-20, 9]}]]}}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Click a curve: its sizes"},
+    {"to": 2.1, "caption": "Click another: the distance between them"},
+    {"to": 4.4, "caption": "Nothing is added to the sketch"}
+   ]
+  },
   {"id": "sketch.c.horizontal",
    "setup": {"curves": [{"line": [[-14, -7], [12, 3]]}]},
    "expect": {"entities": {"line": 1}, "constraints": {"horizontal": 1}, "points": [[-14, -2], [12, -2]]},

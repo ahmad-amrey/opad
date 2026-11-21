@@ -82,6 +82,9 @@ inline const std::vector<Tool>& tools() {
       {"node", tr("Spline node weights"), {tr("Pick a spline node"), tr("Set the weights and apply")}},
       {"copybase", tr("Copy with base point"), {tr("Select the curves to copy"), tr("Click the base point")}, tr("then Paste ({key:edit.paste}) places them by it")},
       {"paste", tr("Paste"), {tr("Click where the base point goes")}, tr("typed: X and Y, or @ΔX,ΔY from where they were copied")},
+      // Inspect
+      {"measure", tr("Measure"), {tr("Pick a point or a curve"), tr("Pick another to measure between them")},
+       tr("nothing is added to the sketch · a third pick starts again · Dimension ({key:sketch.dimension}) adds a dimension")},
       // Constrain
       {"dimension", tr("Dimension"), {tr("Pick a line, a circle, an arc or two points"), tr("Click where the value sits"), tr("Set the value and apply")}},
       {"c:horizontal", tr("Horizontal"), {tr("Pick a line or a point"), tr("Pick a second point")}},

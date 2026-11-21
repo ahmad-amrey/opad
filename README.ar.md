@@ -50,8 +50,9 @@
 | لينكس آخر (64 بت) | [OPAD بصيغة AppImage](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-linux-x86_64.AppImage) | اسمح بتشغيله كبرنامج (من خصائص الملف، أو `chmod +x`)، ثم انقر عليه نقرًا مزدوجًا. |
 
 **عند التشغيل أول مرة:** هذه النسخ غير موقّعة رقميًا بعد، لذا يسألك النظام أولًا. في ويندوز، إذا ظهرت رسالة
-"Windows protected your PC" فاختر *More info* ثم *Run anyway*. وفي Mac، انقر بالزر الأيمن على OPAD في مجلد التطبيقات،
-واختر *Open* ثم *Open* مرة أخرى.
+"Windows protected your PC" فاختر *More info* ثم *Run anyway*. وفي Mac، انقر نقرًا مزدوجًا على OPAD في مجلد التطبيقات؛
+وعندما يقول macOS إنه لم يتمكن من التحقق من OPAD، اختر *Done*، ثم افتح *System Settings > Privacy & Security* واختر
+*Open Anyway* بجانب الرسالة الخاصة بـ OPAD وأكّد. يكفي ذلك مرة واحدة.
 
 الجديد في كل نسخة، والنسخ السابقة، وقيم التحقق موجودة في [صفحة الإصدارات](https://github.com/ahmad-amrey/opad/releases).
 ولبناء OPAD بنفسك، انظر [التثبيت](#التثبيت).

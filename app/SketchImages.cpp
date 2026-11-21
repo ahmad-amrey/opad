@@ -211,7 +211,7 @@ bool SketchEditor::applyImageTool() {
       m_editJob=m_jobs->async(tr("Exporting sketch vectors"),[path,sketch](Progress progress){
         if(progress.cancelled())return;
         opad::Document doc=opad::Document::create();doc.append(make_sketch_op("Sketch",{{"base","xy"},{"frame",opad::Frame{}.to_json()}},sketch->to_json()));opad::ExportOptions options;options.format=path.endsWith(".dxf",Qt::CaseInsensitive)?"dxf":"svg";opad::export_drawing(doc,opad::resolve(doc),std::filesystem::path(path.toStdWString()),options);
-      },[this,session=m_session](bool ok,const QString& error){if(!m_active||session!=m_session)return;m_editJob=nullptr;emit status(ok?tr("Sketch exported."):error);});
+      },[this,session=m_session,closes=m_applyCloses](bool ok,const QString& error){if(!m_active||session!=m_session)return;m_editJob=nullptr;if(ok){m_applyCloses=closes;applied();}emit status(ok?tr("Sketch exported."):error);});  // after Select's prompt
     }
   }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
   return true;

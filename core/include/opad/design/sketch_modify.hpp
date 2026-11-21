@@ -26,7 +26,13 @@ struct SketchAlign { int reference=0,pivot=0,target=0; AlignTo to=AlignTo::Verti
 SketchTransform align_transform(const Sketch& sk,const SketchAlign& align);
 std::vector<int> align_entities(Sketch& sk,const std::vector<int>& ids,const SketchAlign& align);
 std::vector<int> append_sketch_shape(Sketch& sk,const TopoDS_Shape& shape,const Frame& frame={},bool construction=false,bool fixed=false);
-void offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round);
+// The kernel's offset of the connected chain `ids` (lines, arcs, splines) by `distance` (the sign picks the side), as new
+// plain curves; returns them.
+std::vector<int> offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round);
+// The same, held by an offset relationship (SkConstraint::Type::Offset, `expr` kept as typed): the chain and its offset keep
+// their shape and move and turn together, and a new value of the relationship (double-click its label, or an expression's
+// parameter) makes the offset again at that distance (refresh_offsets). Returns the relationship.
+int offset_relationship(Sketch& sk,const std::vector<int>& ids,double distance,bool round,const std::string& expr={});
 int heal_endpoints(Sketch& sk,double tolerance);
 int heal_to_curves(Sketch& sk,double tolerance);
 void split_entity(Sketch& sk,int entity,double x,double y);

@@ -1110,5 +1110,8 @@
  "Press {fixed:enter}: they are held together": "اضغط {fixed:enter}: تُربط معًا",
  "Drag any point: the whole shape moves and turns as one": "اسحب أي نقطة: يتحرك الشكل كله ويدور كقطعة واحدة",
  "Align the line": "محاذاة الخط",
- "Rigid": "صلب"
+ "Rigid": "صلب",
+ "Click a curve: its sizes": "انقر منحنى: مقاساته",
+ "Click another: the distance between them": "انقر آخر: المسافة بينهما",
+ "Nothing is added to the sketch": "لا يُضاف شيء إلى الرسم التخطيطي"
 }
