@@ -459,5 +459,6 @@
  "Double-click to change the value · {fixed:del} deletes it when selected": "انقر نقرًا مزدوجًا لتغيير القيمة · يحذفه {fixed:del} عند تحديده",
  "Click to select it · {fixed:del} deletes it when selected": "انقر لتحديده · يحذفه {fixed:del} عند تحديده",
  "Pick another to measure between them": "اختر آخر للقياس بينهما",
- "nothing is added to the sketch · a third pick starts again · Dimension ({key:sketch.dimension}) adds a dimension": "لا يُضاف شيء إلى الرسم التخطيطي · الاختيار الثالث يبدأ من جديد · البُعد ({key:sketch.dimension}) يضيف بُعدًا"
+ "nothing is added to the sketch · a third pick starts again · Dimension ({key:sketch.dimension}) adds a dimension": "لا يُضاف شيء إلى الرسم التخطيطي · الاختيار الثالث يبدأ من جديد · البُعد ({key:sketch.dimension}) يضيف بُعدًا",
+ "The connected chain: %1 curves selected": "السلسلة المتصلة: حُدد %1 من المنحنيات"
 }

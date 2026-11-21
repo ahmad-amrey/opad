@@ -1456,12 +1456,23 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
   emit changed();
 }
 
-void SketchEditor::sketchDoubleClick(double u, double v) {
+void SketchEditor::sketchDoubleClick(double u, double v, Qt::KeyboardModifiers mods) {
   if (!m_active) return;
   if (m_tool == "line" || (m_tool == "spline" && !m_chain.empty())) return finishChain();
   const Hit h = hitTest(u, v);
   if((m_tool=="select" || m_tool=="spline") && h.kind==Hit::Point) {m_sel={h.id};editSplineNode();return;}
-  if (h.kind == Hit::Dimension) editDimension(h.id, false);
+  if (h.kind == Hit::Dimension) return editDimension(h.id, false);  // a dimension's value, an offset's distance: edited
+  // A curve: the whole chain connected to it through shared ends, as other CAD programs select it; Shift or Ctrl adds the
+  // chain to the selection.
+  if (m_tool == "select" && h.kind == Hit::Entity) {
+    if (!(mods & (Qt::ShiftModifier | Qt::ControlModifier))) m_sel.clear();
+    for (int id : connected_entities(m_sk, {h.id}))
+      if (selectable(id) && std::find(m_sel.begin(), m_sel.end(), id) == m_sel.end()) m_sel.push_back(id);
+    m_dragging = m_boxSelecting = false;
+    emit status(tr("The connected chain: %1 curves selected").arg(m_sel.size()));
+    rebuild();
+    emit changed();
+  }
 }
 
 // At the shortcut override (from the view, a tool panel or the main window): which keys are the sketch's, so no window
@@ -1920,6 +1931,13 @@ size_t SketchEditor::sketchSolid(const QColor& c) const {
   size_t n = 0;
   if (!m_prs.IsNull())
     for (const auto& s : static_cast<const SketchPrs*>(m_prs.get())->solid) n += s.c == c;
+  return n;
+}
+
+size_t SketchEditor::sketchThin(const QColor& c) const {
+  size_t n = 0;
+  if (!m_prs.IsNull())
+    for (const auto& s : static_cast<const SketchPrs*>(m_prs.get())->thin) n += s.c == c;
   return n;
 }
 
