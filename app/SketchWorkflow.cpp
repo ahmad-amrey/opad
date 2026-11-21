@@ -561,6 +561,21 @@ void SketchEditor::scheduleToolPreview() {
   }
   else m_toolPreviewTimer.stop();
 }
+// The selection to offset is one closed chain (every end shared by two of its curves, or a circle, an ellipse, a closed
+// spline): it grows outward for a positive distance; an open one offsets to one side.
+bool SketchEditor::offsetClosed() const {
+  std::map<int,int> ends;
+  bool any=false;
+  for(int id:m_sel)if(const auto* e=m_sk.entity(id)) {
+    if(e->type==SkEntity::Type::Circle || e->type==SkEntity::Type::Ellipse){any=true;continue;}
+    if(e->type!=SkEntity::Type::Line && e->type!=SkEntity::Type::Arc && e->type!=SkEntity::Type::Spline)continue;
+    if(e->type==SkEntity::Type::Spline && (e->periodic || e->p.front()==e->p.back())){any=true;continue;}
+    ++ends[e->type==SkEntity::Type::Arc?e->p[1]:e->p.front()];++ends[e->type==SkEntity::Type::Arc?e->p[2]:e->p.back()];
+  }
+  if(ends.empty())return any;
+  return std::all_of(ends.begin(),ends.end(),[](const auto& end){return end.second%2==0;});
+}
+
 void SketchEditor::updateDimensionHandle() {
   if(!m_active || !m_visible || m_tool!="offset" || m_sel.empty()){m_dimensionHandle->hide();return;}
   if(m_dimensionHandle->interacting())return;
@@ -602,6 +617,10 @@ void SketchEditor::updateDimensionHandle() {
       if(inside){dx=-dx;dy=-dy;}
     }
   }
+  // An open selection offsets to one side only (offset_side): the arrow points to the side the pointer is on and a positive
+  // distance goes that way. A closed one (a loop, a circle) keeps its arrow outward.
+  if(!offsetClosed() && m_haveCursor && (m_cursor.u-x)*dx+(m_cursor.v-y)*dy<0){dx=-dx;dy=-dy;}
+  m_offsetArrow={x,y,dx,dy};
   try {
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
     const auto text=option("distance","5 mm");const double value=sketch_parameters(m_sk,ParamTable(defs,m_doc->scene.units)).length(text.toStdString());

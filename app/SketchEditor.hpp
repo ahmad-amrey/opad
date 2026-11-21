@@ -418,6 +418,8 @@ class SketchEditor : public QObject, public SketchInput {
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void updateDimensionHandle();
+  bool offsetClosed() const;  // the selection to offset is a closed chain (outward for a positive distance), else one side
+  struct OffsetArrow { double x = 0, y = 0, dx = 1, dy = 0; } m_offsetArrow;  // where the offset's arrow stands, its way
   void referenceHover();
   void pickReference();
   // The reference a replayed press is on (ClipReplayBench.cpp: a clip's click on a body, found where the clip shows it), which

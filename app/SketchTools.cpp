@@ -1408,8 +1408,13 @@ void SketchEditor::offsetSelection() {
     if(ids.empty())throw opad::Error("select a connected curve chain first");
     const QString text=option("distance","5 mm");
     const auto table=sketch_parameters(m_sk,paramTable(m_doc->scene));
-    const double distance=table.length(text.toStdString());
+    double distance=table.length(text.toStdString());
     const bool round=option("corners","round")=="round";
+    // An open chain: one side only, the arrow's (the pointer's) for a positive distance, the other for a negative one.
+    if(!offsetClosed()) {
+      updateDimensionHandle();
+      distance=offset_side(m_sk,ids,distance,round,m_offsetArrow.x+m_offsetArrow.dx*distance,m_offsetArrow.y+m_offsetArrow.dy*distance);
+    }
     const bool hold=option("relation","rigid")=="rigid";
     const std::string expr=plainValue(text)?std::string():table.explicit_length(text.toStdString());
     runSketchEdit(tr("Offset"),[ids,distance,round,hold,expr](Sketch& sk){if(hold)offset_relationship(sk,ids,distance,round,expr);else offset_entities(sk,ids,distance,round);});

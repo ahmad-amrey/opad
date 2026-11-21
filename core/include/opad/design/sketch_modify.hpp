@@ -29,6 +29,10 @@ std::vector<int> append_sketch_shape(Sketch& sk,const TopoDS_Shape& shape,const 
 // The kernel's offset of the connected chain `ids` (lines, arcs, splines) by `distance` (the sign picks the side), as new
 // plain curves; returns them.
 std::vector<int> offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round);
+// An open chain offsets to one side only, a parallel copy (no end caps, never closed): the signed distance (|distance|
+// with the kernel's sign) whose copy lies nearer (tx, ty), the side the pointer is on. A closed chain: its kernel sign as
+// given is kept by the caller (positive grows outward).
+double offset_side(const Sketch& sk,const std::vector<int>& ids,double distance,bool round,double tx,double ty);
 // The same, held by an offset relationship (SkConstraint::Type::Offset, `expr` kept as typed): the chain and its offset keep
 // their shape and move and turn together, and a new value of the relationship (double-click its label, or an expression's
 // parameter) makes the offset again at that distance (refresh_offsets). Returns the relationship.
