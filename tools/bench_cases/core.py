@@ -16,6 +16,9 @@ def newer_file(root, document):
 
 
 CASES = [
+    # A new empty .opad with plain --bench-select (no other switch): nothing to select, hide or pick, and it ends quietly
+    # (an appearance op with an empty target used to escape the event loop and abort).
+    ("select-empty", lambda root, document: document("select-empty"), {}),
     # The extension seams (UI-119), run in Arabic so the translation fragments are looked up through tr().
     ("seams", "empty", {"OPAD_BENCH_SEAMS": "1", "OPAD_LANG": "ar"}),
     # The feature-area hooks (AreaController), browser providers and property sections through a probe area; in Arabic

@@ -538,7 +538,8 @@ void MainWindow::runBench() {
     m_viewport->fitSelection();
     trace::log(QStringLiteral("bench: camera after fitSelection %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
     m_viewport->fitAll();
-    m_viewport->fitNodes(m_doc->scene.bodies_under(m_doc->scene.roots.front()).size() > 1 ? std::vector<std::string>{m_doc->scene.bodies_under(m_doc->scene.roots.front()).front()} : m_doc->scene.roots);
+    if (!m_doc->scene.roots.empty())  // an empty document: nothing to fit
+      m_viewport->fitNodes(m_doc->scene.bodies_under(m_doc->scene.roots.front()).size() > 1 ? std::vector<std::string>{m_doc->scene.bodies_under(m_doc->scene.roots.front()).front()} : m_doc->scene.roots);
     trace::log(QStringLiteral("bench: camera after fitNodes(first body) %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
     // Phase 2: the deepest leaf, selected from the browser as a user would, then Fit selection.
     std::string leaf;
@@ -546,6 +547,11 @@ void MainWindow::runBench() {
     for (const auto& b : m_doc->scene.all_bodies()) {
       const size_t d = m_doc->scene.path_to(b).size();
       if (d > depth) { depth = d; leaf = b; }
+    }
+    if (leaf.empty()) {  // an empty document (a new .opad): nothing to select, hide or pick; it ends quietly (gui case select-empty)
+      trace::log(QStringLiteral("bench: select: the document has no bodies, nothing to select PASS"));
+      QTimer::singleShot(1000, qApp, &QCoreApplication::quit);
+      return;
     }
     auto conn2 = std::make_shared<QMetaObject::Connection>();
     *conn2 = connect(m_viewport, &Viewport::selectionApplied, this, [this, conn2, leaf] {
@@ -558,14 +564,20 @@ void MainWindow::runBench() {
       m_viewport->benchPick();
       if (!qEnvironmentVariableIsSet("OPAD_BENCH_FILTER")) m_section->beginPick();  // then a face pick must set the section plane (logged as "section from face")
       // Undo/redo: hide the leaf, undo back to the saved state (clean again), redo.
-      const size_t n0 = m_doc->doc.ops.size();
-      m_doc->run("appearance", opad::json{{"target", leaf}, {"visible", false}});
-      const bool d1 = m_doc->doc.dirty, u1 = m_doc->canUndo();
-      m_doc->undo();
-      const bool d2 = m_doc->doc.dirty;
-      const size_t n2 = m_doc->doc.ops.size();
-      m_doc->redo();
-      trace::log(QStringLiteral("bench: undo/redo: after hide dirty=%1 canUndo=%2; after undo dirty=%3 ops %4->%5; after redo dirty=%6 ops %7 canRedo=%8").arg(d1).arg(u1).arg(d2).arg(n0).arg(n2).arg(m_doc->doc.dirty).arg(m_doc->doc.ops.size()).arg(m_doc->canRedo()));
+      // An empty document has no leaf to hide: skipped (an op refused in this slot would escape the event loop and abort).
+      if (leaf.empty()) trace::log(QStringLiteral("bench: undo/redo: skipped, the document has no bodies"));
+      else try {
+        const size_t n0 = m_doc->doc.ops.size();
+        m_doc->run("appearance", opad::json{{"target", leaf}, {"visible", false}});
+        const bool d1 = m_doc->doc.dirty, u1 = m_doc->canUndo();
+        m_doc->undo();
+        const bool d2 = m_doc->doc.dirty;
+        const size_t n2 = m_doc->doc.ops.size();
+        m_doc->redo();
+        trace::log(QStringLiteral("bench: undo/redo: after hide dirty=%1 canUndo=%2; after undo dirty=%3 ops %4->%5; after redo dirty=%6 ops %7 canRedo=%8").arg(d1).arg(u1).arg(d2).arg(n0).arg(n2).arg(m_doc->doc.dirty).arg(m_doc->doc.ops.size()).arg(m_doc->canRedo()));
+      } catch (const std::exception& e) {
+        trace::log(QStringLiteral("bench: undo/redo: refused: %1").arg(QString::fromUtf8(e.what())));
+      }
       QTimer::singleShot(1500, this, [this] { m_viewport->fitAll(); m_viewport->benchPick(); });  // the board: a planar face at the centre
       if (const QByteArray shot = qgetenv("OPAD_BENCH_SHOT"); !shot.isEmpty()) m_viewport->benchShot(QString::fromLocal8Bit(shot));
       // The widget side of the window (ribbon, docks, splitters; the native viewport comes out blank): a UI check
