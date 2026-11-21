@@ -106,6 +106,48 @@ void SketchEditor::benchChainDim() {
     }
     const SkConstraint* set = m_sk.constraint(made);
     check(set && std::fabs(set->value - 40) < 1e-6 && drawnWhole() >= 14, "Enter sets it to 40 mm, drawn as before");
+
+    // The two-pick dimensions, each drawn whole (dimension line, four arrow strokes, extension lines where the label lies past
+    // the curves) while placed, while typed and after Enter, not just the value: two parallel lines (the L's sides make the
+    // user's U), a point and a line, the angle between two lines.
+    auto onLine = [this, at](int line, double t) {
+      const SkEntity* e = m_sk.entity(line);
+      const SkPoint *p = e ? m_sk.point(e->p[0]) : nullptr, *q = e ? m_sk.point(e->p[1]) : nullptr;
+      return p && q ? at(p->x + t * (q->x - p->x), p->y + t * (q->y - p->y)) : QPoint();
+    };
+    auto pointAt = [this, at](int id) { const SkPoint* p = m_sk.point(id); return p ? at(p->x, p->y) : QPoint(); };
+    auto twoPicks = [&](const QString& what, const QPoint& first, const QPoint& second, const QPoint& label, size_t least, double typed, bool angle) {
+      const size_t before = drawnWhole();
+      setTool("dimension");
+      click(first);
+      click(second);
+      mouse(QEvent::MouseMove, label + QPoint(6, 6), Qt::NoButton, Qt::NoButton);
+      mouse(QEvent::MouseMove, label, Qt::NoButton, Qt::NoButton);
+      const size_t placing = sketchThin(pending);
+      check(m_placingDim && m_pendingDim.type == (angle ? SkConstraint::Type::Angle : SkConstraint::Type::Distance) && placing >= least,
+            QString("%1: placing it draws the whole dimension at the pointer (%2 lines and arrow strokes, %3 wanted)").arg(what).arg(placing).arg(least));
+      click(label);
+      const int id = m_dimEditing;
+      const bool box = m_dimEdit && m_dimEdit->isVisible() && id;
+      check(box && drawnWhole() >= before + least, QString("%1: placed, the value box opens and it stays drawn whole (%2 new strokes)").arg(what).arg(drawnWhole() - before));
+      if (box) {
+        m_dimEdit->setFocus();
+        m_dimEdit->selectAll();
+        const QString text = QString::number(typed);
+        for (const QChar ch : text) key(Qt::Key_0 + ch.digitValue(), {}, QString(ch));
+        check(drawnWhole() >= before + least, QString("%1: typing %2 keeps it drawn (%3 new strokes)").arg(what, m_dimEdit->text()).arg(drawnWhole() - before));
+        key(Qt::Key_Return);
+      }
+      const SkConstraint* k = m_sk.constraint(id);
+      const double value = k ? (angle ? k->value * 180 / M_PI : k->value) : 0;
+      check(k && std::fabs(value - typed) < 1e-6 && drawnWhole() >= before + least,
+            QString("%1: Enter sets it to %2 and it stays drawn whole (%3 new strokes)").arg(what).arg(value).arg(drawnWhole() - before));
+    };
+    // The L's two parallel sides, the label past their ends on the right: the dimension line, four arrow strokes and two
+    // extension lines; then between them: no extension lines needed.
+    twoPicks("two parallel lines", onLine(l1, 0.2), onLine(l3, 0.8), at(48, 10), 7, 25, false);
+    twoPicks("a point and a line", pointAt(a), onLine(lone, 0.6), at(-12, -6), 6, 15, false);
+    twoPicks("two lines at an angle", onLine(l1, 0.4), onLine(l2, 0.5), at(22, 6), 28, 90, true);
     trace::log(QString("bench: sketch chain dim: chains and the live dimension %1").arg(*ok ? "PASS" : "FAIL"));
     QCoreApplication::exit(*ok ? 0 : 2);
   });

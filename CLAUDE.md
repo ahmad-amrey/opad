@@ -255,8 +255,9 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   dimension's value (an offset's distance too) it opens the value box, as before. Offset of an open chain goes to one side
   only, a parallel copy (`offset_into`: the kernel's open result, `BRepOffsetAPI_MakeOffset(..., IsOpenResult)`; collinear
   lines by hand, the kernel finds no plane for them): the arrow points to the pointer's side and `offset_side` picks the
-  kernel sign whose copy lies on the arrow's side for the distance (negative: the other). Bench sketch-chaindim (also the
-  dimension drawn whole while placed and typed), `ctest -R sketch-offset`.
+  kernel sign whose copy lies on the arrow's side for the distance (negative: the other). Bench sketch-chaindim (also each
+  dimension kind drawn whole, its lines, arrows and extension lines, while placed, typed and after: a line, two
+  parallel lines, a point and a line, an angle), `ctest -R sketch-offset`.
 - A refused sketch change says why where the user looks: `SketchEditor::refused` (a toast, through `DesignController::notice`)
   besides the status line (a solve refused in `end_change`, a Sketch fillet that does not fit). Sketch fillet names its
   reason (`fillet_problem`: fewer or more than two curves ending at the point, a spline, a tangent join, a radius too big with
