@@ -599,6 +599,15 @@ configure, ccache saved `always()`; PR caches are PR-scoped, so `warm-*` jobs bu
 reused a build. Actions pinned by SHA (update with the version comment). For each release write the changelog section
 (for users: added, changed, fixed, notes; the opening sentences are the update notice's summary). The workflow file is
 not called build*.yml: `.gitignore`'s `build*` would hide it; public docs need a `!/docs/<name>` line there.
+Traps met on the UCRT64 runner (GCC 16, mingw-w64 v14, Qt 6.12 static): GCC 16 -O3 builds an OCCT that faults in
+`Extrema_ExtCC::Perform` under every solid classification, so `occt_static.cmake` builds it `-O2 -fno-strict-aliasing`
+under GCC >= 16; GCC 16 refuses Qt's `QDebug << json` meta-type probe (Windows' incomplete `MSG`), so `opad/json.hpp`
+answers it false in Windows Qt code; `qt6-static` names none of the libraries its CMake configs look for (webp, tiff,
+brotli... in `MSYS2_PACKAGES`), and a missing one used to skip the app silently: CI configures with `OPAD_REQUIRE_APP=ON`;
+MSYS2's git answers with `/tmp/...` paths, so the tests take Git for Windows (`/c/Program Files/Git/cmd` on PATH); the
+static exe links the offscreen platform (askpass in headless tests); `single_check.cmake` allows `dnsapi`/`mscms` (Qt
+6.12). Test programs keep their symbols in the static build and `check.hpp` flushes after each case, so a crash shows its
+case and gdb's backtrace (the "Backtraces of the failed tests" step).
 
 ## Update check (`app/UpdateCheck.*`, `app/UpdatesArea.cpp`)
 
