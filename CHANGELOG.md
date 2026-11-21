@@ -8,7 +8,8 @@ for the people using OPAD, not as a commit log.
 ## [0.10.0] - 2026-11-21
 
 Sketching gets steadier and quicker: adding a constraint moves only what it names, offsets stay tied to their curves,
-D measures without adding anything, and tools used once get out of the way.
+D measures without adding anything, and tools used once get out of the way. Connecting Claude or Codex is now a few
+clicks, step by step.
 
 ### Added
 
@@ -20,6 +21,11 @@ D measures without adding anything, and tools used once get out of the way.
   or two for the distance or angle between them. Nothing is added to the sketch. Outside a sketch, D is still Distance.
 - **Hover a constraint or a dimension to see what it is.** The status bar names it at once ("Horizontal constraint",
   "Distance dimension: 32 mm"), and a tooltip adds what it holds, what it is on, and what a click or double-click does.
+- **Connect an AI client, step by step.** With no AI client connected, the AI chip in the status bar opens *Connect an
+  AI client*: one click registers OPAD in Claude Code, Claude Desktop or Codex. Each client shows whether it is
+  connected, not found, registered for another or older OPAD, or pointing at a program that is gone, and *Point it at
+  this OPAD* fixes the last two. Then restart the client, allow access for your document, and ask the AI with the
+  ready-made prompt.
 
 ### Changed
 
