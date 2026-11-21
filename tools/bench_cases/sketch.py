@@ -60,6 +60,9 @@ CASES = [
     # A constraint added through the tool (Coincident: a short line's end onto a profile's bottom edge) and a dimension
     # typed in its box move only what they name and what must follow (SolveOptions::moves, SketchMovementBench.cpp).
     ("sketch-movement", "empty", {"OPAD_BENCH_SKETCH_MOVEMENT": "{prefix}"}),
+    # Sketch fillet on a drawing-like profile (SketchFilletBench.cpp): an upright line with its dimension meeting a long arc,
+    # a construction line ending there, rounded by a click; two ends only held together: the click says why, in a toast too.
+    ("sketch-fillet", "empty", {"OPAD_BENCH_SKETCH_FILLET": "{prefix}"}),
     # Using a tool never closes Section (it stays beside Distance's and a feature's panel, not over them); the Note
     # editor's Shift+Enter is a new line in its text, else Save and another note (never Repeat); a footer that says Enter
     # is pressed by Enter and Shift+Enter in the view, and no plain Enter there is Repeat while a tool's panel is shown.
