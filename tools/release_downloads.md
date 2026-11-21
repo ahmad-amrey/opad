@@ -17,4 +17,5 @@ program. `opad-cli-windows-x64.exe` is the command-line tool. `SHA256SUMS.txt` h
 `THIRD-PARTY-NOTICES-*.txt` files list the libraries each package carries and their licences.
 
 **First start of an unsigned build.** Windows may show "Windows protected your PC": choose *More info*, then *Run
-anyway*. macOS may say the app cannot be checked: right-click OPAD in Applications, choose *Open*, then *Open* again.
+anyway*. macOS 15 and later say Apple could not verify OPAD: choose *Done*, open *System Settings > Privacy &
+Security*, choose *Open Anyway* next to the message about OPAD and confirm (once).
