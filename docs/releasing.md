@@ -27,7 +27,7 @@ development build shows as its notes; a release turns it into `## [X.Y.Z] - YYYY
 | Event | Version checks | Builds, unit tests, install tests | Publishes |
 |---|---|---|---|
 | Pull request into `dev` | yes; says what merging it publishes | Windows, Linux, macOS | nothing |
-| Push to `dev` (a merged pull request) | yes | only if this exact code was not built already (below) | a **development build**: pre-release `dev-<build>`; the **release candidate** when the version is new |
+| Push to `dev` (a merged pull request) | yes | only if this exact code was not built already (below) | a **development build**: pre-release `vX.Y.Z-dev.<build>`; the **release candidate** `vX.Y.Z-rc.<build>` when the version is new |
 | *Promote dev to main* | `dev`'s commit passed `Tested`, its version is new, `main` is in `dev`'s history | none (it only moves `main`) | nothing by itself |
 | Push to `main` (the promotion) | yes | none: the commit is `dev`'s, already built | the **release** `vX.Y.Z`, from the release candidate's very packages |
 | Pull request into `main` (a hotfix only) | yes; "Merging this pull request publishes OPAD X.Y.Z" | Windows, Linux, macOS | nothing (the merge publishes) |
@@ -53,7 +53,11 @@ and passed (or this code was already built and passed, below); it fails when any
 
 ## Development builds and the release candidate
 
-Each push to `dev` publishes a GitHub **pre-release** tagged `dev-<build>`, with the same files (under the same names)
+Each push to `dev` publishes a GitHub **pre-release** tagged with a SemVer pre-release version: `vA.B.C-dev.<build>`
+for a development build (A.B.C is the next patch after the released version on `dev`) and `vX.Y.Z-rc.<build>` for the
+release candidate of an unreleased X.Y.Z, so `0.10.0 < 0.10.1-dev.20 < 0.10.1-rc.25 < 0.10.1`. Only the tag carries the
+label: the binaries say `X.Y.Z (build N)`, since a release candidate's binaries become the release unchanged. Each has
+the same files (under the same names)
 as a release, notes from `## [Unreleased]` and GitHub's list of the pull requests merged since the latest release, and a
 marker line the update check reads (`<!-- opad-build: N; opad-version: X.Y.Z -->`). A pre-release is never the
 "latest" release: the README's download links and copies on the default *Stable* channel never see it. Copies set to

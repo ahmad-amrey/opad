@@ -173,7 +173,8 @@ class HelpArea : public AreaController {
   // What Report a problem tells about OPAD and this computer: versions, screens, settings that change behaviour, the
   // document's kind and size (never its path or name), the tool running.
   QStringList facts() const {
-    QStringList f{"OPAD " + QString::fromStdString(opad::version_string()),
+    QStringList f{"OPAD " + QString::fromStdString(opad::version_string()) +
+                      (opad::build_number() > 0 ? QString(" build %1 %2").arg(opad::build_number()).arg(QString::fromStdString(opad::build_commit()).left(12)) : QString()),
                   QString("%1 (%2), Qt %3, Open CASCADE %4").arg(QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture(), qVersion(), OCC_VERSION_COMPLETE)};
     for (QScreen* s : QGuiApplication::screens()) f << QString("Screen %1 x %2 at scale %3").arg(s->size().width()).arg(s->size().height()).arg(s->devicePixelRatio());
     f << QString("Language %1, %2 theme, %3 navigation, %4 workspace").arg(i18n::current(), theme::current().dark ? "dark" : "light", preset(), services().workspace());

@@ -316,7 +316,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   m_tipTimer.setSingleShot(true);
   m_tipTimer.setInterval(500);
   connect(&m_tipTimer, &QTimer::timeout, this, [this] {
-    if (!m_active || !m_inView || !m_tipShown || m_hover.kind != Hit::Dimension || m_hover.id != m_tipShown) return;
+    if (!m_active || !m_inView || !m_tipShown || tipTarget() != m_tipShown) return;
     QToolTip::showText(QCursor::pos() + QPoint(14, 18), constraintTip(m_tipShown), m_viewport, QRect(), 8000);
   });
   m_relayoutTimer.setSingleShot(true);
@@ -420,7 +420,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 void SketchEditor::end() {
   if (!m_active) return;
   m_toolPreviewTimer.stop();m_dwellTimer.stop();m_relayoutTimer.stop();m_dimensionHandle->hide();
-  m_hover = Hit{};hoverTip();forgetTyped();m_input->setFields({});m_input->hide();
+  m_hover = Hit{};m_inView = false;hoverTip();forgetTyped();m_input->setFields({});m_input->hide();
   m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
   ++m_geometryRevision;++m_fillRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   m_viewport->setEdgeHover(false);
@@ -611,24 +611,9 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
     if (d < best) { best = d; hit = {Hit::Point, p.id}; }
   }
   if (hit.kind != Hit::None) return hit;
-  for (const auto& c : m_sk.constraints) {
-    if (curvesOnly) break;
-    if (!c.is_dimension() || !selectable(c.id)) continue;
-    double lu, lv;
-    labelPosition(c, lu, lv);
-    if (std::fabs(lu - u) < 3.5 * t && std::fabs(lv - v) < 1.4 * t) return {Hit::Dimension, c.id};
-  }
+  if (!curvesOnly)
+    if (const Hit c = constraintAt(u, v); c.kind != Hit::None) return c;
   best = t;
-  // A constraint's badge faces the viewer at its size in pixels (a sprite): it is hit on the screen, where the view shows it now.
-  if(!curvesOnly && !m_glyphHits.empty()) {
-    const QPoint at=m_viewport->widgetPoint(m_frame.to_world(u,v));
-    for(size_t i=0;i<m_glyphHits.size() && i<m_glyphAnchors.size();++i) {
-      const int id=std::get<0>(m_glyphHits[i]);const GlyphAnchor& g=m_glyphAnchors[i];
-      if(!selectable(id))continue;
-      const QPoint anchor=m_viewport->widgetPoint(m_frame.to_world(g.u,g.v));
-      if(std::fabs(anchor.x()+g.dx-at.x())<kHandlePixels && std::fabs(anchor.y()-g.dy-at.y())<kHandlePixels)return {Hit::Dimension,id};
-    }
-  }
   for (size_t index : localCandidates.entities) {
     const auto& e=m_sk.entities[index];
     if (!selectable(e.id)) continue;
@@ -636,6 +621,31 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
     if (d < best) { best = d; hit = {Hit::Entity, e.id}; }
   }
   return hit;
+}
+
+// A dimension's value or a constraint's badge under (u, v), in any tool: hitTest's own (except in Trim, Extend and Split,
+// whose clicks take the curve), and the hover tip's everywhere (hoverTip).
+SketchEditor::Hit SketchEditor::constraintAt(double u, double v) const {
+  if (!m_geometry || m_geometryJob) return {};
+  const double t = tol();
+  for (const auto& c : m_sk.constraints) {
+    if (!c.is_dimension() || !selectable(c.id)) continue;
+    double lu, lv;
+    labelPosition(c, lu, lv);
+    if (std::fabs(lu - u) < 3.5 * t && std::fabs(lv - v) < 1.4 * t) return {Hit::Dimension, c.id};
+  }
+  // A constraint's badge faces the viewer at its size in pixels (a sprite): it is hit on the screen, where the view shows it now.
+  if (!m_glyphHits.empty()) {
+    const QPoint at = m_viewport->widgetPoint(m_frame.to_world(u, v));
+    for (size_t i = 0; i < m_glyphHits.size() && i < m_glyphAnchors.size(); ++i) {
+      const int id = std::get<0>(m_glyphHits[i]);
+      const GlyphAnchor& g = m_glyphAnchors[i];
+      if (!selectable(id)) continue;
+      const QPoint anchor = m_viewport->widgetPoint(m_frame.to_world(g.u, g.v));
+      if (std::fabs(anchor.x() + g.dx - at.x()) < kHandlePixels && std::fabs(anchor.y() - g.dy - at.y()) < kHandlePixels) return {Hit::Dimension, id};
+    }
+  }
+  return {};
 }
 
 SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer, bool grid) const {

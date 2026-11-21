@@ -1,9 +1,20 @@
 # Changelog
 
 What changed in each release of OPAD, newest first. The section of a version is published as that version's release
-notes when the pull request that raises the version in `CMakeLists.txt` is merged: see
-[docs/releasing.md](docs/releasing.md). Changes merged between releases go under `## [Unreleased]`. Entries are written
-for the people using OPAD, not as a commit log.
+notes when the version reaches `main` (docs/releasing.md). Changes merged into `dev` between releases go under
+`## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
+as a commit log.
+
+## [Unreleased]
+
+### Added
+- **Development builds, if you want them.** *Help > Offer development builds* makes OPAD offer the builds of the
+  development branch and the release candidates too, not only releases, so you can try fixes and features before they
+  ship. *About* now shows the build number.
+
+### Fixed
+- Pointing at a constraint's badge or a dimension's value in Trim, Extend and Split also says what it is, while a
+  click there still trims or extends the curve.
 
 ## [0.10.0] - 2026-11-21
 
