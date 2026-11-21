@@ -5,6 +5,7 @@
 // merge, a pull, a resolve, an abort) refuses while the document has unsaved changes, a transaction or preview is
 // staged, or a sketch or feature is open; afterwards gitChanged lets the Version control area refresh the chip and the
 // panel and take the file in (DiskSync::adopt). Each action is a line in Agent activity.
+#include <QDir>
 #include <QFileInfo>
 #include <QLocalSocket>
 
@@ -56,6 +57,35 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
   call.documentDirty = m_doc->isDirty();
   call.policy = gitagent::Policy::read();
   if (name == "git_init") call.repo = args.contains("folder") ? QString::fromStdString(args["folder"].get<std::string>()) : QFileInfo(m_doc->path()).absolutePath();
+  // git_init on the document's folder shared with other files: refused unless own_folder says; true moves the document into a
+  // new folder beside it first (AppDocument::moveTo, as Set up repository's Move), then runs again there (now its own folder).
+  const QString movedTo = QString::fromStdString(args.value("_moved_to", std::string())), moveNote = QString::fromStdString(args.value("_move_note", std::string()));
+  args.erase("_moved_to");
+  args.erase("_move_note");
+  if (name == "git_init") {
+    QString folder;
+    try {
+      folder = gitagent::initFolder(args, call);
+    } catch (const gitagent::Refused& e) {
+      return refuse(e.code, QString::fromUtf8(e.what()), {}, e.next);
+    }
+    if (QFileInfo(folder) != QFileInfo(call.repo)) {
+      const QString target = QDir(folder).filePath(QFileInfo(m_doc->path()).fileName());
+      m_busy = true;
+      m_owner = s->socket;
+      activity(tr("Agent: moving %1 into %2").arg(QFileInfo(m_doc->path()).fileName(), QDir::toNativeSeparators(folder)));
+      m_doc->moveTo(m_jobs, target, [this, s, name, args, receipt, hash, target, refuse, epoch = m_epoch](bool ok, const QString& text) mutable {
+        if (epoch != m_epoch) return;
+        m_busy = false;
+        m_owner.clear();
+        if (!ok) return refuse("move_failed", tr("Could not move the document: %1").arg(text), {}, "git_status");
+        args["_moved_to"] = QDir::toNativeSeparators(target).toStdString();
+        args["_move_note"] = text.toStdString();
+        gitTool(s, name, args, receipt, hash);
+      });
+      return;
+    }
+  }
   args.erase("request_id");
   args.erase("folder");
   if (write) {
@@ -87,7 +117,7 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
       out->code = "git_failed";
       out->message = e.what();
     }
-  }, [this, s, out, name, write, files, receipt = receipted ? receipt : std::string(), epoch, started, refuse](bool ok, const QString& error) {
+  }, [this, s, out, name, write, files, receipt = receipted ? receipt : std::string(), epoch, started, refuse, movedTo, moveNote](bool ok, const QString& error) {
     if (write && epoch == m_epoch) {
       m_busy = false;
       m_owner.clear();
@@ -102,6 +132,10 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
       if (write) emit gitChanged(files);  // a refused or failed command may still have run git (a stopped merge)
       emit statusChanged();
       return;
+    }
+    if (!movedTo.isEmpty()) {
+      out->result["moved_to"] = movedTo.toStdString();
+      if (!moveNote.isEmpty()) out->result["note"] = moveNote.toStdString();
     }
     const json& r = out->result;
     if (!receipt.empty()) {

@@ -12,7 +12,7 @@ if(Qt6_FOUND)
   target_link_libraries(opad-cli PRIVATE Qt6::Core Qt6::Network)
   target_compile_definitions(opad-cli PRIVATE OPAD_LIVE_MCP=1)
   # The headless server's git tools (app/GitAgent.cpp over the Version control panel's git client, app/Git.cpp: Qt Core only).
-  target_sources(opad-cli PRIVATE ../app/AppData.cpp ../app/Git.cpp ../app/GitAgent.cpp)
+  target_sources(opad-cli PRIVATE ../app/AppData.cpp ../app/Git.cpp ../app/GitAgent.cpp ../app/OwnFolder.cpp)
   target_include_directories(opad-cli PRIVATE ../app)
   target_compile_definitions(opad-cli PRIVATE OPAD_GIT_TOOLS=1)
   if(OPAD_STATIC)

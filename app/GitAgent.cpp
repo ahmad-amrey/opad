@@ -13,6 +13,7 @@
 
 #include "AppData.hpp"
 #include "Git.hpp"
+#include "OwnFolder.hpp"
 #include "opad/commands.hpp"
 #include "opad/diff.hpp"
 #include "opad/document.hpp"
@@ -909,9 +910,35 @@ json push(const json& args, const Call& call) {
   return out;
 }
 
+}  // namespace
+
+QString initFolder(const json& args, const Call& call) {
+  const bool own = args.contains("own_folder");
+  if (call.document.isEmpty() || call.repo.isEmpty() || QFileInfo(call.repo) != QFileInfo(QFileInfo(call.document).absolutePath())) {
+    if (own) refuse("invalid_arguments", "own_folder is about the open document's own folder: leave folder out (or name that folder) to use it.");
+    return call.repo;
+  }
+  const ownfolder::Plan plan = ownfolder::plan(call.document);
+  if (!plan.needed) return call.repo;
+  if (!own) {
+    const QString shown = plan.others.mid(0, 5).join(", ") + (plan.others.size() > 5 ? QStringLiteral(" and %1 more").arg(plan.others.size() - 5) : QString());
+    refuse("shared_folder",
+           QStringLiteral("%1 shares its folder %2 with other files (%3), and a repository takes in the whole folder. Nothing was changed. Ask the user, "
+                          "then call git_init again with own_folder: true to move the document into a new folder %4 beside it first (saved there, "
+                          "unsaved changes included; the other files stay where they are), as OPAD's Set up repository offers, or own_folder: false "
+                          "to make the repository in %2 anyway.")
+               .arg(QFileInfo(call.document).fileName(), QDir::toNativeSeparators(call.repo), shown, QDir::toNativeSeparators(plan.folder)),
+           "git_init");
+  }
+  return args["own_folder"].get<bool>() ? plan.folder : call.repo;
+}
+
+namespace {
 // A new repository as the panel's Set up repository makes it (git::setUp, the dialog's defaults), on the initial branch the
 // user's setting names unless `branch` does; then, when asked, the first commit of `paths` with OPAD's two files.
 json init(const json& args, const Call& call) {
+  if (initFolder(args, call) != call.repo)  // own_folder: true on a shared folder: the live server moves the document first
+    refuse("invalid_arguments", "own_folder: true moves the open document into a folder of its own, which only OPAD's live server does.");
   const QString program = call.program.isEmpty() ? git::findProgram() : call.program;
   if (program.isEmpty())
     refuse("git_missing", "git was not found on this computer. The user can install it, or point OPAD at it (Version control panel > Locate git).");

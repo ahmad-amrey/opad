@@ -112,6 +112,7 @@ int main(){try {
   // plane, motion, flip, offset, angle) and the align_sketch command, also a batch step.
   // Offset relationship (measured 158654 live, 89500 headless): sketch_tool's offset holds its copy by an editable offset
   // dimension (inputs.relation).
+  // git_init's own_folder (measured 158967 live): a shared folder refused unless it says move or stay.
   CHECK(live<159100);  // 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
   CHECK(headless<89950);  // 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.

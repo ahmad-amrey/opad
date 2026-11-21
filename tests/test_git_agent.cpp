@@ -12,6 +12,7 @@
 #include <QProcess>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <functional>
 
 #include "Git.hpp"
 #include "GitAgent.hpp"
@@ -437,6 +438,77 @@ TEST(push_pull_never_forced) {
   CHECK(mcp().call("git_push", {{"repo", s(repo)}, {"tags", {"v1"}}})["tags"] == json({"v1"}));
   CHECK(QString::fromUtf8(gitIn(remote, {"tag"})).trimmed() == "v1");
   std::printf("push (upstream set, protected-push preference), pull preview and fast-forward, a rejected push never forced PASS\n");
+}
+
+// git_init on the live document's folder (gitagent::initFolder, called in this process as the live server calls it; the
+// document's move itself is AppDocument::moveTo there, done here by hand): a folder holding only the document and its
+// sidecars is made a repository as before; other files there refuse it (shared_folder, nothing changed) unless own_folder
+// says: false makes the repository in that folder anyway, true names a new folder beside it ("model" taken: "model 2") to
+// move the document into first, where git_init then runs. own_folder without the document's folder is refused.
+TEST(init_shared_folder) {
+  auto call = [](const QString& repo, const QString& document) {
+    gitagent::Call c;
+    c.repo = repo;
+    c.document = document;
+    c.program = git::findProgram();
+    return c;
+  };
+  auto touch = [](const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) throw check::Failure("cannot write " + path.toStdString());
+    f.write("x");
+  };
+  auto refusedCode = [](const std::function<void()>& run) {
+    try {
+      run();
+    } catch (const gitagent::Refused& e) {
+      return e.code + ": " + e.what();
+    }
+    return std::string("no refusal");
+  };
+  const json main = {{"branch", "main"}};  // the initial branch named: this process reads no OPAD settings
+  // Alone with a sidecar: as before.
+  const QString alone = root() + "/shared/alone", aloneDoc = alone + "/model.opad";
+  QDir().mkpath(alone);
+  mcp().call("new", {{"doc", s(aloneDoc)}});
+  touch(aloneDoc + ".orig");
+  CHECK(gitagent::initFolder(main, call(alone, aloneDoc)) == alone);
+  CHECK(gitagent::run("git_init", main, call(alone, aloneDoc))["state"] == "initialized" && QFileInfo::exists(alone + "/.git"));
+  // Beside other files: refused, nothing made.
+  const QString shared = root() + "/shared/both", doc = shared + "/model.opad";
+  QDir().mkpath(shared + "/model");  // a folder of the document's name: the new folder takes the next free one
+  mcp().call("new", {{"doc", s(doc)}});
+  touch(shared + "/notes.txt");
+  const std::string no = refusedCode([&] { gitagent::run("git_init", main, call(shared, doc)); });
+  CHECK(no.rfind("shared_folder: ", 0) == 0 && no.find("notes.txt") != std::string::npos && no.find("own_folder: true") != std::string::npos &&
+        no.find("own_folder: false") != std::string::npos && no.find("Nothing was changed") != std::string::npos);
+  CHECK(!QFileInfo::exists(shared + "/.git"));
+  // own_folder: true names the new folder, and git_init there (the document moved in) makes the repository there alone.
+  json move = main;
+  move["own_folder"] = true;
+  const QString target = gitagent::initFolder(move, call(shared, doc));
+  CHECK(QDir::cleanPath(target) == QDir::cleanPath(shared + "/model 2"));
+  CHECK(refusedCode([&] { gitagent::run("git_init", move, call(shared, doc)); }).rfind("invalid_arguments: ", 0) == 0);  // not moved: refused
+  QDir().mkpath(target);
+  CHECK(QFile::rename(doc, target + "/model.opad"));
+  const json made = gitagent::run("git_init", move, call(target, target + "/model.opad"));
+  CHECK(made["state"] == "initialized" && QFileInfo::exists(target + "/.git") && !QFileInfo::exists(shared + "/.git"));
+  CHECK(QFileInfo::exists(shared + "/notes.txt") && QFileInfo::exists(shared + "/model"));
+  // own_folder: false: the repository takes in the shared folder.
+  const QString stay = root() + "/shared/stay", stayDoc = stay + "/model.opad";
+  QDir().mkpath(stay);
+  mcp().call("new", {{"doc", s(stayDoc)}});
+  touch(stay + "/notes.txt");
+  json here = main;
+  here["own_folder"] = false;
+  CHECK(gitagent::initFolder(here, call(stay, stayDoc)) == stay);
+  CHECK(gitagent::run("git_init", here, call(stay, stayDoc))["state"] == "initialized" && QFileInfo::exists(stay + "/.git"));
+  // own_folder about another folder than the document's: refused.
+  const QString other = root() + "/shared/other";
+  QDir().mkpath(other);
+  CHECK(refusedCode([&] { gitagent::initFolder(move, call(other, stayDoc)); }).rfind("invalid_arguments: ", 0) == 0);
+  // The live schema offers own_folder.
+  CHECK(opad::agent::live_schema("git_init")["properties"].contains("own_folder"));
 }
 
 TEST(init_tag_diff) {

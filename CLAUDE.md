@@ -179,7 +179,8 @@ document that shares its folder first asks to move it into a folder of its own (
 Move / Use this folder / Cancel; the document alone with its `<name>.opad.*` sidecars is set up in place): `AppDocument::moveTo`
 saves it into `<name>` (next free name) beside it with `saveAsync` (linked paths follow, unsaved changes go along), moves the
 sidecars, removes the old file, `documentMoved` moves the recent entry; the trusted folders are left alone (linked files left
-behind get the trust question at the next open; the move's toast says so). `ctest -R own-folder`, benches own-folder(-ar). `QMainWindow::separator:vertical` is the *upright* bar (named after its shape).
+behind get the trust question at the next open; the move's toast says so). An agent's live `git_init` there refuses `shared_folder` unless `own_folder` says
+(`gitagent::initFolder`; true: `AgentBridge` runs `moveTo`, then `git_init` again; `moved_to` in the result). `ctest -R own-folder`, benches own-folder(-ar). `QMainWindow::separator:vertical` is the *upright* bar (named after its shape).
 
 UI check without driving the desktop (the user works on it, see memory): `OPAD_BENCH_UISHOT=<png>` with
 `--bench-select` saves `MainWindow::grab()` (widgets only, the native viewport is blank); `OPAD_BENCH_WORKSPACE=1`
