@@ -1,0 +1,131 @@
+# Promote dev to main: moves main forward to dev's newest commit (a fast-forward: no merge commit, the same commit on both
+# branches), which publishes the release that commit's version announces (ci.yml, docs/releasing.md).
+#
+# Run it from Actions > Promote dev to main > Run workflow. It first checks that dev's commit passed "Tested", that main
+# is part of dev's history (a hotfix merged into main must be merged into dev first), and that dev's version is new,
+# above the latest release, with its dated changelog section. "Check only" stops there.
+#
+# The push uses the deploy key in the secret PROMOTE_DEPLOY_KEY, the only actor on main's ruleset bypass list: a push
+# made with the workflow's own token would start no workflow, so the release would never run. The secret belongs to the
+# environment "promote", which only main may use: a copy of this file changed on dev and run from dev (Run workflow
+# lets you pick the branch) gets no key. Setup in docs/releasing.md.
+name: Promote dev to main
+
+on:
+  workflow_dispatch:
+    inputs:
+      check_only:
+        description: Check only (do not move main)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote
+    runs-on: ubuntu-latest
+    # Its secrets go only to runs of main's copy of this workflow (the environment's deployment branch rule).
+    environment: promote
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HAVE_KEY: ${{ secrets.PROMOTE_DEPLOY_KEY != '' }}
+    steps:
+      - name: Run from main's copy only
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::run this workflow from main (Run workflow > Use workflow from: main), not $GITHUB_REF_NAME."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: dev
+          fetch-depth: 0
+          # With the key, origin is reached over SSH as the deploy key (it may push to main); without it, read-only.
+          ssh-key: ${{ secrets.PROMOTE_DEPLOY_KEY }}
+      - name: Check dev can be promoted
+        id: check
+        run: |
+          git fetch --quiet origin main
+          sha=$(git rev-parse HEAD)
+          main=$(git rev-parse origin/main)
+          echo "dev:  $sha"
+          echo "main: $main"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$sha" = "$main" ]; then
+            echo "::error::main is already at dev's commit $sha: nothing to promote."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$main" "$sha"; then
+            echo "::error::main has commits that dev does not (a hotfix?). Bring them into dev first: a branch from main, merge dev into it, a pull request into dev (docs/releasing.md, Hotfixes). Then promote."
+            exit 1
+          fi
+
+          # The exact commit passed Tested (dev's own run, or the run whose build it reused).
+          conclusion=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?check_name=Tested&per_page=20" \
+            --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.started_at) | last | .conclusion // ""')
+          if [ "$conclusion" != success ]; then
+            echo "::error::dev's commit $sha has no passing Tested check (latest: ${conclusion:-none}). Wait for its run on dev to pass."
+            exit 1
+          fi
+
+          # A version to publish: new, above the latest release, with its dated section.
+          version=$(sed -n 's/^project(opad VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          answer=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name')
+          versions=$(printf '%s\n' "$answer" | sed -n 's/^v\([0-9][0-9.]*\)$/\1/p')
+          latest=$(printf '%s\n' "$versions" | sed '/^$/d' | sort -V | tail -1)
+          if printf '%s\n' "$versions" | grep -qxF "$version"; then
+            echo "::error::dev's version $version is already released. Raise it on dev first (a \"Release X.Y.Z\" pull request into dev with the dated changelog section), wait for its release candidate, then promote."
+            exit 1
+          fi
+          if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]; then
+            echo "::error::dev's version $version is lower than the latest release $latest."
+            exit 1
+          fi
+          if ! tr -d '\r' < CHANGELOG.md | grep -qE "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*$"; then
+            echo "::error::CHANGELOG.md has no dated '## [$version] - YYYY-MM-DD' section on dev."
+            exit 1
+          fi
+          # The run on main publishes only when the push changes main's version, and never over a leftover tag.
+          main_version=$(git show "$main:CMakeLists.txt" | sed -n 's/^project(opad VERSION \([0-9.]*\).*/\1/p')
+          if [ "$main_version" = "$version" ]; then
+            echo "::error::main already says $version, so moving it would publish nothing: an earlier promotion's release run failed. Re-run the failed jobs of that run on main to publish $version as promoted; what dev added since then goes out as the next version (docs/releasing.md, recovery)."
+            exit 1
+          fi
+          if [ -n "$(git ls-remote --tags --refs origin "v$version")" ]; then
+            echo "::error::the tag v$version exists without a published release: delete it (git push origin :refs/tags/v$version), then promote."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Promoting $sha publishes OPAD $version (latest release: ${latest:-none})."
+          {
+            echo "### Promote dev to main"
+            echo
+            echo "- dev: \`$sha\`"
+            echo "- main before: \`$main\`"
+            echo "- publishes: **OPAD $version** (latest release: ${latest:-none})"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fast-forward main to dev
+        if: ${{ !inputs.check_only }}
+        env:
+          SHA: ${{ steps.check.outputs.sha }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          if [ "$HAVE_KEY" != true ]; then
+            echo "::error::the promote environment has no secret PROMOTE_DEPLOY_KEY: see docs/releasing.md, \"Promote setup\"."
+            exit 1
+          fi
+          # A plain push, never forced: it only ever moves main forward (main's history ruleset blocks force pushes and
+          # deletion for everyone, the deploy key included).
+          git push origin "$SHA:refs/heads/main"
+          echo "::notice title=Promoted::main is now $SHA; the Build run on main publishes OPAD $VERSION ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/ci.yml?query=branch%3Amain)."
+          echo "- main moved to \`$SHA\`: the Build run on main publishes the release." >> "$GITHUB_STEP_SUMMARY"
+      - name: Check only
+        if: ${{ inputs.check_only }}
+        run: echo "::notice title=Check only::dev can be promoted; main was not moved."
