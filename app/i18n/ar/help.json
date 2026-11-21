@@ -1113,5 +1113,9 @@
  "Rigid": "صلب",
  "Click a curve: its sizes": "انقر منحنى: مقاساته",
  "Click another: the distance between them": "انقر آخر: المسافة بينهما",
- "Nothing is added to the sketch": "لا يُضاف شيء إلى الرسم التخطيطي"
+ "Nothing is added to the sketch": "لا يُضاف شيء إلى الرسم التخطيطي",
+ "Help: turn on Offer development builds": "التعليمات: فعّل «عرض النسخ التطويرية»",
+ "The dev branch's builds are offered too": "تُعرض نسخ فرع التطوير أيضًا",
+ "Offer development builds": "عرض النسخ التطويرية",
+ "OPAD 0.10.2 release candidate (build 140) is available": "نسخة OPAD 0.10.2 المرشحة للإصدار (البناء 140) متاحة"
 }

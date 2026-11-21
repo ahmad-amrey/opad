@@ -36,6 +36,11 @@ std::string sha256_hex(std::string_view data);
 std::string sha256_file(const std::filesystem::path& p, const std::function<bool()>& cancelled = {});  // read in chunks
 std::string default_author();
 std::string version_string();
+// The build: CI's run number (0 for a local build) and its commit (empty for a local build), from OPAD_BUILD_NUMBER and
+// OPAD_BUILD_COMMIT at configure time (core/CMakeLists.txt). A development build and its release share a version and differ
+// by build; the update check compares (version, build).
+int build_number();
+std::string build_commit();
 // Reads a decimal number at [first, last) in the C locale's spelling ("-1.5e3", whatever the process's locale says): the
 // end of what it read, or nullptr when nothing there is a number. std::from_chars where the standard library has it for
 // floating point; Apple's libc++ does not declare it (not even with Xcode 26), so macOS always takes strtod_l with the C

@@ -10,11 +10,20 @@
 // Windows' Schannel backend, the portable folder stages it (app/CMakeLists.txt, cmake/portable_stage.cmake).
 // OPAD_UPDATE_URL and OPAD_UPDATE_PAGE_URL point the two requests elsewhere (file:// or a local http:// server, for the
 // bench and the tests).
+//
+// The development channel (setting updates/channel = "development", Help > Offer development builds) reads the list of
+// releases instead (OPAD_UPDATE_LIST_URL for tests): stable vX.Y.Z releases and the dev-N prereleases every push to the dev
+// branch publishes, each keyed by (version, build) from the marker CI writes in its notes,
+// <!-- opad-build: N; opad-version: X.Y.Z --> (a stable release without one is (X.Y.Z, 0); a dev-N without one is left
+// out). The greatest key above this copy's (version, build) is offered (a local build is build 0); a stable release and
+// the release candidate it was promoted from share their key, and the stable one is offered. When the API refuses, the
+// stable check answers.
 #include <QDateTime>
 #include <QObject>
 #include <QString>
 #include <QUrl>
 #include <optional>
+#include <vector>
 
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -22,6 +31,7 @@ class QNetworkReply;
 namespace updates {
 inline constexpr const char* kLatestUrl = "https://api.github.com/repos/ahmad-amrey/opad/releases/latest";
 inline constexpr const char* kLatestPageUrl = "https://github.com/ahmad-amrey/opad/releases/latest";
+inline constexpr const char* kListUrl = "https://api.github.com/repos/ahmad-amrey/opad/releases?per_page=30";
 
 struct Release {
   QString version;   // the tag without its "v": "0.2.0"
@@ -32,6 +42,9 @@ struct Release {
   QString page;      // the release's page on GitHub
   QString download;  // this computer's installer in that release; empty when none fits (Download opens the page then)
   QDateTime published;
+  int build = 0;             // CI's build number (the marker); 0 for a stable release without one
+  bool development = false;  // a dev-N prerelease (the development channel)
+  bool candidate = false;    // ... whose version is not released yet: the release candidate of it
 };
 
 // The release in GitHub's "latest release" answer; empty when it is not one (a draft, a prerelease, no tag, not JSON).
@@ -42,6 +55,18 @@ std::optional<Release> parseLatest(const QByteArray& json, const QString& asset 
 // first entries of its lists ("Arabic interface; Align takes arcs; ..."), Markdown taken out, cut at about maxChars on a
 // word. Empty when the notes have neither.
 QString summarize(const QString& notes, int maxChars = 220);
+// The marker CI writes in a release's notes, <!-- opad-build: N; opad-version: X.Y.Z -->: false when there is none.
+bool parseMarker(const QString& notes, int& build, QString& version);
+// The candidates in GitHub's list of releases (the development channel): stable vX.Y.Z releases and dev-N prereleases with
+// a marker; drafts and anything else left out. `asset` as for parseLatest (a release without it: its download address).
+std::vector<Release> parseList(const QByteArray& json, const QString& asset = QString());
+// <0, 0, >0 as (va, ba) is older than, the same as, or newer than (vb, bb): the version first, then the build.
+int compareBuilds(const QString& va, int ba, const QString& vb, int bb);
+// The newest candidate above (version, build), a stable release before a development one with the same key; none when
+// nothing is newer.
+std::optional<Release> newestAbove(const std::vector<Release>& candidates, const QString& version, int build);
+// "0.10.1 (build 123)", or "0.10.1" for build 0.
+QString displayVersion(const QString& version, int build);
 // <0, 0, >0 as a is older than, the same as, or newer than b. A leading "v" is ignored, missing parts count as 0
 // (0.2 == 0.2.0), and a "-suffix" (0.2.0-rc1) comes before the same version without one.
 int compareVersions(const QString& a, const QString& b);
@@ -67,7 +92,8 @@ QUrl safeReleaseUrl(const QString& url);
 // Settings: updates/autoCheck (default on), updates/lastCheck (the last check that got an answer), updates/skipVersion.
 inline constexpr const char* kAutoCheckKey = "updates/autoCheck";
 inline constexpr const char* kLastCheckKey = "updates/lastCheck";
-inline constexpr const char* kSkipKey = "updates/skipVersion";
+inline constexpr const char* kSkipKey = "updates/skipVersion";  // the version skipped; a development build's tag (dev-N)
+inline constexpr const char* kChannelKey = "updates/channel";   // "stable" (default) or "development"
 
 // One check at a time, asynchronous (the UI thread never waits on the network).
 class Checker : public QObject {
@@ -78,12 +104,19 @@ class Checker : public QObject {
   void check(bool userAsked);
   bool running() const { return m_reply != nullptr; }
   QString current() const { return m_current; }
+  int build() const { return m_build; }
+  void setBuild(int build) { m_build = build; }                // this copy's build (opad::build_number())
+  void setDevelopment(bool on) { m_development = on; }         // the development channel for the next check
+  bool development() const { return m_development; }
  signals:
   void available(const updates::Release& release, bool userAsked);
   void upToDate(const QString& current, bool userAsked);
   void failed(const QString& why, bool userAsked);
 
  private:
+  void askLatest();
+  void askList();
+  void listAnswered();
   void apiAnswered();
   void askReleasePage();
   void pageAnswered();
@@ -94,5 +127,7 @@ class Checker : public QObject {
   QNetworkReply* m_reply = nullptr;
   QString m_apiError;  // why the API refused, said if the release page does not answer either
   bool m_userAsked = false;  // the user asked during this check (also when the automatic one was already running)
+  int m_build = 0;
+  bool m_development = false;
 };
 }  // namespace updates

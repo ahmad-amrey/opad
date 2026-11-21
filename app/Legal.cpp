@@ -25,7 +25,8 @@ QString aboutText() {
                      "<br><br><small>Autodesk, AutoCAD, DWG, Fusion and ViewCube are trademarks of Autodesk, Inc.; SOLIDWORKS "
                      "of Dassault Systèmes; Onshape of PTC; Blender of the Blender Foundation. They are named only to describe "
                      "compatibility; OPAD is not affiliated with or endorsed by them.</small>")
-      .arg(QString::fromStdString(opad::version_string()));
+      .arg(opad::build_number() > 0 ? QObject::tr("%1 (build %2)").arg(QString::fromStdString(opad::version_string())).arg(opad::build_number())
+                                    : QString::fromStdString(opad::version_string()));
 }
 
 void showAbout(QWidget* parent) { QMessageBox::about(parent, QObject::tr("About OPAD"), aboutText()); }

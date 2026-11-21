@@ -1898,6 +1898,13 @@
    "keywords": ["update", "automatic", "notify", "new version", "privacy"]
   },
   {
+   "id": "help.devBuilds",
+   "title": "Offer development builds",
+   "summary": "Offers the builds of the development branch too, not only the releases.",
+   "details": "Each change merged into the development branch is published as a development build: a release candidate while its version is not released yet. With this on, the update check offers the newest build newer than yours, a release when one is newest. Turn it off to be offered releases only.",
+   "keywords": ["update", "development", "release candidate", "beta", "channel", "dev branch"]
+  },
+  {
    "id": "help.about",
    "title": "About OPAD",
    "summary": "Shows the OPAD version, its licence and the libraries it is built on.",

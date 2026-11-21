@@ -419,6 +419,17 @@ mcpServers.opad, key order kept, <file>.bak first, QSaveFile, nothing written wh
 gui case agent-connect (APPDATA / HOME / XDG_CONFIG_HOME / CLAUDE_CONFIG_DIR pointed at the case's folders),
 tools/test_mcp_feedback.py with a real Codex.
 
+## Builds and the update channels (`core/CMakeLists.txt` build_info, `app/UpdateCheck.*`, `app/UpdatesArea.cpp`)
+
+CI passes OPAD_BUILD_NUMBER (the Actions run number) and OPAD_BUILD_COMMIT to the configure step; a generated
+`build_info.cpp` (not version.hpp: ccache) gives `opad::build_number()` / `build_commit()` (a local build: 0 and "").
+`opad-cli version` reports them, About shows "X.Y.Z (build N)", settings backups key on "X.Y.Z+N" when N > 0. Help > Offer
+development builds (`updates/channel` = development) reads the release list (`OPAD_UPDATE_LIST_URL` for tests): stable vX.Y.Z
+and dev-N prereleases keyed by (version, build) from the `<!-- opad-build: N; opad-version: X.Y.Z -->` marker in their notes
+(a marker-less stable is build 0, a marker-less dev-N is ignored), the greatest key above this copy's offered, a stable
+release before its candidate at the same key; the API refused: the stable check. Skip stores a dev build's tag.
+`ctest -R update-check`, gui case updates.
+
 ## Command help (`app/help/*.json`, `tests/test_help.cpp`)
 
 Every registered command has a record in `commands.json` + `commands.ar.json` (summary one sentence, details 2-4, keys

@@ -19,5 +19,14 @@
  "No notes were published with this release.": "لم تُنشر ملاحظات مع هذا الإصدار.",
  "GitHub's answer was not a release": "لم يكن رد GitHub إصدارًا",
  "GitHub is limiting update checks from your network right now.": "يحدّ GitHub حاليًا من عمليات التحقق من التحديثات القادمة من شبكتك.",
- "Try again after %1.": "حاول مجددًا بعد %1."
+ "Try again after %1.": "حاول مجددًا بعد %1.",
+ "%1 (build %2)": "%1 (البناء %2)",
+ "Offer development builds": "عرض النسخ التطويرية",
+ "development": "تطوير",
+ "release candidate": "نسخة مرشحة",
+ "dev branch": "فرع التطوير",
+ "channel": "قناة",
+ "OPAD %1 release candidate (build %2) is available": "نسخة OPAD %1 المرشحة للإصدار (البناء %2) متاحة",
+ "OPAD development build %1 is available": "نسخة OPAD التطويرية رقم %1 متاحة",
+ "You have %1 (build %2).": "لديك %1 (البناء %2)."
 }

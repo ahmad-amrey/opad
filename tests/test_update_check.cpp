@@ -222,6 +222,104 @@ TEST(no_release_yet_is_up_to_date) {
   qunsetenv("OPAD_UPDATE_PAGE_URL");
 }
 
+// The development channel's list (UpdateCheck.hpp): stable vX.Y.Z releases and dev-N prereleases keyed by (version, build)
+// from CI's marker; a stable release without one is (X.Y.Z, 0), a dev-N without one is left out, drafts too.
+namespace {
+QByteArray listEntry(const char* tag, bool pre, const char* body, const char* name = "", bool draft = false) {
+  return QString(R"({"tag_name":"%1","name":"%2","body":"%3","html_url":"https://github.com/ahmad-amrey/opad/releases/tag/%1",)"
+                 R"("published_at":"2026-12-01T10:00:00Z","draft":%4,"prerelease":%5,"assets":[]})")
+      .arg(tag, name, body, draft ? "true" : "false", pre ? "true" : "false")
+      .toUtf8();
+}
+QByteArray releaseList(std::initializer_list<QByteArray> entries) {
+  QByteArray out = "[";
+  for (const QByteArray& e : entries) out += (out.size() > 1 ? "," : "") + e;
+  return out + "]";
+}
+}  // namespace
+
+TEST(the_marker_names_the_build_and_version) {
+  int build = 0;
+  QString version;
+  CHECK(parseMarker("Notes\n\n<!-- opad-build: 123; opad-version: 0.10.1 -->\n", build, version) && build == 123 && version == "0.10.1");
+  CHECK(parseMarker("<!--opad-build:7;opad-version:v1.2.3-->", build, version) && build == 7 && version == "1.2.3");
+  CHECK(!parseMarker("<!-- something else -->", build, version));
+  CHECK(compareBuilds("0.10.1", 5, "0.10.0", 900) > 0 && compareBuilds("0.10.1", 5, "0.10.1", 4) > 0 && compareBuilds("0.10.1", 5, "0.10.1", 5) == 0);
+  CHECK(displayVersion("0.10.1", 123) == "0.10.1 (build 123)" && displayVersion("0.10.1", 0) == "0.10.1");
+}
+
+TEST(the_list_keys_releases_and_development_builds) {
+  const QByteArray list = releaseList({
+      listEntry("dev-130", true, "<!-- opad-build: 130; opad-version: 0.10.2 -->", "OPAD 0.10.2 release candidate (build 130)"),
+      listEntry("dev-126", true, "<!-- opad-build: 126; opad-version: 0.10.1 -->", "OPAD development build 126"),
+      listEntry("v0.10.1", false, "## Fixed\\n- Trim\\n\\n<!-- opad-build: 125; opad-version: 0.10.1 -->"),
+      listEntry("dev-125", true, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
+      listEntry("v0.10.0", false, "## Added\\n- Measure"),  // before the marker: build 0
+      listEntry("dev-99", true, "no marker"),                // left out
+      listEntry("v0.11.0", false, "draft", "", true),        // a draft: left out
+      listEntry("nightly", true, "<!-- opad-build: 5; opad-version: 0.1.0 -->"),  // a prerelease that is no dev-N: left out
+  });
+  const auto all = parseList(list, "OPAD-windows-x64-setup.exe");
+  CHECK(all.size() == 5);
+  const Release* dev130 = nullptr;
+  const Release* stable0100 = nullptr;
+  for (const Release& r : all) {
+    if (r.tag == "dev-130") dev130 = &r;
+    if (r.tag == "v0.10.0") stable0100 = &r;
+  }
+  CHECK(dev130 && dev130->development && dev130->candidate && dev130->version == "0.10.2" && dev130->build == 130);
+  CHECK(dev130->download == assetDownloadUrl("dev-130", "OPAD-windows-x64-setup.exe"));  // no asset listed: its address
+  CHECK(stable0100 && !stable0100->development && stable0100->build == 0);
+  for (const Release& r : all)
+    if (r.tag == "dev-126") CHECK(r.development && !r.candidate);  // 0.10.1 is released: a development build, not a candidate
+}
+
+TEST(the_newest_build_above_this_one_is_offered) {
+  const QByteArray list = releaseList({
+      listEntry("dev-126", true, "<!-- opad-build: 126; opad-version: 0.10.1 -->"),
+      listEntry("v0.10.1", false, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
+      listEntry("dev-125", true, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
+      listEntry("v0.10.0", false, "no marker"),
+  });
+  const auto all = parseList(list);
+  auto pick = [&](const char* version, int build) { const auto r = newestAbove(all, version, build); return r ? r->tag : QString(); };
+  CHECK(pick("0.10.0", 0) == "dev-126");     // the release 0.10.0 (marker-less, build 0): the newest build after it
+  CHECK(pick("0.10.1", 125) == "dev-126");   // the release (or its candidate): the build after it
+  CHECK(pick("0.10.1", 126).isEmpty());      // the newest itself: nothing
+  CHECK(pick("0.10.1", 0) == "dev-126");     // a local build of 0.10.1 is build 0: everything of 0.10.1 is newer
+  const auto sameKey = parseList(releaseList({listEntry("dev-125", true, "<!-- opad-build: 125; opad-version: 0.10.1 -->"),
+                                              listEntry("v0.10.1", false, "<!-- opad-build: 125; opad-version: 0.10.1 -->")}));
+  const auto chosen = newestAbove(sameKey, "0.10.0", 0);
+  CHECK(chosen && chosen->tag == "v0.10.1" && !chosen->development);  // a release and its candidate: the release
+}
+
+TEST(the_development_channel_checks_the_list_and_falls_back_when_refused) {
+  const QByteArray list = releaseList({listEntry("dev-140", true, "<!-- opad-build: 140; opad-version: 0.10.2 -->"),
+                                       listEntry("v0.10.1", false, "<!-- opad-build: 125; opad-version: 0.10.1 -->")});
+  FakeGitHub github({{"GET /list", "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(list.size()) +
+                                       "\r\nConnection: close\r\n\r\n" + list},
+                     {"GET /limited", kRateLimited}, {"GET /api", kRateLimited}, {"HEAD /latest", kRedirectToTag}});
+  qputenv("OPAD_UPDATE_LIST_URL", github.url("/list"));
+  Checker checker("0.10.1");
+  checker.setBuild(125);
+  checker.setDevelopment(true);
+  CHECK(runCheck(checker).startsWith("available 0.10.2 "));
+  Checker newest("0.10.2");
+  newest.setBuild(140);
+  newest.setDevelopment(true);
+  CHECK(runCheck(newest) == "up to date");
+  // The list refused (GitHub's limit): the stable check answers, here through the release page (v0.10.0).
+  qputenv("OPAD_UPDATE_LIST_URL", github.url("/limited"));
+  qputenv("OPAD_UPDATE_URL", github.url("/api"));
+  qputenv("OPAD_UPDATE_PAGE_URL", github.url("/latest"));
+  Checker fallback("0.9.0");
+  fallback.setDevelopment(true);
+  CHECK(runCheck(fallback).startsWith("available 0.10.0 "));
+  qunsetenv("OPAD_UPDATE_LIST_URL");
+  qunsetenv("OPAD_UPDATE_URL");
+  qunsetenv("OPAD_UPDATE_PAGE_URL");
+}
+
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
   return check::run_all(argc, argv);
