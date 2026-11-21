@@ -1,6 +1,9 @@
 # PrintSupport is required: Print (UI-86) and Plot to a printer (UI-88). MSYS2's qt6-base and qt6-static, Debian's
 # qt6-base-dev and Homebrew's qt all ship it.
 find_package(Qt6 COMPONENTS Widgets Gui Network PrintSupport QUIET)
+if(NOT Qt6_FOUND AND OPAD_REQUIRE_APP)  # again, loud: CMake then says which dependency of Qt's own config is missing
+  find_package(Qt6 REQUIRED COMPONENTS Widgets Gui Network PrintSupport)
+endif()
 if(NOT Qt6_FOUND)
   set(_opad_qt_missing "")
   foreach(_opad_qt_module Widgets Gui Network PrintSupport)
@@ -13,6 +16,9 @@ if(NOT Qt6_FOUND)
   return()
 endif()
 if(NOT OPAD_OCCT_VIS_LIBS)
+  if(OPAD_REQUIRE_APP)
+    message(FATAL_ERROR "OPAD: OCCT visualisation toolkits (TKV3d/TKOpenGl) not found (OPAD_REQUIRE_APP)")
+  endif()
   message(WARNING "OPAD: OCCT visualisation toolkits (TKV3d/TKOpenGl) not found; skipping the desktop app")
   return()
 endif()

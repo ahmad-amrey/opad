@@ -55,6 +55,9 @@ env:
     mingw-w64-ucrt-x86_64-qt6-static mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-nlohmann-json
     mingw-w64-ucrt-x86_64-rapidjson mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-freetype mingw-w64-ucrt-x86_64-zstd
     mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-openssl
+    mingw-w64-ucrt-x86_64-libwebp mingw-w64-ucrt-x86_64-libtiff mingw-w64-ucrt-x86_64-libjpeg-turbo
+    mingw-w64-ucrt-x86_64-libpng mingw-w64-ucrt-x86_64-brotli mingw-w64-ucrt-x86_64-pcre2 mingw-w64-ucrt-x86_64-vulkan-headers
+    mingw-w64-ucrt-x86_64-gdb git
   APT_PACKAGES: >-
     cmake ninja-build g++ pkg-config ccache qt6-base-dev libqt6opengl6-dev nlohmann-json3-dev libfreetype-dev
     libfontconfig-dev libharfbuzz-dev libzstd-dev libgl-dev libglu1-mesa-dev libx11-dev libxext-dev libxi-dev
@@ -241,7 +244,7 @@ jobs:
           key: ccache-windows-${{ github.sha }}
           restore-keys: ccache-windows-
       - name: Configure
-        run: cmake --preset windows-static-ucrt64
+        run: cmake --preset windows-static-ucrt64 -DOPAD_REQUIRE_APP=ON
       # Saved now, whatever the steps after it do: a failing test must not throw away what the configure built.
       - name: Save the static OCCT
         if: steps.deps.outputs.cache-hit != 'true'
@@ -252,7 +255,21 @@ jobs:
       - name: Build
         run: set -o pipefail; cmake --build --preset windows-static-ucrt64 2>&1 | tee build.log
       - name: Test
+        id: test
         run: ctest --preset windows-static-ucrt64
+      # A test that crashed says nothing (its output is lost with the process): run each failed test program once more
+      # under gdb for a backtrace.
+      - name: Backtraces of the failed tests
+        if: failure() && steps.test.outcome == 'failure'
+        run: |
+          cd build/windows-static-ucrt64
+          for name in $(sed 's/^[0-9]*://' Testing/Temporary/LastTestsFailed.log); do
+            exe="bin/opad-test-$name.exe"
+            [ -f "$exe" ] || continue
+            echo "::group::$name"
+            timeout 600 gdb -q -batch -ex run -ex "thread apply all bt 30" --args "$exe" 2>&1 | tail -150 || true
+            echo "::endgroup::"
+          done
       - name: Single-file exes
         run: set -o pipefail; cmake --build --preset windows-single-ucrt64 2>&1 | tee -a build.log
       - name: Report build errors
@@ -351,7 +368,7 @@ jobs:
           key: ccache-linux-${{ github.sha }}
           restore-keys: ccache-linux-
       - name: Configure
-        run: cmake --preset linux $LINUX_CONFIGURE
+        run: cmake --preset linux $LINUX_CONFIGURE -DOPAD_REQUIRE_APP=ON
       # Saved now, whatever the steps after it do: a failing test must not throw away what the configure built.
       - name: Save OCCT
         if: steps.deps.outputs.cache-hit != 'true'
@@ -446,7 +463,7 @@ jobs:
           key: ccache-macos-${{ github.sha }}
           restore-keys: ccache-macos-
       - name: Configure
-        run: cmake --preset macos
+        run: cmake --preset macos -DOPAD_REQUIRE_APP=ON
       # Saved now, whatever the steps after it do: a failing test must not throw away what the configure built.
       - name: Save the simulation engines
         if: steps.deps.outputs.cache-hit != 'true'

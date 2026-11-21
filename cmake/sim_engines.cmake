@@ -107,6 +107,16 @@ function(opad_patch_netgen src)
                     "    /* OPAD: MinGW */ virtual const GeomPoint<D> & EndPI ()")
 endfunction()
 
+# The engine's LICENSE kept in its install (share/licenses), which the notices read. A cached install comes without
+# the source tree (CI keeps only install/): it already holds the copy made when it was built.
+function(opad_engine_licence src install)
+  if(EXISTS "${src}/LICENSE")
+    file(COPY "${src}/LICENSE" DESTINATION "${install}/share/licenses")
+  elseif(NOT EXISTS "${install}/share/licenses/LICENSE")
+    message(FATAL_ERROR "OPAD: no LICENSE in ${src} nor in ${install}/share/licenses: delete ${install} to build it again")
+  endif()
+endfunction()
+
 # opad_engine_from_source(<name> <tag> <git> <commit> <config file relative to install> [configure args...])
 # Calls opad_patch_<name>(<source dir>) first when it is defined.
 function(opad_engine_from_source name tag git commit config)
@@ -194,7 +204,7 @@ if(OPAD_CHRONO)
   endif()
   # Its licence texts kept with the install (the notices read them from there, cmake/notices.cmake): Chrono's BSD licence,
   # and Bullet's zlib notice for the collision code compiled into it.
-  file(COPY "${CHRONO_SOURCE_USED}/LICENSE" DESTINATION "${CHRONO_INSTALL_DIR}/share/licenses")
+  opad_engine_licence("${CHRONO_SOURCE_USED}" "${CHRONO_INSTALL_DIR}")
   file(COPY_FILE "${PROJECT_SOURCE_DIR}/cmake/notices_bullet.txt" "${CHRONO_INSTALL_DIR}/share/licenses/Bullet-zlib.txt" ONLY_IF_DIFFERENT)
   list(APPEND OPAD_NOTICES_BUILT
     "chrono|${CHRONO_INSTALL_DIR}|${OPAD_CHRONO_VERSION}|${OPAD_CHRONO_GIT} (tag ${OPAD_CHRONO_VERSION}, commit ${OPAD_CHRONO_COMMIT})|BSD-3-Clause, with Bullet's collision detection under Zlib|https://projectchrono.org|Project Chrono multibody dynamics (dynamic studies)|${CHRONO_INSTALL_DIR}/share/licenses/LICENSE,${CHRONO_INSTALL_DIR}/share/licenses/Bullet-zlib.txt")
@@ -230,7 +240,7 @@ if(OPAD_NETGEN)
   if(WIN32)
     file(COPY "${NETGEN_INSTALL_DIR}/bin/libngcore.dll" "${NETGEN_INSTALL_DIR}/bin/libnglib.dll" DESTINATION "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
   endif()
-  file(COPY "${NETGEN_SOURCE_USED}/LICENSE" DESTINATION "${NETGEN_INSTALL_DIR}/share/licenses")
+  opad_engine_licence("${NETGEN_SOURCE_USED}" "${NETGEN_INSTALL_DIR}")
   list(APPEND OPAD_NOTICES_BUILT
     "netgen|${NETGEN_INSTALL_DIR}|${OPAD_NETGEN_VERSION}|${OPAD_NETGEN_GIT} (tag v${OPAD_NETGEN_VERSION}, commit ${OPAD_NETGEN_COMMIT})|LGPL-2.1-only|https://ngsolve.org|Netgen mesh generator (static and modal studies)|${NETGEN_INSTALL_DIR}/share/licenses/LICENSE")
   set(OPAD_HAVE_NETGEN ON)
