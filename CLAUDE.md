@@ -613,7 +613,7 @@ filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`,
 ## CI and releases (`.github/workflows/ci.yml`, `promote.yml`, docs/releasing.md)
 
 Branches: **pull requests target `dev`** (never `main`). Each push to `dev` publishes a development build, a GitHub
-pre-release `dev-<build>` (notes: `[Unreleased]`, or the version's section when the version is new = the release
+pre-release `vA.B.(C+1)-dev.<build>` (the release candidate `vX.Y.Z-rc.<build>` when the version is new; notes: `[Unreleased]`, or the version's section for the release
 candidate; marker `<!-- opad-build: N; opad-version: X.Y.Z -->`; ten kept). `main` = the latest release: it moves only by
 *Actions > Promote dev to main* (promote.yml: checks Tested on dev's commit, `main` ancestor of `dev`, a new dated
 version; then `git push <sha>:main` with the deploy key PROMOTE_DEPLOY_KEY, a secret of the environment `promote` that only main's copy of the
