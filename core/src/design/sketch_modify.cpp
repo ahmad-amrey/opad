@@ -316,6 +316,13 @@ double offset_side(const Sketch& sk,const std::vector<int>& ids,double distance,
   return samples_apart(toward,curve_samples(plus,mp))<=samples_apart(toward,curve_samples(minus,mm))?d:-d;
 }
 
+double offset_toward(const Sketch& sk,const OffsetGroup& chain,double distance,bool round,double tx,double ty) {
+  if(chain.closed)return distance;
+  // The copy nearer the pointer lies on its side of the chain (nearer by 2|d| for a straight one, wherever the pointer is).
+  const double pointerSide=offset_side(sk,chain.ids,std::fabs(distance),round,tx,ty);
+  return distance<0?-pointerSide:pointerSide;
+}
+
 int offset_relationship(Sketch& sk,const std::vector<int>& ids,double distance,bool round,const std::string& expr) {
   std::vector<int> sources;
   for(int id:ids)if(const auto* e=sk.entity(id);e && e->type!=SkEntity::Type::Point && std::find(sources.begin(),sources.end(),id)==sources.end())sources.push_back(id);

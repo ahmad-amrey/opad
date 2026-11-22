@@ -344,6 +344,42 @@ TEST(offset_groups_split_the_selection_into_chains) {
   }
 }
 
+// Each open chain takes its side from the pointer, as if picked alone, and a negative distance turns every chain round
+// (not only the one nearest the pointer: one 10 mm away kept its side when the arrow's point was used for all).
+TEST(negative_distance_turns_every_chain) {
+  auto copies = [](Sketch sk, const std::vector<int>& ids, double distance, double px, double py) {
+    std::vector<std::pair<double, double>> mids;  // each copy's middle, in the order of the chains
+    for (const auto& g : offset_groups(sk, ids))
+      for (int id : offset_entities(sk, g.ids, offset_toward(sk, g, distance, false, px, py), false)) {
+        const SkEntity* e = sk.entity(id);
+        const SkPoint *a = sk.point(e->p.front()), *b = sk.point(e->p.back());
+        mids.push_back({(a->x + b->x) / 2, (a->y + b->y) / 2});
+      }
+    return mids;
+  };
+  auto near = [](std::pair<double, double> p, double x, double y) { return std::hypot(p.first - x, p.second - y) < 1e-6; };
+  {  // two lines apart, y = 0 and y = 10, the pointer between them
+    Sketch sk;
+    const int low = sk.add_line(sk.add_point(0, 0), sk.add_point(20, 0)), high = sk.add_line(sk.add_point(0, 10), sk.add_point(20, 10));
+    const auto plus = copies(sk, {low, high}, 2, 10, 5), minus = copies(sk, {low, high}, -2, 10, 5);
+    CHECK(plus.size() == 2 && near(plus[0], 10, 2) && near(plus[1], 10, 8));
+    CHECK(minus.size() == 2 && near(minus[0], 10, -2) && near(minus[1], 10, 12));
+  }
+  {  // a T (three chains at its junction), the pointer right of the stem and above the bar
+    Sketch sk;
+    const int o = sk.add_point(100, 0);
+    const std::vector<int> ids{sk.add_line(o, sk.add_point(80, 0)), sk.add_line(o, sk.add_point(120, 0)), sk.add_line(o, sk.add_point(100, 20))};
+    const auto plus = copies(sk, ids, 2, 110, 5), minus = copies(sk, ids, -2, 110, 5);
+    CHECK(plus.size() == 3 && near(plus[0], 90, 2) && near(plus[1], 110, 2) && near(plus[2], 102, 10));
+    CHECK(minus.size() == 3 && near(minus[0], 90, -2) && near(minus[1], 110, -2) && near(minus[2], 98, 10));
+  }
+  {  // a closed chain grows outward for a positive distance wherever the pointer is
+    Plate p = make_plate();
+    const auto groups = offset_groups(p.sk, p.sides);
+    CHECK(groups.size() == 1 && offset_toward(p.sk, groups[0], 2, false, 20, 10) == 2 && offset_toward(p.sk, groups[0], -2, false, 100, 100) == -2);
+  }
+}
+
 TEST(each_chain_offsets_as_if_alone) {
   // An L and a line apart: the L's copy is the one it makes alone (an open chain of two), the line's a line.
   Sketch sk;

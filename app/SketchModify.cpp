@@ -81,16 +81,36 @@ void SketchEditor::benchHandles() {
       case 9:{
         require(m_toolPreview && int(m_toolPreview->entities.size())==(*count)+3,"a preview of three offsets, one per line of the T");
         trace::log("bench: sketch offset of a branching chain: preview shows one offset per chain PASS");
+        // Zoomed in as in the report (2 mm far wider than the arrow, which then lies wholly on the far side of the line), the
+        // pointer below the bar and right of the stem.
+        const auto target=m_frame.to_world(110,0),normal=m_frame.normal();auto eye=target;for(int i=0;i<3;++i)eye[i]+=normal[i]*100;
+        m_viewport->setCameraJson({{"eye",eye},{"target",target},{"up",m_frame.y},{"scale",std::max(1,m_viewport->height())/50.0},{"projection","orthographic"},{"absolute",true}});
+        sketchMove(110,-6,Qt::NoModifier,false);
+        const QPointF foot=m_viewport->widgetPoint(m_frame.to_world(110,0)),two=m_viewport->widgetPoint(m_frame.to_world(110,2));
+        require(QLineF(foot,two).length()>DimensionHandle::kApproach+46,"zoomed in: 2 mm wider than the arrow and its reach");
+        m_options["distance"]="-2 mm";scheduleToolPreview();
+        break;
+      }
+      case 10:case 11:{
+        // Each chain as if picked alone with the pointer where it is: -2 mm puts every copy on the side away from the pointer
+        // (the bar's above it, the stem's left of it), 2 mm every copy on the pointer's side. Only the chain the arrow is on
+        // used to turn round; the stem kept x = 102 for both signs.
+        const bool negative=*phase==11;  // the phase was counted up as this one started
+        require(bool(m_toolPreview),"the preview at either sign");
+        std::vector<std::pair<double,double>> mids;
+        for(const auto& e:m_toolPreview->entities)if(!m_sk.entity(e.id) && e.type==SkEntity::Type::Line) {
+          const SkPoint *a=m_toolPreview->point(e.p[0]),*b=m_toolPreview->point(e.p[1]);mids.push_back({(a->x+b->x)/2,(a->y+b->y)/2});}
+        auto has=[&](double x,double y){return std::any_of(mids.begin(),mids.end(),[&](const auto& m){return std::hypot(m.first-x,m.second-y)<1e-6;});};
+        const double s=negative?-1:1;  // the pointer is below the bar (-y) and right of the stem (+x)
+        require(mids.size()==3 && has(90,-2*s) && has(110,-2*s) && has(100+2*s,10),
+                negative?"at -2 mm every chain's copy lies away from the pointer (the bar's above, the stem's left)":"at 2 mm every chain's copy lies on the pointer's side");
+        trace::log(QString("bench: sketch offset sign: at %1 every chain of the T on the %2 side PASS").arg(negative?"-2 mm":"2 mm",negative?"far":"pointer's"));
+        m_options["distance"]=negative?"2 mm":"-2 mm";scheduleToolPreview();  // the other sign next, then -2 mm again for the pull
+        break;
+      }
+      case 12:{
         // Without typing first: the pointer goes to the arrow from a way off, a step at a time as a mouse moves, and the
-        // arrow stays put under it (it used to slide along the line and flip over as the pointer crossed it). Zoomed in as
-        // in the report: 2 mm far wider than the arrow, which then lies wholly on the far side of the line.
-        {
-          const auto target=m_frame.to_world(110,0),normal=m_frame.normal();auto eye=target;for(int i=0;i<3;++i)eye[i]+=normal[i]*100;
-          m_viewport->setCameraJson({{"eye",eye},{"target",target},{"up",m_frame.y},{"scale",std::max(1,m_viewport->height())/50.0},{"projection","orthographic"},{"absolute",true}});
-          sketchMove(110,-6,Qt::NoModifier,false);
-          const QPointF foot=m_viewport->widgetPoint(m_frame.to_world(110,0)),two=m_viewport->widgetPoint(m_frame.to_world(110,2));
-          require(QLineF(foot,two).length()>DimensionHandle::kApproach+46,"zoomed in: 2 mm wider than the arrow and its reach");
-        }
+        // arrow stays put under it (it used to slide along the line and flip over as the pointer crossed it).
         const QLineF arrow=m_dimensionHandle->arrowLine();
         QPointF at=arrow.center()+QPointF(110,250);
         auto moveTo=[&](QPointF p){double u,v;require(m_viewport->planePoint(p,m_frame,u,v),"the pointer off the sketch plane");sketchMove(u,v,Qt::NoModifier,false);};
@@ -119,7 +139,7 @@ void SketchEditor::benchHandles() {
         require(option("distance")!=before,"pulling the arrow did not change the distance");
         break;
       }
-      case 10:{
+      case 13:{
         require(m_toolPreview && int(m_toolPreview->entities.size())==(*count)+3,"the preview after the pull");
         applyTool();
         int offsets=0;for(const auto& c:m_sk.constraints)if(c.type==SkConstraint::Type::Offset && c.sources==1)++offsets;

@@ -39,6 +39,10 @@ std::vector<int> offset_entities(Sketch& sk,const std::vector<int>& ids,double d
 // with the kernel's sign) whose copy lies nearer (tx, ty), the side the pointer is on. A closed chain: its kernel sign as
 // given is kept by the caller (positive grows outward).
 double offset_side(const Sketch& sk,const std::vector<int>& ids,double distance,bool round,double tx,double ty);
+// The signed distance one chain of offset_groups is offset by, as if it were picked alone with the pointer at (tx, ty): a
+// closed chain `distance` (positive grows outward); an open one its copy on the side of the chain the pointer is on for a
+// positive distance, on the other side for a negative one (so a negative distance turns every chain round).
+double offset_toward(const Sketch& sk,const OffsetGroup& chain,double distance,bool round,double tx,double ty);
 // The same, held by an offset relationship (SkConstraint::Type::Offset, `expr` kept as typed): the chain and its offset keep
 // their shape and move and turn together, and a new value of the relationship (double-click its label, or an expression's
 // parameter) makes the offset again at that distance (refresh_offsets). Returns the relationship.

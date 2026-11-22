@@ -1425,12 +1425,18 @@ void SketchEditor::offsetSelection() {
     const auto table=sketch_parameters(m_sk,paramTable(m_doc->scene));
     const double distance=table.length(text.toStdString());
     const bool round=option("corners","round")=="round";
-    // An open chain: one side only, the arrow's (the pointer's) for a positive distance, the other for a negative one. A
-    // closed one grows outward for a positive distance.
+    // An open chain: one side only, the pointer's for a positive distance, the other for a negative one, each chain as if
+    // picked alone (offset_toward). The chain the arrow is on takes the arrow's side (which points to the pointer, and stays
+    // put while the pointer is at it: a pull to a negative value leaves the pointer past the curve); the others the
+    // pointer's. A closed one grows outward for a positive distance.
     if(std::any_of(groups.begin(),groups.end(),[](const OffsetGroup& g){return !g.closed;}))updateDimensionHandle();
     std::vector<std::pair<std::vector<int>,double>> offsets;
-    for(const auto& g:groups)
-      offsets.push_back({g.ids,g.closed?distance:offset_side(m_sk,g.ids,distance,round,m_offsetArrow.x+m_offsetArrow.dx*distance,m_offsetArrow.y+m_offsetArrow.dy*distance)});
+    for(const auto& g:groups) {
+      const bool anchor=std::find(g.ids.begin(),g.ids.end(),m_offsetAnchor)!=g.ids.end();
+      const bool arrow=anchor || !m_haveCursor;
+      const double tx=arrow?m_offsetArrow.x+m_offsetArrow.dx*std::fabs(distance):m_cursor.u,ty=arrow?m_offsetArrow.y+m_offsetArrow.dy*std::fabs(distance):m_cursor.v;
+      offsets.push_back({g.ids,offset_toward(m_sk,g,distance,round,tx,ty)});
+    }
     const bool hold=option("relation","rigid")=="rigid";
     const std::string expr=plainValue(text)?std::string():table.explicit_length(text.toStdString());
     runSketchEdit(tr("Offset"),[offsets,round,hold,expr](Sketch& sk){
