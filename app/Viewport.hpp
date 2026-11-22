@@ -90,6 +90,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // worker's arrays, no refinement in it, hidden line hiding what is behind with outlines (UI-48)
   bool benchStyles(const QString& prefix, const std::function<void(const QString&)>& trigger);
   bool benchRefinedHighlight(const QString& prefix);  // OPAD_BENCH_REFINED_HIGHLIGHT (ViewportRefinedBench.cpp)
+  // Benches (ViewportRefinedBench.cpp): a node's box framed `zoom` times nearer than Fit, the zoom refinement run until it
+  // wants nothing more, the camera put back. What each object is drawn from then: "body" (the node: refined, deflection,
+  // base deflection, painted colours drawn and of its base) and "parts" (Compare's, the same).
+  opad::json benchRefineCloseUp(const std::string& node, double zoom);
   // G: the grid's visibility, one state outside sketches (view/grid) and one inside (sketch/grid, on unless hidden
   // there); gridShownChanged tells the G action which one it shows.
   void setGrid(bool on);
@@ -554,8 +558,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setBodiesPickable(bool on);  // off: only candidates can be picked (choosing a sketch plane, a profile)
   // Smart selection's candidate (UI-95, ViewportCandidates.cpp): what a click on its chip would select, in the candidate
   // amber, on top like the selection. Faces and edges are one object copied from the bodies' meshes (a sliced job when
-  // there are many), whole bodies take the look compositor's candidate layer. Empty: nothing shown.
-  void showCandidateRefs(const std::vector<opad::Ref>& refs);
+  // there are many), whole bodies take the look compositor's candidate layer. Empty: nothing shown. `again`: the same refs
+  // copied anew (the bodies' drawn arrays changed: a zoom refinement), the old highlight kept until the new one is drawn.
+  void showCandidateRefs(const std::vector<opad::Ref>& refs, bool again = false);
   size_t candidateRefsShown() const { return m_candidateShown; }  // faces and edges drawn now (benches)
   // The design checks' findings on the model (ViewportChecks.cpp, help audit P8), until replaced or cleared: the print check's
   // faces tinted in the warning amber (overhangs) and the error red (thin walls), one object per colour copied from the
@@ -1144,6 +1149,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   qint64 m_refineClock = 0;
   void scheduleRefinement();
   void refineVisible();
+  // What a refinement key draws on: a document body key (its bodies drawn plainly), refineTintKey(id) (that body with
+  // Compare's coloured faces), refineCompareKey(k) (Compare's k-th part, the other version's geometry).
+  std::vector<Handle(BodyShape)> refineTargets(const std::string& key) const;
+  std::shared_ptr<const BodyPrs> refineFallback(const std::string& key) const;  // the arrays they go back to (null: the base mesh)
+  std::shared_ptr<const BodyPrs> refineBase(const std::string& key) const;  // the arrays a refinement of it was made from
+  static std::string refineTintKey(const std::string& id) { return "\x01tint/" + id; }
+  static std::string refineComparePrefix() { return "\x01compare/"; }
+  static std::string refineCompareKey(size_t k) { return refineComparePrefix() + std::to_string(k); }
+  void dropRefined(const std::string& prefix);  // forgets the refinements whose key starts so (their objects are gone)
   std::set<std::string> m_meshing;
   std::set<std::string> m_meshSkipped;
   // A body's picture is decoded on a worker before the body is shown (80 ms for a 12 MP JPEG in displayBody), once per
@@ -1253,6 +1267,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
     std::shared_ptr<const opad::FaceColors> colors;
     const AIS_InteractiveObject* ais = nullptr;  // drawn on this object (null: its arrays are being built)
     std::string key;
+    std::shared_ptr<const BodyPrs> arrays;  // its coloured base mesh: what the body goes back to when its refinement is dropped
   };
   std::map<std::string, FaceTint> m_faceTints;  // setFaceTints
   unsigned m_faceTintSerial = 0;

@@ -854,6 +854,7 @@ void CompareMode::buildParts() {
         BodyPrs::meshForDisplay(shape, deflection(box));
         out->shapes[i] = shape;
         auto prs = BodyPrs::build(shape, box, true, n.colors);
+        prs->deflection = deflection(box);  // what the zoom refinement compares with the pixel (unset, it never refined a part)
         prs->buildNavigation();  // the orbit pivot lands on it
         out->prs[i] = std::move(prs);
         if (rigid && plain) meshed[{n.doc.get(), n.key}] = i;
@@ -953,6 +954,7 @@ void CompareMode::buildExtras() {
         BodyPrs::meshForDisplay(shape, deflection(box));
         out->shapes[i] = shape;
         auto prs = BodyPrs::build(shape, box, true, nullptr);
+        prs->deflection = deflection(box);  // refined when seen close up, as the document's bodies are
         prs->buildNavigation();  // the orbit pivot lands on it, in its pane
         out->prs[i] = std::move(prs);
         if (rigid) meshed[{n.doc.get(), n.key}] = i;

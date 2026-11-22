@@ -310,6 +310,24 @@ bool CompareMode::bench(const QString& prefix) {
           pass("the summary in the UI's language: " + line);
           return true;
         },
+        [=, this] {  // seen close up, Compare's own drawing is refined too: A's ghosts and Box1's coloured faces
+          if (!idle()) return false;
+          const opad::json box1 = vp->benchRefineCloseUp(st->body["Box1"], 8);
+          trace::log("bench: compare: close up on Box1: " + QString::fromStdString(box1.dump()));
+          const opad::json& b = box1["body"];
+          require(b.value("tinted", false) && b.value("refined", false) && b["deflection"].get<double>() < b["base"].get<double>() &&
+                      b["painted"] == b["basePainted"] && b["painted"].get<size_t>() > 0,
+                  "close up, Box1 is drawn from finer arrays with its changed faces still coloured: " + QString::fromStdString(b.dump()));
+          const opad::json box3 = vp->benchRefineCloseUp(st->body["Box3"], 8);
+          trace::log("bench: compare: close up on Box3: " + QString::fromStdString(box3.dump()));
+          bool ghost = false;
+          for (const auto& p : box3["parts"])
+            if (p.value("id", "") == st->body["Box3"] && p.value("displayed", false))
+              ghost = p.value("refined", false) && p["deflection"].get<double>() < p["base"].get<double>() && p["painted"] == p["basePainted"];
+          require(ghost, "close up, Box3's removed ghost is drawn from finer arrays: " + QString::fromStdString(box3["parts"].dump()));
+          pass("close up, Box1's coloured faces and Box3's ghost are zoom-refined (they showed their chords)");
+          return true;
+        },
         [=, this] {  // the clicked row selected Box1 and the timeline shows the feature
           const auto sel = vp->selection();
           if (sel.empty() || vp->looksPending()) return false;
