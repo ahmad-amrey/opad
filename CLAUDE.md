@@ -205,7 +205,10 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   input type), else an edit regenerates too much (a combine used to count as "automatic" and depend on every body:
   1.8 s and new keys per unrelated edit on the phone) or too little (fillets on "uuid/edge/N" tokens never followed
   their body). `materialize` hands later features the body parsed back from its BREP and keeps the stored key when a
-  recomputed body is `same_geometry`; `plan_regenerate(doc, true)` must add no body entries (test_design).
+  recomputed body is `same_geometry`; `plan_regenerate(doc, true)` must add no body entries (test_design). A failed
+  feature's result keeps `held` (the new bodies' id, name, parent, colour from its last good result, `held_bodies`) and
+  `materialize` takes them as the previous bodies when it works again: same node ids, so renames, appearance and later
+  references survive a sketch change that broke the profile and a re-pick (`ctest -R design`).
 - New feature kind = one `add(...)` in `build_specs()` + one `if (kind == ...)` in `compute_feature` (features.cpp).
   The panel, the menu, the CLI and `feature_kinds` follow from the spec; add the icon (Icons.cpp), the ribbon slot
   (`buildRibbon`) and the Arabic strings (labels/hints/choices go through `i18n::t`, so by hand into ar.json).
@@ -650,16 +653,23 @@ filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`,
 
 ## CI and releases (`.github/workflows/ci.yml`, `promote.yml`, docs/releasing.md)
 
-Branches: **work goes into `dev`** (never `main`); `dev` runs no checks: its ruleset requires a pull request (no
-direct commits) and blocks force pushes and deletion, but no status check, so pull requests merge at once. A development build is made on demand, *Build, test and release* > Run workflow on `dev` with `publish`:
-every platform built, tested and install-checked, and only then a GitHub
-pre-release `vA.B.(C+1)-dev.<build>` (the release candidate `vX.Y.Z-rc.<build>` when the version is new; notes: `[Unreleased]`, or the version's section for the release
-candidate; marker `<!-- opad-build: N; opad-version: X.Y.Z -->`; ten kept). `main` = the latest release: it moves only by
+Branches: **work goes into `dev`** (never `main`), the pre-release branch: only by pull requests, each built, tested and
+install-checked on every platform (CI runs on pull requests into `dev` and `main`); part of the setup: `dev`'s ruleset
+requires a pull request (merge commits only), `Tested` and "up to date", and blocks force pushes and deletion (without
+"up to date" a merge's tree is untested and its push run builds everything). A reused build's commit
+(OPAD_BUILD_COMMIT) is the commit its pull request tested, an ancestor of `dev` with merge commits. On main the reuse
+takes the run of the newest `vX.Y.Z-rc.<N>` on the commit (build N), so a release and its candidate share the build;
+promote also requires that candidate to be published on dev's commit. Every merge into `dev` (the push) publishes a
+GitHub pre-release `vA.B.(C+1)-dev.<build>` (the release candidate `vX.Y.Z-rc.<build>` when the version is new; notes:
+`[Unreleased]`, or the version's section for the release candidate; marker `<!-- opad-build: N; opad-version: X.Y.Z -->`;
+ten kept), reusing the pull request's packages (build once, below); Run workflow on `dev` with `publish` does it by hand.
+A batch of work: a short-lived branch from `dev`, the pieces merged there, one pull request into `dev`. `main` = the latest release: it moves only by
 *Actions > Promote dev to main* (promote.yml: checks Tested on dev's commit, `main` ancestor of `dev`, a new dated
 version; then `git push <sha>:main` with the deploy key PROMOTE_DEPLOY_KEY, a secret of the environment `promote` that only main's copy of the
 workflow may use, the deploy key being the only bypass of the `main` ruleset (PR + Tested); a second ruleset,
 `main-history`, blocks force pushes and deletion with no bypass; a
-GITHUB_TOKEN push would start no workflow), or by a hotfix PR into `main` (then merge `main` back into `dev`). Builds
+GITHUB_TOKEN push would start no workflow), or, in an emergency only, by a hotfix PR into `main` (then merge `main` back into `dev` at once: nothing on `dev` can be
+promoted until it holds `main`). Builds
 carry OPAD_BUILD_NUMBER (run number of the run that built them) and OPAD_BUILD_COMMIT; a promotion reuses the release
 candidate's packages, so a release and its candidate share (version, build). Promoting is Ahmad's; work is merged into `dev` with the coordinating session's go-ahead (Ahmad's, or a session he
 authorised).
@@ -672,7 +682,7 @@ Version job: the newest CHANGELOG.md version heading must equal the version (`[U
 version must be above the latest tag and have a dated non-empty section (`## [X.Y.Z] - YYYY-MM-DD`,
 `tools/changelog_section.sh`); a PR then gets the notice "Merging this pull request publishes OPAD X.Y.Z"; a hand-pushed
 tag must equal the version and be on main. Build once: a run that passed everywhere uploads `tested-<git tree>`; a later
-run with the same tree (a merged PR that was up to date with main) skips the platform jobs and the release downloads that
+run with the same tree (a merged PR that was up to date with its base, `dev` or `main`; the promotion) skips the platform jobs and the release downloads that
 run's packages (`run-id`); only successful runs of ci.yml in this repo whose head commit has that tree count. `Tested`
 (always runs) is the one required check. Windows = `windows-static-ucrt64` (MSYS2 has the static Qt only for
 UCRT64/CLANG64), Linux = OCCT from source + AppImage + `opad-deb`, macOS = Homebrew + dmg (macos-15, Apple silicon);

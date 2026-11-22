@@ -49,6 +49,9 @@ before they ship.
 - A dimension between two lines (and the other two-pick dimensions) draws its lines and arrows while you place it and
   after, not just the number.
 - Renaming an item in the browser no longer shows the old name peeking out behind the text box.
+- A body keeps its name, colour and visibility when the feature that made it breaks and is fixed again (a sketch change
+  loses the profile it was made from, and you pick the profile again). It used to come back as a new body named after
+  the feature.
 
 ## [0.10.0] - 2026-11-21
 

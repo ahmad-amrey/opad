@@ -68,12 +68,12 @@ jobs:
             exit 1
           fi
 
-          # The exact commit passed Tested: every platform built, tested and install-checked (the run that published its
-          # release candidate, Build on dev with Publish). Merging into dev runs nothing, so this is where the checks bite.
+          # The exact commit passed Tested: every platform built, tested and install-checked (the run of the merge into dev
+          # that published its release candidate, reusing its pull request's build).
           conclusion=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?check_name=Tested&per_page=20" \
             --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.started_at) | last | .conclusion // ""')
           if [ "$conclusion" != success ]; then
-            echo "::error::dev's commit $sha was not built and tested (Tested: ${conclusion:-none}). Publish its release candidate first: Actions > Build, test and release > Run workflow on dev with Publish ticked; promote once it has passed."
+            echo "::error::dev's commit $sha has not passed Tested (${conclusion:-none}). Wait for the run of its merge into dev (it publishes the release candidate), or Actions > Build, test and release > Run workflow on dev with Publish ticked; promote once it has passed."
             exit 1
           fi
 
@@ -104,8 +104,20 @@ jobs:
             echo "::error::the tag v$version exists without a published release: delete it (git push origin :refs/tags/v$version), then promote."
             exit 1
           fi
+          # Its release candidate is out: a published vX.Y.Z-rc.<N> on this very commit. Tested passes as soon as a merge's
+          # run finds its pull request's build, while that run's Release job (which publishes the candidate) can still
+          # fail; the release must be a candidate someone could install and test.
+          rc=""
+          for tag in $(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                         --jq ".[] | select(.draft | not) | .tag_name | select(startswith(\"v$version-rc.\"))"); do
+            if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)" = "$sha" ]; then rc=$tag; break; fi
+          done
+          if [ -z "$rc" ]; then
+            echo "::error::no release candidate of $version is published for dev's commit $sha. Re-run the failed Release job of that commit's run on dev, or Actions > Build, test and release > Run workflow on dev with Publish ticked; promote once v$version-rc.<build> is out."
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Promoting $sha publishes OPAD $version (latest release: ${latest:-none})."
+          echo "Promoting $sha ($rc) publishes OPAD $version (latest release: ${latest:-none})."
           {
             echo "### Promote dev to main"
             echo

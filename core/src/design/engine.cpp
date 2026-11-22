@@ -636,9 +636,11 @@ struct Walk {
       for (const auto& e : *timeline) {
         const json& d = e.data();
         if (e.op->type == "rename" && d.contains("name") && d["name"].is_string()) history_names->insert(d["name"].get<std::string>());
-        if (e.op->type == "feature" && d.contains("result") && d["result"].contains("bodies"))
-          for (const auto& b : d["result"]["bodies"])
-            if (b.contains("name") && b["name"].is_string()) history_names->insert(b["name"].get<std::string>());
+        if (e.op->type == "feature" && d.contains("result"))
+          for (const char* list : {"bodies", "held"})  // held: a failing feature's bodies, which come back under their names
+            if (d["result"].contains(list))
+              for (const auto& b : d["result"][list])
+                if (b.contains("name") && b["name"].is_string()) history_names->insert(b["name"].get<std::string>());
       }
     }
     std::set<std::string> used = history_names ? *history_names : std::set<std::string>();
@@ -682,6 +684,23 @@ struct Walk {
       for (const auto& r : out.removed) refuse(r, "consumed: keep it as a tool, or embed the file first");
   }
 
+  // A step that failed keeps who the bodies it made were (`held`: id, name, component, colour; no shape), from its last
+  // result that made them: when it works again (the profile picked again after a sketch change broke it) they come back as
+  // the same bodies, so a rename, a colour, a hide and later features' references to them still hold. A new body id each
+  // time lost them all.
+  static json held_bodies(const json& stored) {
+    json held = json::array();
+    for (const auto& b : stored.value("bodies", json::array()))
+      if (b.value("new", false) && b.contains("id")) {
+        json h = {{"id", b["id"]}, {"new", true}};
+        for (const char* k : {"name", "parent", "color"})
+          if (b.contains(k)) h[k] = b[k];
+        held.push_back(std::move(h));
+      }
+    if (held.empty() && stored.contains("held") && stored["held"].is_array()) held = stored["held"];
+    return held;
+  }
+
   json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name,
                    const std::string& component) {
     json result = json::object();
@@ -689,6 +708,8 @@ struct Walk {
     std::vector<json> prev_new;
     for (const auto& b : previous.value("bodies", json::array()))
       if (b.value("new", false)) prev_new.push_back(b);
+    if (prev_new.empty())  // back from a failure: the bodies it made before it (held_bodies)
+      for (const auto& b : previous.value("held", json::array())) prev_new.push_back(b);
     size_t next_new = 0, made = 0, made_count = 0;
     for (const auto& b : out.bodies) made_count += b.node.empty() && b.source.empty();
     for (const auto& b : out.bodies) {
@@ -1011,7 +1032,10 @@ struct Walk {
           return named.empty() ? f : sha256_hex(f + "|component:" + (gone ? "gone" : named)).substr(0, 24);
         };
         std::string fp = fingerprint();
-        if (!force && stored.value("in", "") == fp) {
+        // Not a result kept from a failure whose error a suppression took away (held, no error, no bodies): turned back on
+        // unchanged, it is computed again and says why it fails instead of passing for one that made nothing.
+        const bool failedQuietly = stored.contains("held") && !stored.contains("error") && !stored.contains("bodies");
+        if (!force && stored.value("in", "") == fp && !failedQuietly) {
           result = stored;
           note_fresh(result);
         } else {
@@ -1051,6 +1075,8 @@ struct Walk {
             if (std::string(ex.what()) == "cancelled") throw;
             result = {{"error", ex.what()}};
           }
+          if (result.contains("error"))
+            if (json held = held_bodies(stored); !held.empty()) result["held"] = std::move(held);
           // Recomputed only because something upstream changed, but it needs a linked file that is not loaded: what it last
           // made stays, under its old fingerprint, so it is computed again once the file is back (no error saved meanwhile).
           if (result.contains("error") && stored.contains("in") && !is_new(id) && !edited(id) && unloaded_inputs(builder.scene(), kind, inputs)) result = stored;
