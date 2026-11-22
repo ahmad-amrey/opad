@@ -205,7 +205,10 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   input type), else an edit regenerates too much (a combine used to count as "automatic" and depend on every body:
   1.8 s and new keys per unrelated edit on the phone) or too little (fillets on "uuid/edge/N" tokens never followed
   their body). `materialize` hands later features the body parsed back from its BREP and keeps the stored key when a
-  recomputed body is `same_geometry`; `plan_regenerate(doc, true)` must add no body entries (test_design).
+  recomputed body is `same_geometry`; `plan_regenerate(doc, true)` must add no body entries (test_design). A failed
+  feature's result keeps `held` (the new bodies' id, name, parent, colour from its last good result, `held_bodies`) and
+  `materialize` takes them as the previous bodies when it works again: same node ids, so renames, appearance and later
+  references survive a sketch change that broke the profile and a re-pick (`ctest -R design`).
 - New feature kind = one `add(...)` in `build_specs()` + one `if (kind == ...)` in `compute_feature` (features.cpp).
   The panel, the menu, the CLI and `feature_kinds` follow from the spec; add the icon (Icons.cpp), the ribbon slot
   (`buildRibbon`) and the Arabic strings (labels/hints/choices go through `i18n::t`, so by hand into ar.json).
