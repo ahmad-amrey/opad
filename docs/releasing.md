@@ -14,8 +14,10 @@ names, the installer, the release and its tag all take it from there. A version 
 release; the workflow creates the release and its tag `vX.Y.Z` itself, on the commit whose push to `main` changed the
 version. Nobody tags by hand in the normal course.
 
-Every build also carries a **build number** (the Actions run number that built it) and the commit it was built from (a
-pull request's head commit), shown in *About* and by `opad-cli version`. On `dev` every development build is newer than
+Every build also carries a **build number** (the Actions run number that built it) and the commit it was built from (for
+a reused build, the commit its pull request tested, kept in `dev`'s history by merge commits), shown in *About* and by
+`opad-cli version`. A release reuses its release candidate's own run (the newest `vX.Y.Z-rc.<N>` on the promoted
+commit names it), so the two share version and build. On `dev` every development build is newer than
 the last: code that comes back exactly (a revert) is built again with a new number instead of reusing its old build. Development builds share their version with the release before them (or with the release
 they will become), so the update check orders them by (version, build).
 
@@ -30,7 +32,7 @@ development build shows as its notes; a release turns it into `## [X.Y.Z] - YYYY
 | Pull request into `dev` | yes; it says what its merge will publish | Windows, Linux, macOS | nothing (the merge publishes) |
 | Merge into `dev` (the push) | yes | none when the pull request was up to date: its build is reused (below) | when everything passed: a **development build**, pre-release `vA.B.C-dev.<build>`, or the **release candidate** `vX.Y.Z-rc.<build>` when the version is new |
 | Actions > Build, test and release > Run workflow on `dev`, **Publish** ticked | yes | as for a merge | the same, by hand (a publish that failed) |
-| *Promote dev to main* | `dev`'s commit passed `Tested`, its version is new, `main` is in `dev`'s history | none (it only moves `main`) | nothing by itself |
+| *Promote dev to main* | `dev`'s commit passed `Tested` and has its published release candidate `vX.Y.Z-rc.<build>`, its version is new, `main` is in `dev`'s history | none (it only moves `main`) | nothing by itself |
 | Push to `main` (the promotion) | yes | none: the commit is `dev`'s, already built | the **release** `vX.Y.Z`, from the release candidate's very packages |
 | Pull request into `main` (emergencies only, below) | yes; "Merging this pull request publishes OPAD X.Y.Z" | Windows, Linux, macOS | nothing (the merge publishes) |
 | Tag `vX.Y.Z` pushed by hand | the tag must equal the version and be on `main` | as for `main` | the release |
@@ -97,8 +99,12 @@ The rules live in the repository's settings, not in a file; set them once (owner
 branches*: *Add target > Include by pattern* `dev` (no quotes). Leave the *Bypass list* empty. Tick **Restrict
 deletions**, **Block force pushes**, **Require a pull request before merging** (approvals can stay 0) and **Require
 status checks to pass** with **Require branches to be up to date before merging** ticked and the check `Tested` added
-(*Add checks*, type `Tested`, pick the one from GitHub Actions). Up to date matters: the merge then has the very tree its
-pull request tested, so `dev` never holds untested code and the merge reuses that build instead of building again.
+(*Add checks*, type `Tested`, pick the one from GitHub Actions). Under **Require a pull request before merging**, set
+*Allowed merge methods* to **Merge** only. This is part of the setup, and the flow relies on it: "up to date" gives the
+merge the very tree its pull request tested, so `dev` never holds untested code and the merge reuses that build. Without
+it a merge's tree was never tested; its run then builds everything and publishes only if that passes. Merge commits keep
+the commit the pull request tested in `dev`'s history: a reused build says that commit (*About*, `opad-cli version`),
+which a squash or rebase merge would leave in no branch.
 
 **`main`**: two rulesets, both targeting *Include default branch*, because a bypass lifts every rule of its ruleset:
 

@@ -651,8 +651,12 @@ filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`,
 ## CI and releases (`.github/workflows/ci.yml`, `promote.yml`, docs/releasing.md)
 
 Branches: **work goes into `dev`** (never `main`), the pre-release branch: only by pull requests, each built, tested and
-install-checked on every platform (CI runs on pull requests into `dev` and `main`); `dev`'s ruleset requires a pull
-request, `Tested` and "up to date", and blocks force pushes and deletion. Every merge into `dev` (the push) publishes a
+install-checked on every platform (CI runs on pull requests into `dev` and `main`); part of the setup: `dev`'s ruleset
+requires a pull request (merge commits only), `Tested` and "up to date", and blocks force pushes and deletion (without
+"up to date" a merge's tree is untested and its push run builds everything). A reused build's commit
+(OPAD_BUILD_COMMIT) is the commit its pull request tested, an ancestor of `dev` with merge commits. On main the reuse
+takes the run of the newest `vX.Y.Z-rc.<N>` on the commit (build N), so a release and its candidate share the build;
+promote also requires that candidate to be published on dev's commit. Every merge into `dev` (the push) publishes a
 GitHub pre-release `vA.B.(C+1)-dev.<build>` (the release candidate `vX.Y.Z-rc.<build>` when the version is new; notes:
 `[Unreleased]`, or the version's section for the release candidate; marker `<!-- opad-build: N; opad-version: X.Y.Z -->`;
 ten kept), reusing the pull request's packages (build once, below); Run workflow on `dev` with `publish` does it by hand.

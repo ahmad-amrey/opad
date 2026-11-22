@@ -250,7 +250,7 @@ jobs:
           # Only this repository's own runs (a fork's run may carry the same artifact name), every page.
           candidates=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=tested-$tree&per_page=100" \
             --jq '.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)
-                  | .workflow_run.id' | sort -u)
+                  | .workflow_run.id' | sort -u -n -r)  # newest first
           # A development build must be newer than every one already out (the update check orders them by build
           # number): code that comes back exactly (a revert) is built again rather than reused.
           newest_dev=0
@@ -260,7 +260,34 @@ jobs:
               | sort -n | tail -1)
             newest_dev=${newest_dev:-0}
           fi
+          # On main (the promotion, or a tag pushed by hand) the release is its release candidate's very build, so copies
+          # on that candidate are offered the release (same version and build): the newest published vX.Y.Z-rc.<N> whose
+          # tag is this commit names the run to take, build N. The same tree built twice (Publish with rebuild, code
+          # that came back) would otherwise hand main whichever run came first.
+          want=""
+          if [ "$GITHUB_REF" = refs/heads/main ] || [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=$(sed -n 's/^project(opad VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+            head=$(git rev-parse HEAD)
+            rcs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq ".[] | select(.draft | not) | .tag_name | select(startswith(\"v$version-rc.\"))" \
+              | awk -F. '{ print $NF, $0 }' | sort -n -r | cut -d' ' -f2)
+            for tag in $rcs; do
+              if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)" = "$head" ]; then
+                want=${tag##*.}
+                echo "Release candidate $tag is this commit: its build $want is the one to publish."
+                break
+              fi
+            done
+          fi
+          ordered=""
           for id in $candidates; do
+            if [ -n "$want" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .run_number)" = "$want" ]; then
+              ordered="$id $ordered"
+            else
+              ordered="$ordered $id"
+            fi
+          done
+          for id in $ordered; do
             number=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .run_number)
             if [ "$number" -le "$newest_dev" ]; then
               echo "Run $id (build $number) is not newer than development build $newest_dev; building again."
@@ -290,12 +317,19 @@ jobs:
             break
           done
           if [ -z "$run" ]; then
+            if [ -n "$want" ]; then
+              echo "::warning title=Not the release candidate's build::The packages of the release candidate (build $want) are gone; this run builds the release again (build $GITHUB_RUN_NUMBER)."
+            fi
             echo "No earlier build of exactly this code; building it."
             echo "build=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # The packages carry the build number of the run that built them.
-          echo "build=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .run_number)" >> "$GITHUB_OUTPUT"
+          number=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .run_number)
+          if [ -n "$want" ] && [ "$number" != "$want" ]; then
+            echo "::warning title=Not the release candidate's build::The packages of the release candidate (build $want) are gone; this release reuses build $number of the same code."
+          fi
+          echo "build=$number" >> "$GITHUB_OUTPUT"
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "::notice title=Reusing an earlier build::This exact code was built and tested in run $run ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run), so the builds are skipped."
 
