@@ -415,4 +415,134 @@ TEST(each_chain_offsets_as_if_alone) {
   CHECK_EQ(std::fabs(held.constraint(rels[1])->built), 4.0);
 }
 
+// The chain a click takes (chain_entities): every corner where two curves meet, and where several branch only the curve
+// that carries on smoothly, as in the report: the arch's right leg carries on down, the horizontal line beside it stays out.
+TEST(chain_follows_the_smooth_way_at_a_branch) {
+  auto set = [](std::vector<int> v) { return std::set<int>(v.begin(), v.end()); };
+  Sketch sk;
+  const int a0 = sk.add_point(0, 0), a1 = sk.add_point(0, 10), top = sk.add_point(10, 20), b0 = sk.add_point(20, 10), b1 = sk.add_point(20, 0);
+  const int c1 = sk.add_point(10, 10), c2 = sk.add_point(10, 10), side = sk.add_point(30, 10), guide = sk.add_point(-5, 15);
+  const int left = sk.add_line(a0, a1), arc1 = sk.add_arc(c1, top, a1), arc2 = sk.add_arc(c2, b0, top), right = sk.add_line(b0, b1);
+  const int branch = sk.add_line(b0, side), construction = sk.add_line(a1, guide, true);
+  CHECK((set(chain_entities(sk, {left})) == std::set<int>{left, arc1, arc2, right}));
+  CHECK((set(chain_entities(sk, {right})) == std::set<int>{left, arc1, arc2, right}));
+  CHECK((chain_entities(sk, {left}).front() == left));
+  // From the branch both ways on turn a right angle: no clear way on, it stays alone. The construction line too.
+  CHECK((set(chain_entities(sk, {branch})) == std::set<int>{branch}));
+  CHECK((set(chain_entities(sk, {construction})) == std::set<int>{construction}));
+  // connected_entities still takes the whole shape (Move, Align, a rigid group).
+  CHECK((set(connected_entities(sk, {left})).count(branch) == 1));
+}
+
+TEST(chain_stops_where_no_branch_carries_on) {
+  auto set = [](std::vector<int> v) { return std::set<int>(v.begin(), v.end()); };
+  Sketch sk;
+  // A T: the bar runs straight through, the stem stops at it.
+  const int o = sk.add_point(100, 0);
+  const int barL = sk.add_line(o, sk.add_point(80, 0)), barR = sk.add_line(o, sk.add_point(120, 0)), stem = sk.add_line(o, sk.add_point(100, 20));
+  CHECK((set(chain_entities(sk, {barR})) == std::set<int>{barL, barR}));
+  CHECK((set(chain_entities(sk, {stem})) == std::set<int>{stem}));
+  // A Y: both arms turn 30 degrees off the leg: neither is the way on.
+  const int y = sk.add_point(0, 50);
+  const int leg = sk.add_line(sk.add_point(0, 30), y);
+  const int arm1 = sk.add_line(y, sk.add_point(-10, 50 + 10 * std::sqrt(3.0))), arm2 = sk.add_line(y, sk.add_point(10, 50 + 10 * std::sqrt(3.0)));
+  CHECK((set(chain_entities(sk, {leg})) == std::set<int>{leg}));
+  CHECK((set(chain_entities(sk, {arm1})) == std::set<int>{arm1}));
+  (void)arm2;
+  // A rectangle: every corner joins two curves, so the chain goes all round, and stops where it started.
+  const int p = sk.add_point(200, 0), q = sk.add_point(240, 0), r = sk.add_point(240, 20), s = sk.add_point(200, 20);
+  const std::vector<int> rect{sk.add_line(p, q), sk.add_line(q, r), sk.add_line(r, s), sk.add_line(s, p)};
+  CHECK((set(chain_entities(sk, {rect[2]})) == set(rect)));
+  // Ends that only touch (two points in one place, as a DXF brings them) still chain.
+  const int t1 = sk.add_point(300, 0), t2 = sk.add_point(310, 0), t3 = sk.add_point(310, 0), t4 = sk.add_point(310, 10);
+  const int u1 = sk.add_line(t1, t2), u2 = sk.add_line(t3, t4);
+  CHECK((set(chain_entities(sk, {u1})) == std::set<int>{u1, u2}));
+}
+
+// The branch turned down at a point is never taken from its other end: the arch's frame comes round through plain corners to
+// the leg's top, where the leg and the arch already meet (a third chain curve there would bring the report's horizontal back).
+TEST(chain_never_puts_three_curves_on_a_point) {
+  auto set = [](std::vector<int> v) { return std::set<int>(v.begin(), v.end()); };
+  Sketch sk;
+  const int a0 = sk.add_point(0, 0), a1 = sk.add_point(0, 10), top = sk.add_point(10, 20), b0 = sk.add_point(20, 10), b1 = sk.add_point(20, 0);
+  const int c = sk.add_point(10, 10), p = sk.add_point(30, 10), q = sk.add_point(30, 0);
+  const int left = sk.add_line(a0, a1), arc1 = sk.add_arc(c, top, a1), arc2 = sk.add_arc(c, b0, top), right = sk.add_line(b0, b1);
+  const int branch = sk.add_line(b0, p), pq = sk.add_line(p, q), qb = sk.add_line(q, b1);
+  const auto chain = set(chain_entities(sk, {arc2}));
+  CHECK((chain == std::set<int>{left, arc1, arc2, right, qb, pq}));
+  CHECK(!chain.count(branch));
+  const auto groups = offset_groups(sk, chain_entities(sk, {arc2}));
+  CHECK_EQ(groups.size(), size_t(1));
+  CHECK(!groups.front().closed);
+  // A window over many curves ending on one vertical line (a converted drawing's hatch) joins nothing it should not.
+  Sketch hatch;
+  std::vector<int> lines;
+  for (int i = 0; i < 2000; ++i) lines.push_back(hatch.add_line(hatch.add_point(0, i * 0.5), hatch.add_point(5, i * 0.5)));
+  CHECK((set(chain_entities(hatch, {lines[7]})) == std::set<int>{lines[7]}));
+}
+
+// The same chain whichever of its curves is clicked and however it was drawn: a rectangle with the bottom carried on straight
+// past a corner takes the straight way (the side meeting it at a right angle goes), its mirror image the same; a click on that
+// side keeps it, the rectangle closing instead.
+TEST(chain_is_the_same_from_every_curve) {
+  auto set = [](std::vector<int> v) { return std::set<int>(v.begin(), v.end()); };
+  for (const bool mirrored : {false, true}) {
+    Sketch sk;
+    const int p0 = sk.add_point(0, 0), p1 = sk.add_point(10, 0), p2 = sk.add_point(10, 5), p3 = sk.add_point(0, 5);
+    const int bottom = sk.add_line(p0, p1), right = sk.add_line(p1, p2), top = sk.add_line(p2, p3), left = sk.add_line(p3, p0);
+    const int ext = mirrored ? sk.add_line(p1, sk.add_point(30, 0)) : sk.add_line(p0, sk.add_point(-20, 0));
+    const int cornerSide = mirrored ? right : left;
+    std::set<int> expect{bottom, right, top, left, ext};
+    expect.erase(cornerSide);
+    for (int seed : {bottom, top, ext, mirrored ? left : right}) CHECK((set(chain_entities(sk, {seed})) == expect));
+    CHECK((set(chain_entities(sk, {cornerSide})) == std::set<int>{bottom, right, top, left}));
+  }
+  // Two seeds in one call (a window) each bring their own chain: an X of four lines, two of them boxed.
+  Sketch x;
+  const int c = x.add_point(0, 0);
+  const int a1 = x.add_line(x.add_point(-10, 0), c), a2 = x.add_line(c, x.add_point(10, 0)), b1 = x.add_line(x.add_point(0, -10), c), b2 = x.add_line(c, x.add_point(0, 10));
+  CHECK((set(chain_entities(x, {a1, b1})) == std::set<int>{a1, a2, b1, b2}));
+  CHECK((set(chain_entities(x, {b1, a1})) == std::set<int>{a1, a2, b1, b2}));
+  // Two rectangles touching at a corner: straight through it both ways, so one loop round both, which offset_groups cuts into
+  // the two closed outlines (each offset outward), as before.
+  Sketch two;
+  const int q0 = two.add_point(0, 0), q1 = two.add_point(10, 0), xx = two.add_point(10, 10), q3 = two.add_point(0, 10);
+  const int r1 = two.add_point(20, 10), r2 = two.add_point(20, 20), r3 = two.add_point(10, 20);
+  const std::vector<int> all{two.add_line(q0, q1), two.add_line(q1, xx), two.add_line(xx, q3), two.add_line(q3, q0),
+                             two.add_line(xx, r1), two.add_line(r1, r2), two.add_line(r2, r3), two.add_line(r3, xx)};
+  CHECK((set(chain_entities(two, {all[0]})) == set(all)));
+  const auto groups = offset_groups(two, chain_entities(two, {all[0]}));
+  CHECK_EQ(groups.size(), size_t(2));
+  CHECK(groups[0].closed && groups[1].closed);
+}
+
+// Drawn either way round, and with a window's seeds in any order, the chain comes out the same: a frame closing on a chord
+// (both loose ends of the path come back to points it runs through), and the rectangle with its bottom carried on.
+TEST(chain_ignores_drawing_direction_and_seed_order) {
+  auto set = [](std::vector<int> v) { return std::set<int>(v.begin(), v.end()); };
+  std::set<std::set<int>> results;
+  for (const bool reversed : {false, true}) {
+    Sketch sk;
+    const int x1 = sk.add_point(0, 0), x2 = sk.add_point(10, 0), w = sk.add_point(-5, 0), nw = sk.add_point(-5, 10), ne = sk.add_point(10, 10);
+    const int s = sk.add_point(10, -5), sw = sk.add_point(0, -5);
+    auto line = [&](int a, int b) { return reversed ? sk.add_line(b, a) : sk.add_line(a, b); };
+    const int a = line(x1, x2), b = line(x1, w), c1 = line(w, nw), c2 = line(nw, ne), c3 = line(ne, x2), d = line(x2, s), e1 = line(s, sw), e2 = line(sw, x1);
+    std::set<int> got = set(chain_entities(sk, {b}));
+    // In entity order (ids are the same either way round), so the two runs compare.
+    std::set<int> rank;
+    const std::vector<int> order{a, b, c1, c2, c3, d, e1, e2};
+    for (size_t i = 0; i < order.size(); ++i)
+      if (got.count(order[i])) rank.insert(int(i));
+    results.insert(rank);
+    CHECK(got.count(b) == 1);
+  }
+  CHECK_EQ(results.size(), size_t(1));
+  Sketch sk;
+  const int p0 = sk.add_point(0, 0), p1 = sk.add_point(10, 0), p2 = sk.add_point(10, 5), p3 = sk.add_point(0, 5);
+  const int bottom = sk.add_line(p0, p1), right = sk.add_line(p1, p2), top = sk.add_line(p2, p3), left = sk.add_line(p3, p0);
+  sk.add_line(p0, sk.add_point(-20, 0));
+  CHECK((set(chain_entities(sk, {left, bottom})) == set(chain_entities(sk, {bottom, left}))));
+  CHECK((set(chain_entities(sk, {top, left, right})) == set(chain_entities(sk, {right, top, left}))));
+}
+
 CHECK_MAIN()

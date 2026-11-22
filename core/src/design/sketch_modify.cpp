@@ -1,6 +1,7 @@
 #include "opad/design/sketch_modify.hpp"
 #include "opad/design/sketch_pattern.hpp"
 #include <BRepAdaptor_Curve.hxx>
+#include <gp_Vec2d.hxx>
 #include <BRepBndLib.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
@@ -29,6 +30,7 @@
 #include <TopoDS_Vertex.hxx>
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
 
 namespace opad::design {
@@ -41,6 +43,166 @@ std::vector<int> connected_entities(const Sketch& sk,const std::vector<int>& see
   for(size_t i=0;i<pending.size();++i)for(const auto* e:incident[pending[i]])
     if(ids.insert(e->id).second)for(int p:e->p)if(points.insert(p).second)pending.push_back(p);
   return {ids.begin(),ids.end()};
+}
+namespace {
+// A curve's two ends (none for a circle, an ellipse or a closed spline).
+bool curve_ends(const SkEntity& e,int& a,int& b) {
+  if(e.type==SkEntity::Type::Line && e.p.size()>=2){a=e.p[0];b=e.p[1];return true;}
+  if(e.type==SkEntity::Type::Arc && e.p.size()>=3){a=e.p[1];b=e.p[2];return true;}
+  if(e.type==SkEntity::Type::Spline && e.p.size()>=2 && !e.periodic && e.p.front()!=e.p.back()){a=e.p.front();b=e.p.back();return true;}
+  return false;
+}
+}
+std::vector<int> chain_entities(const Sketch& sk,const std::vector<int>& seeds) {
+  // Every curve end, ends in one place (1e-6 mm, as offset_groups and sketch_wire join curves) as one node: a grid of
+  // 1e-6 cells, each end against the 3 x 3 cells round it (a converted drawing's 100k curves, many ends on one x).
+  std::map<int,int> parent;
+  auto root=[&](int p){while(parent[p]!=p)p=parent[p]=parent[parent[p]];return p;};
+  for(const auto& e:sk.entities){int a,b;if(curve_ends(e,a,b)){parent.emplace(a,a);parent.emplace(b,b);}}
+  std::map<std::pair<long long,long long>,std::vector<int>> cells;
+  for(const auto& [p,unused]:parent)if(const SkPoint* q=sk.point(p)) {
+    const long long cx=std::llround(q->x/1e-6),cy=std::llround(q->y/1e-6);
+    for(long long i=cx-1;i<=cx+1;++i)for(long long j=cy-1;j<=cy+1;++j)
+      if(auto it=cells.find({i,j});it!=cells.end())for(int o:it->second) {
+        const SkPoint* r=sk.point(o);
+        if(std::hypot(q->x-r->x,q->y-r->y)<=1e-6)parent[root(p)]=root(o);
+      }
+    cells[{cx,cy}].push_back(p);
+  }
+  // A curve closed on itself (both ends one node: a teardrop) is a chain of its own, never linked.
+  auto open=[&](const SkEntity& e){int a,b;return curve_ends(e,a,b) && root(a)!=root(b);};
+  auto node=[&](const SkEntity& e,bool first){int a,b;curve_ends(e,a,b);return root(first?a:b);};
+  std::map<int,std::vector<const SkEntity*>> at;  // node -> the open curves ending there
+  for(const auto& e:sk.entities)if(open(e)){at[node(e,true)].push_back(&e);at[node(e,false)].push_back(&e);}
+  // The way a curve leaves its first or last end (curve_ends' a or b; unit, in the sketch plane): the derivative of its edge
+  // at the parameter end lying there.
+  std::map<std::pair<int,bool>,gp_Vec2d> leaving;
+  auto away=[&](const SkEntity& e,bool first)->gp_Vec2d {
+    const auto key=std::make_pair(e.id,first);
+    if(auto it=leaving.find(key);it!=leaving.end())return it->second;
+    gp_Vec2d dir(0,0);
+    try {
+      int a,b;
+      const TopoDS_Edge edge=curve_ends(e,a,b)?entity_edge(sk,e,Frame{}):TopoDS_Edge();
+      const SkPoint* q=sk.point(first?a:b);
+      if(!edge.IsNull() && q) {
+        BRepAdaptor_Curve c(edge);
+        const double f=c.FirstParameter(),l=c.LastParameter();
+        const gp_Pnt here(q->x,q->y,0);
+        const bool atFirst=c.Value(f).Distance(here)<=c.Value(l).Distance(here);
+        gp_Pnt p;gp_Vec d;c.D1(atFirst?f:l,p,d);
+        if(!atFirst)d.Reverse();  // the derivative runs with the parameter: into the curve at its first end, out at its last
+        if(d.Magnitude()<1e-12)d=gp_Vec(p,c.Value(atFirst?f+1e-3*(l-f):l-1e-3*(l-f)));  // a cusp at the end: towards a point just inside
+        if(d.Magnitude()>1e-12){dir=gp_Vec2d(d.X(),d.Y());if(dir.Magnitude()>1e-12)dir.Normalize();}
+      }
+    }catch(const Standard_Failure&){}
+    leaving.emplace(key,dir);
+    return dir;
+  };
+  // The curves of its kind (construction or not) ending with `e` at its end `first`.
+  auto others=[&](const SkEntity& e,bool first){
+    std::vector<const SkEntity*> out;
+    for(const SkEntity* c:at[node(e,first)])if(c!=&e && c->construction==e.construction)out.push_back(c);
+    return out;
+  };
+  // Where several curves branch: the one carrying on smoothly from `e` (turning at most 15 degrees, clearly the nearest).
+  constexpr double kSmooth=15*M_PI/180,kClear=1*M_PI/180;
+  std::map<std::pair<int,bool>,const SkEntity*> smoothest;
+  auto smooth=[&](const SkEntity& e,bool first)->const SkEntity* {
+    const auto key=std::make_pair(e.id,first);
+    if(auto it=smoothest.find(key);it!=smoothest.end())return it->second;
+    const int n=node(e,first);
+    const gp_Vec2d inward=-away(e,first);
+    const SkEntity* to=nullptr;double best=1e300,second=1e300;
+    for(const SkEntity* c:others(e,first)) {
+      const gp_Vec2d out=away(*c,node(*c,true)==n);
+      if(inward.Magnitude()<1e-12 || out.Magnitude()<1e-12)continue;
+      const double turn=std::fabs(inward.Angle(out));
+      if(turn<best){second=best;best=turn;to=c;}else if(turn<second)second=turn;
+    }
+    if(best>kSmooth || second-best<kClear)to=nullptr;
+    smoothest.emplace(key,to);
+    return to;
+  };
+  // The link at a curve's end: the other curve where only two of its kind meet (any corner), and where several branch the
+  // one each of the two takes for the other's smooth way on. Links pair curve ends both ways, so following them from a curve
+  // gives one path or one loop, the same whichever of its curves it starts from or which way they were drawn.
+  struct End { const SkEntity* curve=nullptr; bool first=true; };
+  auto link=[&](const SkEntity& e,bool first)->End {
+    const auto list=others(e,first);
+    const SkEntity* to=nullptr;
+    if(list.size()==1)to=list.front();
+    else if(list.size()>1) {
+      to=smooth(e,first);
+      if(to && smooth(*to,node(*to,true)==node(e,first))!=&e)to=nullptr;
+    }
+    if(!to)return {};
+    return {to,node(*to,true)==node(e,first)};
+  };
+  std::vector<int> out;
+  std::set<int> in,settled;  // settled: the curves of a chain nothing was trimmed from, which any of them gives the same
+  for(int id:seeds) {
+    const SkEntity* seed=sk.entity(id);
+    if(!seed){if(sk.point(id) && in.insert(id).second)out.push_back(id);continue;}
+    if(settled.count(id))continue;
+    if(seed->type==SkEntity::Type::Point || !open(*seed)){if(in.insert(id).second)out.push_back(id);settled.insert(id);continue;}
+    // The path through the seed, link by link both ways, each curve with its end facing the path's front.
+    std::vector<End> path;  // each curve with its end towards the path's front
+    bool loop=false;
+    std::set<int> taken{seed->id};
+    for(End e=link(*seed,true);e.curve;) {  // towards the front, out of the seed's first end (reversed once below)
+      if(e.curve==seed){loop=true;break;}
+      if(!taken.insert(e.curve->id).second)break;
+      path.push_back({e.curve,!e.first});  // its end facing the front is the one it did not come in by
+      e=link(*e.curve,!e.first);
+    }
+    std::reverse(path.begin(),path.end());
+    path.push_back({seed,true});
+    if(!loop)for(End e=link(*seed,false);e.curve;) {  // towards the back, out of the seed's last end
+      if(!taken.insert(e.curve->id).second)break;
+      path.push_back({e.curve,e.first});
+      e=link(*e.curve,!e.first);
+    }
+    // One way along it whichever way the seed was drawn (from the end curve with the smaller id), so what is trimmed below
+    // does not depend on it.
+    if(!loop && path.size()>1 && path.front().curve->id>path.back().curve->id) {
+      std::reverse(path.begin(),path.end());
+      for(auto& p:path)p.first=!p.first;
+    }
+    bool cutSeed=false;  // the seed was a loose end, so the path was cut for it: another seed would keep another part
+    // A path whose loose end comes back to a point it already runs through (an arch's frame round to the leg's top, where
+    // the leg and the arch meet): that end's curve goes, so no three of its curves meet at a point (offset_groups would cut
+    // the chain there and close the frame on its own). The clicked curve stays: then the path is cut where it runs through
+    // that point instead, the clicked curve's side kept.
+    while(!loop && path.size()>1) {
+      std::map<int,int> count;
+      for(const auto& p:path){++count[node(*p.curve,true)];++count[node(*p.curve,false)];}
+      const int front=node(*path.front().curve,path.front().first),back=node(*path.back().curve,!path.back().first);
+      const bool atFront=count[front]>=3,atBack=!atFront && count[back]>=3;
+      if(!atFront && !atBack)break;
+      if(atFront && path.front().curve!=seed){path.erase(path.begin());continue;}
+      if(atBack && path.back().curve!=seed){path.pop_back();continue;}
+      // The seed itself is the loose end: cut the path at the link that runs through that point, keeping the seed's side.
+      cutSeed=true;
+      const int at=atFront?front:back;
+      if(atFront) {
+        size_t cut=path.size();
+        for(size_t i=0;i+1<path.size();++i)if(node(*path[i].curve,!path[i].first)==at){cut=i+1;break;}
+        if(cut==path.size())break;
+        path.resize(cut);
+      } else {
+        size_t cut=0;
+        for(size_t i=path.size()-1;i>0;--i)if(node(*path[i].curve,path[i].first)==at){cut=i;break;}
+        if(cut==0)break;
+        path.erase(path.begin(),path.begin()+cut);
+      }
+    }
+    if(in.insert(seed->id).second)out.push_back(seed->id);
+    for(const auto& p:path)if(in.insert(p.curve->id).second)out.push_back(p.curve->id);
+    // Any other curve of what is kept, as the seed, gives the same: the trimming took only loose ends, none of them the seed.
+    if(!cutSeed)for(const auto& p:path)settled.insert(p.curve->id);
+  }
+  return out;
 }
 std::vector<OffsetGroup> offset_groups(const Sketch& sk,const std::vector<int>& ids) {
   std::vector<OffsetGroup> out;

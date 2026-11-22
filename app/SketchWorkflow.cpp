@@ -229,6 +229,9 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
       auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());overlay->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DASH);  // dashed: what Enter would add, apart from the amber references (as the guides draw it)
       m_toolPreviewOverlay=overlay;if(m_visible)showToolPreview();
       if(!stale)emit status(tr("Preview ready. Press Enter or Apply to keep it, or change the values."));return;}
+    // An Apply computed afresh (no preview ready: one still coming, or the shown one no longer what Apply makes): the shown
+    // overlay goes with it, as when a ready preview is committed.
+    m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
     ++m_modelRevision;m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
     m_applyCloses=closes;m_clicks.clear();m_picked.clear();m_sel.clear();applied();rebuild();scheduleFill();toolPrompt();emit changed();
   });
@@ -534,6 +537,7 @@ void SketchEditor::invalidatePreview(bool keepOverlay) {
   if(!m_toolPreview)return;m_toolPreview.reset();rebuild();
 }
 void SketchEditor::applied() {
+  resetOffsetSides();  // the next offset (Shift kept the tool) takes its sides from the pointer again
   if(m_tool=="mirror")m_options["mirrorStage"]="seed";  // the next curves to mirror, then their line
   if(m_tool=="image_calibrate"){m_options.remove("knownDistance");m_calibrateShown.clear();}  // the next two clicks show their own distance
   if(sketchkeys::referenceTool(m_tool.toStdString()) && !m_sources.isEmpty()){m_sources.clear();emit workflowChanged();}  // the next sources
@@ -565,6 +569,9 @@ void SketchEditor::updateDimensionHandle() {
   if(!m_active || !m_visible || m_tool!="offset" || m_sel.empty()){m_dimensionHandle->hide();return;}
   if(m_dimensionHandle->interacting())return;
   auto selected=[&](int id){return std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end() && m_sk.entity(id);};
+  // Pulled or typed (holdOffsetSides): the arrow stays where it is, on its chain's copy, whatever the pointer does.
+  if(offsetSidesHeld() && selected(m_offsetAnchor))  // also when shown again (the sketch hidden meanwhile): from where it stood
+    return configureDimensionHandle(m_offsetArrow.x,m_offsetArrow.y,m_offsetArrow.dx,m_offsetArrow.dy);
   // The pointer on its way to the arrow or its box (or over the curve at the arrow's foot): the handle stays where it is.
   // Following the pointer, its foot slid along the curve and, with a negative distance, the arrow sat on the far side and
   // flipped over as the pointer crossed the curve: it ran away from the mouse until a typed value froze it.

@@ -303,7 +303,7 @@
     {"use": "dragHandle", "args": {"at0": [13, 0], "at1": [15, 0], "dir": [1, 0], "t0": 1.6, "t1": 2.5, "v0": 5, "v1": 7, "from": 1.0, "to": 2.7, "dx": 16, "dy": -30}},
     {"el": "arrow", "dir": [1, 0], "at": [15, 0], "from": 2.7, "to": 3.4, "fade": 0, "keys": [[2.95, {"at": [15, 0]}], [3.1, {"at": [14, 0]}]]},
     {"use": "typedValue", "args": {"t": 2.7, "s1": "6", "s2": "6", "press": 3.35, "dx": 16, "dy": -30, "field": "7.0 mm"}},
-    {"use": "sketchDraw", "args": {"badge": "offset", "keys": [[0, {"pos": [-22, -11]}], [0.9, {"pos": [-4, -6], "click": 1}], [1.4, {"pos": [13.5, 0]}], [1.6, {"pos": [13.5, 0], "down": true}], [2.5, {"pos": [15.5, 0], "down": false}], [3.6, {"pos": [15.5, 0]}], [4.3, {"pos": [22, -8]}]]}}
+    {"use": "sketchDraw", "args": {"badge": "offset", "keys": [[0, {"pos": [-22, -11]}], [0.9, {"pos": [-4, -6], "click": 1}], [1.15, {"pos": [8, 0]}], [1.4, {"pos": [13.5, 0]}], [1.6, {"pos": [13.5, 0], "down": true}], [2.5, {"pos": [15.5, 0], "down": false}], [3.6, {"pos": [15.5, 0]}], [4.3, {"pos": [22, -8]}]]}}
    ],
    "steps": [
     {"to": 1.0, "caption": "Click a curve: its chain is picked"},

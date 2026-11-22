@@ -67,6 +67,7 @@ double norm_angle(double a) {  // into [0, 2 pi)
 void SketchEditor::setTool(const QString& tool) {
   // The offset's arrow and value box go with the tool at once, also when a running job makes this call return early.
   if(tool!="offset")m_dimensionHandle->hide();
+  resetOffsetSides();  // a held side belongs to one use of the tool, not to the selection it had
   if(m_editJob && m_previewComputing){invalidatePreview();m_editJob->cancel();m_editJob=nullptr;m_previewComputing=false;}
   if (!m_active || m_editJob) return;
   invalidatePreview();
@@ -648,14 +649,11 @@ void SketchEditor::constraintClick(const Hit& h) {
     // The curve under the pointer, not under the snap (a click near an end snapped onto the end point).
     const int curve = curveAtPress(false);
     if (!curve) return emit status(tr("Pick a curve: a group holds curves."));
-    std::vector<int> ids{curve};
-    if (chainOnClick())
-      for (int e : connected_entities(m_sk, {curve}))
-        if (e != curve && m_sk.entity(e)) ids.push_back(e);
-    if (std::find(m_picked.begin(), m_picked.end(), curve) != m_picked.end()) {  // picked again: dropped, with its chain
-      std::erase_if(m_picked, [&](int id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); });
+    // Picked again: that curve alone is dropped (so one can be left out of a chain), else it comes with its connected shape.
+    if (auto it = std::find(m_picked.begin(), m_picked.end(), curve); it != m_picked.end()) {
+      m_picked.erase(it);
     } else {
-      for (int e : ids)
+      for (int e : clickChain(curve))
         if (std::find(m_picked.begin(), m_picked.end(), e) == m_picked.end()) m_picked.push_back(e);
     }
     rebuild();
@@ -1425,24 +1423,97 @@ void SketchEditor::offsetSelection() {
     const auto table=sketch_parameters(m_sk,paramTable(m_doc->scene));
     const double distance=table.length(text.toStdString());
     const bool round=option("corners","round")=="round";
-    // An open chain: one side only, the pointer's for a positive distance, the other for a negative one, each chain as if
-    // picked alone (offset_toward). The chain the arrow is on takes the arrow's side (which points to the pointer, and stays
-    // put while the pointer is at it: a pull to a negative value leaves the pointer past the curve); the others the
-    // pointer's. A closed one grows outward for a positive distance.
+    // Apply commits the preview when it is ready (applyTool). A preview records what it was asked with (m_offsetPlanned: the
+    // selection and the sides, offsetSideKey); the job's worker turns each chain's aim into the kernel's sign
+    // (resolveOffsetAims), for a preview and an Apply alike.
     if(std::any_of(groups.begin(),groups.end(),[](const OffsetGroup& g){return !g.closed;}))updateDimensionHandle();
-    std::vector<std::pair<std::vector<int>,double>> offsets;
-    for(const auto& g:groups) {
-      const bool anchor=std::find(g.ids.begin(),g.ids.end(),m_offsetAnchor)!=g.ids.end();
-      const bool arrow=anchor || !m_haveCursor;
-      const double tx=arrow?m_offsetArrow.x+m_offsetArrow.dx*std::fabs(distance):m_cursor.u,ty=arrow?m_offsetArrow.y+m_offsetArrow.dy*std::fabs(distance):m_cursor.v;
-      offsets.push_back({g.ids,offset_toward(m_sk,g,distance,round,tx,ty)});
-    }
+    const auto aims=offsetAims(groups,distance);
+    if(m_previewRequested)m_offsetPlanned={m_sel,offsetSideKey()};
     const bool hold=option("relation","rigid")=="rigid";
     const std::string expr=plainValue(text)?std::string():table.explicit_length(text.toStdString());
-    runSketchEdit(tr("Offset"),[offsets,round,hold,expr](Sketch& sk){
-      for(const auto& [ids,d]:offsets)if(hold)offset_relationship(sk,ids,d,round,expr);else offset_entities(sk,ids,d,round);
+    runSketchEdit(tr("Offset"),[aims,round,hold,expr](Sketch& sk){
+      for(const auto& [ids,d]:resolveOffsetAims(sk,aims,round))if(hold)offset_relationship(sk,ids,d,round,expr);else offset_entities(sk,ids,d,round);
     });
   }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
+}
+
+// Each chain's signed distance for the kernel. A closed chain grows outward for a positive distance. An open one goes to one
+// side only: held (holdOffsetSides), the side taken then; else the pointer's for a positive distance, the other for a
+// negative one, each chain as if picked alone (offset_toward), the chain the arrow is on taking the arrow's side (which
+// points to the pointer, and stays put while the pointer is at it: a pull to a negative value leaves the pointer past the
+// curve).
+std::vector<SketchEditor::OffsetAim> SketchEditor::offsetAims(const std::vector<OffsetGroup>& groups,double distance) {
+  const bool held=offsetSidesHeld();
+  const double reach=std::max(std::fabs(distance),tol());  // how far off the curve the arrow's target lies (never on it)
+  std::vector<OffsetAim> aims;
+  for(const auto& g:groups) {
+    OffsetAim aim{g.ids,g.closed,!g.closed,distance};
+    if(!g.closed && held) {
+      std::vector<int> key=g.ids;std::sort(key.begin(),key.end());
+      const auto it=std::find_if(m_offsetSides.aim.begin(),m_offsetSides.aim.end(),[&](const auto& s){return s.first==key;});
+      if(it!=m_offsetSides.aim.end()){aim.tx=it->second.first;aim.ty=it->second.second;aims.push_back(std::move(aim));continue;}
+    }
+    if(aim.aimed) {
+      const bool anchor=std::find(g.ids.begin(),g.ids.end(),m_offsetAnchor)!=g.ids.end();
+      const bool arrow=anchor || !m_haveCursor;
+      aim.tx=arrow?m_offsetArrow.x+m_offsetArrow.dx*reach:m_cursor.u;aim.ty=arrow?m_offsetArrow.y+m_offsetArrow.dy*reach:m_cursor.v;
+    }
+    aims.push_back(std::move(aim));
+  }
+  return aims;
+}
+SketchEditor::OffsetPlan SketchEditor::resolveOffsetAims(const Sketch& sk,const std::vector<OffsetAim>& aims,bool round) {
+  OffsetPlan offsets;
+  for(const auto& a:aims)offsets.push_back({a.ids,a.aimed?offset_toward(sk,OffsetGroup{a.ids,a.closed},a.distance,round,a.tx,a.ty):a.distance});
+  return offsets;
+}
+bool SketchEditor::offsetSidesHeld() {
+  if(m_offsetSides.sel.empty())return false;
+  std::vector<int> sel=m_sel;std::sort(sel.begin(),sel.end());
+  if(m_tool=="offset" && sel==m_offsetSides.sel)return true;
+  m_offsetSides={};  // another selection (or tool): the sides follow the pointer again
+  return false;
+}
+void SketchEditor::resetOffsetSides() {m_offsetSides={};m_offsetPlanned={};}
+// The arrow pulled or a value typed: each open chain keeps its aim as it is now (the arrow's tip for the arrow's chain, the
+// pointer for the others), the side the arrow and the preview show; the job's worker makes the side of it, as before.
+void SketchEditor::holdOffsetSides() {
+  if(m_tool!="offset" || m_sel.empty() || offsetSidesHeld())return;
+  try {
+    const auto groups=offset_groups(m_sk,m_sel);
+    double distance=0;
+    try{distance=sketch_parameters(m_sk,paramTable(m_doc->scene)).length(option("distance","5 mm").toStdString());}catch(const std::exception&){}
+    OffsetSides sides;
+    for(const auto& a:offsetAims(groups,distance))
+      if(a.aimed){std::vector<int> key=a.ids;std::sort(key.begin(),key.end());sides.aim.push_back({key,{a.tx,a.ty}});}
+    sides.sel=m_sel;std::sort(sides.sel.begin(),sides.sel.end());
+    m_offsetSides=std::move(sides);
+  }catch(const std::exception&){}
+}
+// Only what can change the plan: each open chain's side, and which of them the arrow is on (it aims at the arrow's tip, the
+// others at the pointer). Closed chains and a converted drawing's thousands of curves (no live side test) give none.
+std::vector<int> SketchEditor::offsetSideKey() {
+  std::vector<int> key;
+  if(!m_haveCursor || m_sel.size()>1000)return key;
+  int index=0;
+  for(const auto& g:offset_groups(m_sk,m_sel)) {
+    ++index;
+    if(g.closed)continue;
+    const bool anchor=std::find(g.ids.begin(),g.ids.end(),m_offsetAnchor)!=g.ids.end();
+    if(anchor)key.push_back(-index);
+    const double tx=anchor?m_offsetArrow.x+m_offsetArrow.dx*tol():m_cursor.u,ty=anchor?m_offsetArrow.y+m_offsetArrow.dy*tol():m_cursor.v;
+    double best=1e300,side=0;
+    for(int id:g.ids)if(const auto* e=m_sk.entity(id)) {
+      const auto pts=sampled(*e);
+      for(size_t i=1;i<pts.size();++i) {
+        const auto [ax,ay]=pts[i-1];const auto [bx,by]=pts[i];const double ex=bx-ax,ey=by-ay,l2=ex*ex+ey*ey;if(l2<1e-20)continue;
+        const double t=std::clamp(((tx-ax)*ex+(ty-ay)*ey)/l2,0.,1.),d=std::hypot(ax+t*ex-tx,ay+t*ey-ty);
+        if(d<best){best=d;side=ex*(ty-ay)-ey*(tx-ax);}
+      }
+    }
+    key.push_back(side<0?-1:1);
+  }
+  return key;
 }
 
 bool SketchEditor::eventFilter(QObject* o, QEvent* e) {

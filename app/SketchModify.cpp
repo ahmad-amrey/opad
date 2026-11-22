@@ -16,6 +16,7 @@
 #include <set>
 
 using namespace opad::design;
+namespace { double& heldSide() {static double side=0;return side;} }  // the bench's held copy, across its phases
 void SketchEditor::benchHandles() {
   setTool("rect");placePrecise("0","0",0);placePrecise("40","30",0);
   auto phase=std::make_shared<int>(0),ticks=std::make_shared<int>(0),count=std::make_shared<int>(0);auto* timer=new QTimer(this);timer->setInterval(150);
@@ -75,7 +76,18 @@ void SketchEditor::benchHandles() {
         for(auto [x,y]:std::vector<std::pair<double,double>>{{80,0},{120,0},{100,20}})m_sk.add_line(o,m_sk.add_point(x,y));
         require(end_change("bench T"),"the T drawn");fitSketch();(*count)=int(m_sk.entities.size());
         setTool("offset");m_options["distance"]="-2 mm";m_options["corners"]="round";sketchPress(110,0,Qt::NoModifier);
-        require(m_sel.size()==3 && chainOnClick(),"the chain click takes the T's three lines");
+        // The chain runs on straight through the T's middle (the bar), not into the stem beside it (the report's arch took
+        // the horizontal line next to the leg that carries on down).
+        require(m_sel.size()==2 && chainOnClick(),"the chain click takes the T's bar, both halves, and leaves the stem");
+        // A picked curve clicked again drops that curve alone, with the chain option on (it used to drop the whole chain,
+        // so no single curve could be taken out).
+        sketchPress(90,0,Qt::NoModifier);
+        require(m_sel.size()==1,"a click on a picked half of the bar drops that half alone");
+        sketchPress(100,12,Qt::NoModifier);
+        require(m_sel.size()==2,"the stem, clicked, comes alone: no way on carries on smoothly from it");
+        sketchPress(90,0,Qt::NoModifier);
+        require(m_sel.size()==3,"the dropped half clicked again comes back with its chain");
+        trace::log("bench: sketch offset chain click: the smooth way on at a branch, one curve dropped and taken again PASS");
         break;
       }
       case 9:{
@@ -145,6 +157,76 @@ void SketchEditor::benchHandles() {
         int offsets=0;for(const auto& c:m_sk.constraints)if(c.type==SkConstraint::Type::Offset && c.sources==1)++offsets;
         require(offsets==3,"three offset relationships, one per line of the T");
         trace::log("bench: sketch offset arrow: approached and pulled without typing first, three chains applied PASS");
+        // The report's second case: the arrow pulled across its curve to a negative value, then the pointer moved on. The
+        // side was taken again from the pointer (the arrow turned round and slid) while the preview kept the old one, and
+        // Apply made a third. A line of its own, zoomed in, the pointer above it first.
+        begin_change();const int a=m_sk.add_point(200,0),b=m_sk.add_point(240,0);(*count)=m_sk.add_line(a,b);
+        require(end_change("bench line"),"the line drawn");
+        const auto target=m_frame.to_world(220,0),normal=m_frame.normal();auto eye=target;for(int i=0;i<3;++i)eye[i]+=normal[i]*100;
+        m_viewport->setCameraJson({{"eye",eye},{"target",target},{"up",m_frame.y},{"scale",std::max(1,m_viewport->height())/50.0},{"projection","orthographic"},{"absolute",true}});
+        setTool("offset");m_options["distance"]="2 mm";m_options["corners"]="round";
+        sketchMove(220,6,Qt::NoModifier,false);sketchPress(220,0,Qt::NoModifier);sketchMove(220,6,Qt::NoModifier,false);
+        require(m_sel.size()==1,"the line picked alone");
+        break;
+      }
+      case 14:case 15:{
+        // Not pulled yet: the copy goes to the pointer's side, and the preview follows the pointer across the line.
+        const bool below=*phase==16;
+        auto ys=[&]{std::vector<double> out;
+          for(const auto& e:m_toolPreview->entities)if(!m_sk.entity(e.id) && e.type==SkEntity::Type::Line) {
+            const SkPoint *p=m_toolPreview->point(e.p[0]),*q=m_toolPreview->point(e.p[1]);if(std::min(p->x,q->x)>=195 && std::max(p->x,q->x)<=245)out.push_back((p->y+q->y)/2);}
+          return out;};
+        require(bool(m_toolPreview),"the line's preview");
+        const auto now=ys();
+        require(now.size()==1 && std::fabs(now[0]-(below?-2:2))<1e-6,below?"the pointer moved below the line: the preview's copy went below":"the copy above the line, on the pointer's side");
+        if(!below){sketchMove(220,-3,Qt::NoModifier,false);sketchMove(220,-6,Qt::NoModifier,false);require(m_toolPreviewTimer.isActive(),"the pointer crossing the line asks for a new preview");require(!m_toolPreview,"meanwhile Apply no longer commits the old side's preview");}
+        else trace::log("bench: sketch offset side: before a pull the preview follows the pointer across the line PASS");
+        break;
+      }
+      case 16:{
+        // Pulled: the arrow (below the line, pointing down) dragged up across the line, to a negative value.
+        const QLineF arrow=m_dimensionHandle->arrowLine();
+        require(arrow.p2().y()>arrow.p1().y(),"the arrow points down, to the pointer's side");
+        auto send=[&](QEvent::Type type,QPointF p,Qt::MouseButton button,Qt::MouseButtons buttons){
+          QMouseEvent e(type,p,m_viewport->mapToGlobal(p),button,buttons,Qt::NoModifier);QApplication::sendEvent(m_viewport,&e);};
+        const QPointF at=arrow.center(),up=m_viewport->widgetPoint(m_frame.to_world(220,4));
+        send(QEvent::MouseButtonPress,at,Qt::LeftButton,Qt::LeftButton);
+        require(m_dimensionHandle->dragging(),"a press on the arrow pulls it");
+        for(int i=1;i<=6;++i)send(QEvent::MouseMove,at+(QPointF(at.x(),up.y())-at)*i/6.0,Qt::NoButton,Qt::LeftButton);
+        send(QEvent::MouseButtonRelease,QPointF(at.x(),up.y()),Qt::LeftButton,Qt::NoButton);
+        require(m_dimensionHandle->value()<-0.5,"pulled across the line to a negative value");
+        break;
+      }
+      case 17:{
+        auto ys=[&]{std::vector<double> out;
+          for(const auto& e:m_toolPreview->entities)if(!m_sk.entity(e.id) && e.type==SkEntity::Type::Line) {
+            const SkPoint *p=m_toolPreview->point(e.p[0]),*q=m_toolPreview->point(e.p[1]);if(std::min(p->x,q->x)>=195 && std::max(p->x,q->x)<=245)out.push_back((p->y+q->y)/2);}
+          return out;};
+        const double value=m_dimensionHandle->value(),side=-value;  // a negative value: the copy above the line
+        require(bool(m_toolPreview) && ys().size()==1 && std::fabs(ys()[0]-side)<1e-6,"the pull's preview: the copy above the line, where the arrow is");
+        // The pointer wanders off on both sides of the line and along it, away from the arrow: nothing turns round.
+        const QLineF held=m_dimensionHandle->arrowLine();
+        for(auto [u,v]:std::vector<std::pair<double,double>>{{220,-15},{205,-10},{235,12},{228,0.2},{212,-0.2},{220,20}}) {
+          sketchMove(u,v,Qt::NoModifier,false);
+          const QLineF now=m_dimensionHandle->arrowLine();
+          require(QLineF(now.p1(),held.p1()).length()<0.5 && QLineF(now.p2(),held.p2()).length()<0.5,"the arrow moved or turned round after the pull");
+          require(!m_toolPreviewTimer.isActive(),"a pointer move after the pull asked for another preview");
+        }
+        require(ys().size()==1 && std::fabs(ys()[0]-side)<1e-6,"the preview still shows the copy above the line");
+        // Apply computed afresh with the held sides (no ready preview to commit, the shown one still drawn): the job's worker
+        // makes the side of the frozen aims.
+        heldSide()=side;
+        invalidatePreview(true);
+        require(!m_toolPreviewOverlay.IsNull() && !m_toolPreview,"the drawn preview stays while Apply computes afresh");
+        applyTool();
+        break;
+      }
+      case 18:{
+        double made=0;int lines=0;
+        for(const auto& e:m_sk.entities)if(e.id>(*count) && e.type==SkEntity::Type::Line){const SkPoint *p=m_sk.point(e.p[0]),*q=m_sk.point(e.p[1]);if(std::min(p->x,q->x)>=195 && std::max(p->x,q->x)<=245){made=(p->y+q->y)/2;++lines;}}
+        require(lines==1 && std::fabs(made-heldSide())<1e-6,"Apply made the copy the preview showed, above the line");
+        require(m_toolPreviewOverlay.IsNull(),"the old preview is gone with the Apply");
+        trace::log("bench: sketch offset side: after a pull the arrow and the copy stay put as the pointer moves, Apply makes the preview PASS");
         break;
       }
       default:timer->stop();trace::log("bench: chain selection, automatic offset preview, drag handle, apply and undo PASS");QCoreApplication::exit(0);
@@ -217,14 +299,19 @@ bool SketchEditor::alignClick(double,double) {
   if(!refused.isEmpty())emit status(refused);
   return true;
 }
-void SketchEditor::pickCurve(int id) {
-  const bool picked=std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end();
+// The curves a click on `id` takes with the tool's chain option: for an offset the chain that runs on smoothly through it
+// (chain_entities: at a T it carries on straight, not into the branch), for the tools that move a shape the whole of what
+// is connected to it.
+std::vector<int> SketchEditor::clickChain(int id) const {
   std::vector<int> ids{id};
-  if(chainOnClick())for(int e:connected_entities(m_sk,{id}))if(e!=id && m_sk.entity(e))ids.push_back(e);
-  if(picked) {  // a picked curve again drops it (its chain with it: re-adding the chain kept it selected for good)
-    const std::set<int> drop(ids.begin(),ids.end());
-    m_sel.erase(std::remove_if(m_sel.begin(),m_sel.end(),[&](int s){return drop.count(s)>0;}),m_sel.end());
-  } else for(int e:ids)if(std::find(m_sel.begin(),m_sel.end(),e)==m_sel.end())m_sel.push_back(e);
+  if(chainOnClick())for(int e:m_tool=="offset"?chain_entities(m_sk,{id}):connected_entities(m_sk,{id}))if(e!=id && m_sk.entity(e))ids.push_back(e);
+  return ids;
+}
+void SketchEditor::pickCurve(int id) {
+  // A picked curve clicked again drops that curve alone, so one can be taken out of a chain (dropping its whole chain
+  // left no way to do that while the chain option was on); a curve not picked brings its chain.
+  if(auto it=std::find(m_sel.begin(),m_sel.end(),id);it!=m_sel.end()){m_sel.erase(it);return;}
+  for(int e:clickChain(id))if(std::find(m_sel.begin(),m_sel.end(),e)==m_sel.end())m_sel.push_back(e);
 }
 bool SketchEditor::modifyClick(double u,double v) {
   if(m_tool=="break_link") {  // a click picks a linked curve, a window several (TODO 11 wave 3, P4); Enter or Apply unlinks them

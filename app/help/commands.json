@@ -2803,8 +2803,8 @@
   {
    "id": "sketch.offset",
    "title": "Offset",
-   "summary": "Copies a connected chain of curves at a distance; drag the arrow or type it.",
-   "details": "Click one curve and the whole connected chain is taken. Drag the arrow, or type the distance, then apply; negative goes to the other side.",
+   "summary": "Copies curves or chains of curves at a distance; drag the arrow or type it.",
+   "details": "Click a curve and its chain comes along: on through corners, and where curves branch only into the one that runs straight on. Click a picked curve to leave it out. Drag the arrow, or type the distance, then apply; negative goes to the other side.",
    "keywords": ["parallel copy", "wall", "inset", "outset"],
    "requires": "Only while a sketch is open: start one with New sketch."
   },

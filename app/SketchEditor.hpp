@@ -10,6 +10,8 @@
 #include <QTimer>
 #include <QPointer>
 #include <array>
+#include <atomic>
+#include <memory>
 #include <map>
 #include <optional>
 #include <set>
@@ -31,6 +33,7 @@ class Job;
 class SketchGeometryCache;
 namespace opad::design {
 struct CurveCuts;
+struct OffsetGroup;
 }
 class DimensionHandle;
 
@@ -422,6 +425,26 @@ class SketchEditor : public QObject, public SketchInput {
   void updateDimensionHandle();
   void configureDimensionHandle(double x,double y,double dx,double dy);  // the arrow at (x, y) along (dx, dy), the value from the option
   struct OffsetArrow { double x = 0, y = 0, dx = 1, dy = 0; } m_offsetArrow;  // where the offset's arrow stands, its way
+  // Which side each open chain of the offset goes. Until the arrow is pulled or a value typed they follow the pointer (the
+  // arrow's chain the arrow's side, the others the pointer's); from then on they are held (holdOffsetSides: each open chain's
+  // aim point frozen, the arrow's tip for the arrow's chain, the pointer for the others) and the arrow stays where it is, so
+  // moving the pointer away no longer turns the copy round behind the preview's back. A new selection lets go.
+  using OffsetPlan = std::vector<std::pair<std::vector<int>, double>>;  // each chain's curves, the kernel's signed distance
+  // Held: each open chain's aim (the point whose side it goes to for a positive distance) as it was at the first pull.
+  struct OffsetSides { std::vector<int> sel; std::vector<std::pair<std::vector<int>, std::pair<double, double>>> aim; } m_offsetSides;
+  bool offsetSidesHeld();
+  void holdOffsetSides();
+  // Each chain's distance as the kernel takes it, or (`aimed`) the point whose side it goes to: the two kernel offsets that
+  // tell the side apart (offset_toward) run on the job's worker (resolveOffsetAims), never on a pointer move.
+  struct OffsetAim { std::vector<int> ids; bool closed = false, aimed = false; double distance = 0, tx = 0, ty = 0; };
+  std::vector<OffsetAim> offsetAims(const std::vector<opad::design::OffsetGroup>& groups, double distance);
+  static OffsetPlan resolveOffsetAims(const opad::design::Sketch& sk, const std::vector<OffsetAim>& aims, bool round);
+  std::vector<int> offsetSideKey();  // each open chain's side of its target now: a change asks for a new preview
+  // What the last offset preview was asked for: its selection and sides (offsetSideKey). The pointer turning a side from
+  // those asks for another.
+  struct OffsetPlanned { std::vector<int> sel, key; } m_offsetPlanned;
+  void resetOffsetSides();  // a new offset session: the tool chosen again, an Apply, undo, redo, another sketch
+  std::vector<int> m_boxStart;  // the selection a window started from (Shift/Ctrl keeps it): the Offset chains only what it adds
   void referenceHover();
   void pickReference();
   // The reference a replayed press is on (ClipReplayBench.cpp: a clip's click on a body, found where the clip shows it), which
@@ -461,6 +484,7 @@ class SketchEditor : public QObject, public SketchInput {
   // A click with a modify tool on a curve (TODO 11 wave 3): it toggles the curve, or with the tool's "Select connected
   // chain on click" on (offset by default) the whole connected chain. Per tool: setting it for one left the others alone.
   bool chainOnClick() const;
+  std::vector<int> clickChain(int id) const;  // the curve and what the chain option takes with it
   void pickCurve(int id);
   void applied();  // after an Apply that changed the sketch: the tool asks for its next curves, sources or line
   void refreshImages();
