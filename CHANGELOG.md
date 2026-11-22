@@ -27,7 +27,9 @@ before they ship.
 - **Double-click selects the chain:** in a sketch, double-click a curve to select every curve connected to it end to
   end (Shift or Ctrl+double-click adds the chain to the selection).
 - **Offsetting an open curve or chain** in a sketch makes a single parallel copy on the side you point to, instead of a
-  closed loop around it. A closed profile still offsets inward or outward.
+  closed loop around it. A closed profile still offsets inward or outward. Select several chains (or curves that branch)
+  and each is offset on its own by the same distance, instead of "the path must be one connected chain"; the preview
+  shows with chain selection on, and the offset arrow stays put as you reach for it.
 - **Search commands puts the tools of where you work first:** in a sketch, *Sketch fillet* comes before *Fillet* (and
   so on for Mirror, Offset, Move and the patterns; "measure" finds Measure in a sketch, Distance outside it).
   Everything is still listed.

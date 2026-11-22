@@ -219,6 +219,14 @@ bool DimensionHandle::overArrow(const QPointF& p) const {
   double t;
   return isVisible() && nearest(p,m_arrowStart,m_arrowEnd,t)<kHitRadius*kHitRadius;
 }
+bool DimensionHandle::approached(const QPointF& p) const {
+  if(!isVisible() || !m_drawn)return false;
+  double t;
+  if(nearest(p,m_arrowStart,m_arrowEnd,t)<kApproach*kApproach)return true;
+  if(nearest(p,QPointF(m_view->widgetPoint(m_origin)),m_arrowStart,t)<kHitRadius*kHitRadius)return true;
+  const int grow=int(kHitRadius);
+  return geometry().adjusted(-grow,-grow,grow,grow).contains(p.toPoint());
+}
 void DimensionHandle::mousePressEvent(QMouseEvent* e) {
   if(e->button()!=Qt::LeftButton)return;
   m_dragging=true;m_start=e->globalPosition();m_startValue=m_value;box()->clearFocus();restyle();e->accept();

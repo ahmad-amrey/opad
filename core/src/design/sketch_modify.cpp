@@ -42,6 +42,70 @@ std::vector<int> connected_entities(const Sketch& sk,const std::vector<int>& see
     if(ids.insert(e->id).second)for(int p:e->p)if(points.insert(p).second)pending.push_back(p);
   return {ids.begin(),ids.end()};
 }
+std::vector<OffsetGroup> offset_groups(const Sketch& sk,const std::vector<int>& ids) {
+  std::vector<OffsetGroup> out;
+  std::vector<const SkEntity*> edges;  // the open curves, in the order given
+  std::vector<size_t> edgeAt,keys;  // where each open curve, and each chain of `out`, comes in `ids`
+  std::set<int> seen;
+  for(size_t at=0;at<ids.size();++at) {
+    const int id=ids[at];
+    const SkEntity* e=sk.entity(id);
+    if(!e || e->type==SkEntity::Type::Point || !seen.insert(id).second)continue;
+    const bool closedSpline=e->type==SkEntity::Type::Spline && (e->periodic || (!e->p.empty() && e->p.front()==e->p.back()));
+    if(e->type==SkEntity::Type::Circle || e->type==SkEntity::Type::Ellipse || closedSpline){out.push_back({{id},true});keys.push_back(at);continue;}
+    if((e->type==SkEntity::Type::Arc && e->p.size()<3) || e->p.size()<2)continue;
+    edges.push_back(e);edgeAt.push_back(at);
+  }
+  if(edges.empty())return out;
+  // Ends: the points by id, and points apart but in one place (1e-6 mm, as sketch_wire joins curves) as one node.
+  auto ends=[](const SkEntity& e){return e.type==SkEntity::Type::Arc?std::make_pair(e.p[1],e.p[2]):std::make_pair(e.p.front(),e.p.back());};
+  std::vector<int> pointIds;
+  for(const auto* e:edges){const auto [a,b]=ends(*e);pointIds.push_back(a);pointIds.push_back(b);}
+  std::sort(pointIds.begin(),pointIds.end());pointIds.erase(std::unique(pointIds.begin(),pointIds.end()),pointIds.end());
+  std::map<int,int> parent;
+  for(int p:pointIds)parent[p]=p;
+  auto root=[&](int p){while(parent[p]!=p)p=parent[p]=parent[parent[p]];return p;};
+  std::vector<std::pair<double,int>> byX;
+  for(int p:pointIds)if(const SkPoint* q=sk.point(p))byX.push_back({q->x,p});
+  std::sort(byX.begin(),byX.end());
+  for(size_t i=0;i<byX.size();++i)
+    for(size_t j=i+1;j<byX.size() && byX[j].first-byX[i].first<=1e-6;++j) {
+      const SkPoint *a=sk.point(byX[i].second),*b=sk.point(byX[j].second);
+      if(std::hypot(a->x-b->x,a->y-b->y)<=1e-6)parent[root(byX[i].second)]=root(byX[j].second);
+    }
+  std::map<int,std::vector<size_t>> at;  // node -> the curves ending there (twice for a curve with both ends there)
+  for(size_t k=0;k<edges.size();++k){const auto [a,b]=ends(*edges[k]);at[root(a)].push_back(k);at[root(b)].push_back(k);}
+  // Each chain runs on through nodes where exactly two of the curves meet and stops where one ends or several branch.
+  std::vector<bool> used(edges.size(),false);
+  auto other=[&](size_t k,int node){const auto [a,b]=ends(*edges[k]);return root(a)==node?root(b):root(a);};
+  auto walk=[&](size_t from,int node,std::vector<size_t>& chain){
+    while(at[node].size()==2) {
+      const auto& two=at[node];
+      const size_t next=two[0]==from?two[1]:two[0];
+      if(used[next])break;
+      used[next]=true;chain.push_back(next);node=other(next,node);from=next;
+    }
+    return node;
+  };
+  for(size_t k=0;k<edges.size();++k) {
+    if(used[k])continue;
+    used[k]=true;
+    const auto [a,b]=ends(*edges[k]);
+    std::vector<size_t> forward{k},backward;
+    const int last=walk(k,root(b),forward),first=walk(k,root(a),backward);
+    OffsetGroup g;
+    for(auto it=backward.rbegin();it!=backward.rend();++it)g.ids.push_back(edges[*it]->id);
+    for(size_t i:forward)g.ids.push_back(edges[i]->id);
+    g.closed=first==last;
+    out.push_back(std::move(g));keys.push_back(edgeAt[k]);  // its first curve in `ids`: the earlier ones are in other chains
+  }
+  std::vector<size_t> order(out.size());
+  for(size_t i=0;i<order.size();++i)order[i]=i;
+  std::stable_sort(order.begin(),order.end(),[&](size_t x,size_t y){return keys[x]<keys[y];});
+  std::vector<OffsetGroup> sorted;
+  for(size_t i:order)sorted.push_back(std::move(out[i]));
+  return sorted;
+}
 std::vector<int> rigid_closure(const Sketch& sk,const std::vector<int>& ids) {
   std::vector<int> out=ids;std::set<int> in(ids.begin(),ids.end());
   for(bool grew=true;grew;) {

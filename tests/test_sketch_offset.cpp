@@ -301,4 +301,82 @@ TEST(open_chain_offsets_to_one_side) {
   }
 }
 
+// Several chains selected (the chain click takes a branching set, or chains lie apart): each is offset on its own.
+TEST(offset_groups_split_the_selection_into_chains) {
+  auto sizes = [](const std::vector<OffsetGroup>& groups) {
+    std::vector<std::pair<size_t, bool>> out;
+    for (const auto& g : groups) out.push_back({g.ids.size(), g.closed});
+    return out;
+  };
+  using Sizes = std::vector<std::pair<size_t, bool>>;
+  {  // two rectangles apart: two closed chains
+    Plate p = make_plate();
+    const int a = p.sk.add_point(60, 0), b = p.sk.add_point(80, 0), c = p.sk.add_point(80, 10), d = p.sk.add_point(60, 10);
+    std::vector<int> ids = p.sides;
+    for (int id : {p.sk.add_line(a, b), p.sk.add_line(b, c), p.sk.add_line(c, d), p.sk.add_line(d, a)}) ids.push_back(id);
+    CHECK((sizes(offset_groups(p.sk, ids)) == Sizes{{4, true}, {4, true}}));
+  }
+  {  // an L picked from its second line, a line apart and a point: the L as one open chain in its order, the line alone
+    Sketch sk;
+    const int a = sk.add_point(0, 10), b = sk.add_point(0, 0), c = sk.add_point(10, 0);
+    const int l1 = sk.add_line(a, b), l2 = sk.add_line(b, c), apart = sk.add_line(sk.add_point(20, 0), sk.add_point(30, 0));
+    const auto groups = offset_groups(sk, {l2, apart, a, l1});
+    CHECK((sizes(groups) == Sizes{{2, false}, {1, false}}));
+    CHECK((groups[0].ids == std::vector<int>{l1, l2}));
+  }
+  {  // three lines meeting at one point (a T): three chains
+    Sketch sk;
+    const int o = sk.add_point(0, 0);
+    const std::vector<int> ids{sk.add_line(o, sk.add_point(10, 0)), sk.add_line(o, sk.add_point(-10, 0)), sk.add_line(o, sk.add_point(0, 10))};
+    CHECK((sizes(offset_groups(sk, ids)) == Sizes{{1, false}, {1, false}, {1, false}}));
+  }
+  {  // a rectangle with a line off one corner and a circle: the loop, the tail, the circle
+    Plate p = make_plate();
+    std::vector<int> ids = p.sides;
+    ids.push_back(p.sk.add_line(p.sk.entity(p.sides[1])->p[0], p.sk.add_point(50, -10)));
+    ids.push_back(p.sk.add_circle(p.sk.add_point(20, 10), 3));
+    CHECK((sizes(offset_groups(p.sk, ids)) == Sizes{{4, true}, {1, false}, {1, true}}));
+  }
+  {  // two lines whose ends are two points in one place: one chain
+    Sketch sk;
+    const int l1 = sk.add_line(sk.add_point(0, 0), sk.add_point(10, 0)), l2 = sk.add_line(sk.add_point(10, 0), sk.add_point(10, 10));
+    CHECK((sizes(offset_groups(sk, {l1, l2})) == Sizes{{2, false}}));
+  }
+}
+
+TEST(each_chain_offsets_as_if_alone) {
+  // An L and a line apart: the L's copy is the one it makes alone (an open chain of two), the line's a line.
+  Sketch sk;
+  const int a = sk.add_point(0, 10), b = sk.add_point(0, 0), c = sk.add_point(10, 0);
+  const int l1 = sk.add_line(a, b), l2 = sk.add_line(b, c), apart = sk.add_line(sk.add_point(20, 0), sk.add_point(30, 0));
+  auto points = [](const Sketch& s, const std::vector<int>& made) {
+    std::vector<std::pair<double, double>> out;
+    for (int id : made)
+      for (int p : s.entity(id)->p) out.push_back({std::round(s.point(p)->x * 1e6) / 1e6, std::round(s.point(p)->y * 1e6) / 1e6});
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+  };
+  Sketch together = sk;
+  std::vector<std::vector<int>> made;
+  for (const auto& g : offset_groups(together, {l1, l2, apart})) made.push_back(offset_entities(together, g.ids, 2, false));
+  CHECK_EQ(made.size(), size_t(2));
+  Sketch chain = sk, line = sk;
+  CHECK((points(together, made[0]) == points(chain, offset_entities(chain, {l1, l2}, 2, false))));
+  CHECK((points(together, made[1]) == points(line, offset_entities(line, {apart}, 2, false))));
+  CHECK_EQ(made[0].size(), size_t(2));
+  CHECK_EQ(made[1].size(), size_t(1));
+  // Held: one relationship per chain, each refreshing on its own.
+  Sketch held = sk;
+  std::vector<int> rels;
+  for (const auto& g : offset_groups(held, {l1, l2, apart})) rels.push_back(offset_relationship(held, g.ids, 2, false));
+  CHECK_EQ(rels.size(), size_t(2));
+  CHECK(solve(held).converged);
+  held.constraint(rels[1])->value = 4;
+  evaluate_dimensions(held);
+  CHECK(solve(held).converged);
+  CHECK_EQ(held.constraint(rels[0])->built, 2.0);
+  CHECK_EQ(std::fabs(held.constraint(rels[1])->built), 4.0);
+}
+
 CHECK_MAIN()

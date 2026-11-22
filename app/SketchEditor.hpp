@@ -420,7 +420,7 @@ class SketchEditor : public QObject, public SketchInput {
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void updateDimensionHandle();
-  bool offsetClosed() const;  // the selection to offset is a closed chain (outward for a positive distance), else one side
+  void configureDimensionHandle(double x,double y,double dx,double dy);  // the arrow at (x, y) along (dx, dy), the value from the option
   struct OffsetArrow { double x = 0, y = 0, dx = 1, dy = 0; } m_offsetArrow;  // where the offset's arrow stands, its way
   void referenceHover();
   void pickReference();
