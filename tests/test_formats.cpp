@@ -785,6 +785,11 @@ TEST(import_records_and_finds_its_source) {
   CHECK(loose.ops.back().data.contains("source_path") && !loose.ops.back().data.contains("source_repo"));
   d.save_as(f.dir / "model.opad");
   CHECK_EQ(Document::load(f.dir / "model.opad").ops.back().data.value("source_repo", ""), op.value("source_repo", ""));
+  // Saved, the path is relative to the document (git friendly: no user folders in the file) and still found from there.
+  const json saved = Document::load(f.dir / "model.opad").ops.back().data;
+  CHECK_EQ(saved.value("source_path", ""), "repo/parts/\xd9\x82\xd8\xb7\xd8\xb9\xd8\xa9.stl");
+  write_text_file(part, kTetra);
+  CHECK(import_source(saved, f.dir / "model.opad", &exists) == part.lexically_normal().make_preferred() && exists);
 }
 
 TEST(unsupported_and_missing_files_fail_cleanly) {

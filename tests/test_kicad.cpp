@@ -1189,7 +1189,9 @@ TEST(kicad_export_linked) {
   CHECK(asset["kind"] == "kicad_pcb" && asset["path"] == "board.kicad_pcb");
   CHECK(asset["derived"]["builder"]["name"] == "kicad-cli" && asset["derived"]["builder"]["kicad"] == "9.0.1" && asset["derived"]["kind"] == "step");
   CHECK(asset["derived"]["builder"]["options"]["origin_at"] == json({100.0, 100.0}));
-  const std::filesystem::path made = path_from_utf8(asset["derived"]["abs"].get<std::string>());
+  // kicad-cli's export lives in OPAD's cache: recorded by its place there, no path into the user's folders.
+  CHECK(asset["derived"].contains("cache") && !asset["derived"].contains("abs") && !asset["derived"].contains("path"));
+  const std::filesystem::path made = locate_asset(d, asset["derived"]);
   CHECK(std::filesystem::is_regular_file(made));
   Scene s = resolve(d);
   const Node* r1 = component_for(s, "R1");

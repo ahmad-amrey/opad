@@ -821,6 +821,61 @@ void AssetsArea::pack(const std::string& import) {
           });
 }
 
+std::vector<std::string> AssetsArea::outside(const QString& top) const {
+  std::vector<std::string> out;
+  if (!m_monitor || top.isEmpty()) return out;
+  const QString root = QDir::cleanPath(QFileInfo(top).absoluteFilePath()) + "/";
+  for (const auto& [import, a] : m_monitor->assets()) {
+    if (a.asset.value("storage", "linked") == "embedded") continue;
+    const opad::json* s = m_monitor->state(import);
+    const bool found = s && s->contains("file");
+    const QString file = QDir::cleanPath(m_monitor->file(import));
+    // Found outside the tree, or not found and recorded by an absolute path only (it can never be in a clone).
+    if ((found && !(file + "/").startsWith(root, Qt::CaseInsensitive) && !file.startsWith(root, Qt::CaseInsensitive)) ||
+        (!found && !a.asset.contains("path") && a.asset.contains("abs")))
+      out.push_back(import);
+  }
+  std::sort(out.begin(), out.end(), [this](const std::string& x, const std::string& y) {  // the log's order
+    const auto& ops = services().document()->doc.ops;
+    auto at = [&ops](const std::string& id) { return std::find_if(ops.begin(), ops.end(), [&](const opad::Op& o) { return o.id == id; }) - ops.begin(); };
+    return at(x) < at(y);
+  });
+  return out;
+}
+
+void AssetsArea::copyIntoProject(const std::vector<std::string>& imports, std::function<void(bool, int, const QString&)> then) {
+  if (imports.empty()) {
+    if (then) then(true, 0, {});
+    return;
+  }
+  if (!services().requireEditable([this, imports, then] { copyIntoProject(imports, then); })) return;
+  const std::string author = QSettings().value("user/name").toString().trimmed().toStdString();
+  planned(tr("Copying linked files into the project"), tr("copy linked files into the project"), imports.front(),
+          [imports, author](opad::Document& doc, const Progress& p) {
+            opad::design::Plan plan;
+            int copied = 0;
+            opad::json failed = opad::json::array();
+            for (const std::string& import : imports) {
+              if (p.cancelled()) throw opad::Error("cancelled");
+              try {
+                copied += opad::pack_asset(doc, import, author).value("copied", 0) > 0;
+                plan.ops.push_back(opad::design::make_edit_op(import, doc.ops.back().data["set"]));
+              } catch (const std::exception& e) {
+                failed.push_back({{"import", import}, {"error", e.what()}});
+              }
+            }
+            plan.report = {{"copied", copied}, {"failed", failed}};
+            return plan;
+          },
+          [this, then](bool ok, const QString& error, const opad::json& report) {
+            const int copied = report.value("copied", 0), missed = int(report.value("failed", opad::json::array()).size());
+            if (ok && missed) notify(tr("%n linked file(s) could not be copied (not found); they stay linked where they were", nullptr, missed), false, 10000);
+            else if (!ok) notify(tr("The linked files could not be copied: %1").arg(reasonText(error.toStdString())), false, 10000);
+            emit done("copy", {}, ok, error, report);
+            if (then) then(ok, copied, error);
+          });
+}
+
 bool AssetsArea::recoverable(const std::string& import) const {
   const opad::json* s = m_monitor ? m_monitor->state(import) : nullptr;
   return s && s->value("state", "") == "missing" && s->contains("work_tree");

@@ -741,5 +741,11 @@
  "The document changed while it was being moved: it stays at %1, and a copy was saved at %2.": "تغيّر المستند أثناء نقله: يبقى في %1، وحُفظت نسخة منه في %2.",
  "Save the document first.": "احفظ المستند أولًا.",
  "The old %1 could not be removed.": "تعذّرت إزالة %1 القديم.",
- "Its linked files stayed where they were; OPAD asks whether to trust those outside the new folder when it opens it next.": "بقيت ملفاته المرتبطة في أماكنها؛ وسيسألك OPAD عند فتحه في المرة القادمة هل تثق بما يقع منها خارج المجلد الجديد."
+ "Its linked files stayed where they were; OPAD asks whether to trust those outside the new folder when it opens it next.": "بقيت ملفاته المرتبطة في أماكنها؛ وسيسألك OPAD عند فتحه في المرة القادمة هل تثق بما يقع منها خارج المجلد الجديد.",
+ "Also copy its %n linked file(s) into the new folder (recommended for version control)": "نسخ ملفاته المرتبطة (%n) إلى المجلد الجديد أيضًا (موصى به للتحكم في الإصدارات)",
+ "Its %n linked file(s) were copied into the new folder": "نُسخت ملفاته المرتبطة (%n) إلى المجلد الجديد",
+ "%1 of its %2 linked files were copied into the new folder; the rest stay where they were": "نُسخ %1 من ملفاته المرتبطة البالغة %2 إلى المجلد الجديد؛ ويبقى الباقي في مكانه",
+ "%n linked file(s) are outside the repository: clones won't have them": "%n من الملفات المرتبطة خارج المستودع: لن تحتويها النسخ المستنسخة",
+ "Copy into the repository": "نسخها إلى المستودع",
+ "%n linked file(s) copied into the repository and linked by relative paths": "نُسخ %n من الملفات المرتبطة إلى المستودع ورُبطت بمسارات نسبية"
 }

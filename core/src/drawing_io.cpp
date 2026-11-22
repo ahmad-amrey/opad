@@ -607,6 +607,7 @@ std::filesystem::path import_source(const json& op, const std::filesystem::path&
     if (const auto top = repo_top(document); !top.empty())
       if (const auto p = top / path_from_utf8(repo); there(p)) return found(p);
   std::filesystem::path guess = full.empty() ? std::filesystem::path() : path_from_utf8(full);
+  if (guess.is_relative() && !guess.empty() && !document.empty()) guess = document.parent_path() / guess;  // saved relative to the document
   if (there(guess)) return found(guess);
   if (!document.empty() && !name.empty() && name.find_first_of("/\\") == std::string::npos) {
     const auto p = document.parent_path() / path_from_utf8(name);

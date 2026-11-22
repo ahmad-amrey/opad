@@ -23,6 +23,7 @@
 #include "Jobs.hpp"
 #include "KicadBoards.hpp"
 #include "Viewport.hpp"
+#include "opad/assets.hpp"
 #include "opad/cache.hpp"
 #include "opad/kicad_pcb.hpp"
 #include "opad/mesh.hpp"
@@ -419,7 +420,7 @@ OPAD_BENCH(OPAD_BENCH_KICAD_CLI, kicad_cli) {
             return (void)fail(e.what());
           }
           std::error_code error;
-          std::filesystem::remove(opad::path_from_utf8(derived.value("abs", "")), error);
+          std::filesystem::remove(opad::locate_asset(w.m_doc->doc, derived), error);  // recorded in OPAD's cache ("cache")
           w.openPath(w.m_doc->path());  // runBench comes back for phase 2
         });
       });

@@ -8,6 +8,7 @@
 // who added each op in which commit (OpProvenance, UI-64): the timeline's tooltips, and Show in version history on a
 // marker or an object (the History page narrowed to the commits that touched it).
 #include <QAction>
+#include <QSet>
 #include <QMainWindow>
 #include <QMenu>
 #include <QStatusBar>
@@ -15,6 +16,8 @@
 
 #include "AgentBridge.hpp"
 #include "AppDocument.hpp"
+#include "AssetMonitor.hpp"
+#include "AssetsArea.hpp"
 #include "Commands.hpp"
 #include "CompareMode.hpp"
 #include "DiskSync.hpp"
@@ -156,8 +159,8 @@ class Vcs : public AreaController {
     m_git = new GitWatch(services().jobs(), services().window(), services().viewport());
     connect(m_git, &GitWatch::openRequested, this, [this](const QString& file) { services().open(file); });
     connect(m_git, &GitWatch::compareRequested, this, [this] { if (m_compare) m_compare->open(); });
-    m_git->setMover([this](const QString& file, std::function<void(bool, const QString&)> done) { moveDocument(file, std::move(done)); },
-                    [this] { return services().document()->isDirty(); });
+    m_git->setMover([this](const QString& file, bool copyLinked, std::function<void(bool, const QString&)> done) { moveDocument(file, copyLinked, std::move(done)); },
+                    [this] { return services().document()->isDirty(); }, [this] { return int(linkedImports().size()); });
     services().addStatusChip(m_git->chip());
   }
   void ready() override {
@@ -168,6 +171,10 @@ class Vcs : public AreaController {
     connect(doc, &AppDocument::pathChanged, this, [this, doc] {
       m_git->setFile(doc->hasDocument && !doc->browse && !doc->doc.path.empty() ? doc->path() : QString());
     });
+    // Linked files a clone would not have (outside the repository, or by an absolute path only): said once per set of files.
+    connect(m_git, &GitWatch::changed, this, [this] { checkOutside(); });
+    if (auto* assets = services().window()->findChild<AssetsArea*>(); assets && assets->monitor())
+      connect(assets->monitor(), &AssetMonitor::statesChanged, this, [this] { checkOutside(); });
     m_compare = new CompareMode(services(), m_git);
     m_version = new VersionControl(services(), m_git, m_compare, disk);
     // An agent's git tool (AgentGit.cpp): the chip and the panel read the repository again, and the file comes in when
@@ -207,12 +214,54 @@ class Vcs : public AreaController {
   void documentChanged(bool replaced) override { m_compare->documentChanged(replaced); }
 
  private:
-  // Set up repository's "Move into its own folder" (GitWatch::askOwnFolder): AppDocument::moveTo; its note (linked files left
-  // behind, an old file that stayed) as a toast.
-  void moveDocument(const QString& file, std::function<void(bool, const QString&)> done) {
-    services().document()->moveTo(services().jobs(), file, [this, done](bool ok, const QString& text) {
-      if (ok && !text.isEmpty()) services().toast(text, {}, {}, 10000);
-      done(ok, ok ? QString() : i18n::t(text));
+  // A document in a repository whose linked files are outside it (found outside, or recorded by an absolute path only):
+  // "N linked files are outside the repository: clones won't have them", with Copy into the repository (AssetsArea::
+  // copyIntoProject: assets/ beside the document, relative paths). Once per repository and set of files this session.
+  void checkOutside() {
+    auto* assets = services().window()->findChild<AssetsArea*>();
+    if (!assets || m_git->repo().state != git::Repo::State::Ready || m_git->repo().top.isEmpty()) return;
+    const std::vector<std::string> out = assets->outside(m_git->repo().top);
+    if (out.empty()) return;
+    QString key = m_git->repo().top;
+    for (const auto& import : out) key += "|" + QString::fromStdString(import);
+    if (m_toldOutside.contains(key)) return;
+    m_toldOutside.insert(key);
+    services().toast(tr("%n linked file(s) are outside the repository: clones won't have them", nullptr, int(out.size())), tr("Copy into the repository"),
+                     [this, out] {
+                       if (auto* a = services().window()->findChild<AssetsArea*>())
+                         a->copyIntoProject(out, [this](bool ok, int copied, const QString&) {
+                           if (ok && copied) services().toast(tr("%n linked file(s) copied into the repository and linked by relative paths", nullptr, copied));
+                         });
+                     },
+                     20000);
+  }
+  QSet<QString> m_toldOutside;
+  // The document's linked files that are not embedded (the move's copy, the outside notice), by import.
+  std::vector<std::string> linkedImports() const {
+    std::vector<std::string> out;
+    if (auto* assets = services().window()->findChild<AssetsArea*>(); assets && assets->monitor())
+      for (const auto& [import, a] : assets->monitor()->assets())
+        if (a.asset.value("storage", "linked") != "embedded") out.push_back(import);
+    return out;
+  }
+  // Set up repository's "Move into its own folder" (GitWatch::askOwnFolder): AppDocument::moveTo, then (copyLinked) its linked
+  // files copied into the new folder and relinked (AssetsArea::copyIntoProject); a note (linked files left behind, an old
+  // file that stayed) as a toast.
+  void moveDocument(const QString& file, bool copyLinked, std::function<void(bool, const QString&)> done) {
+    const std::vector<std::string> linked = copyLinked ? linkedImports() : std::vector<std::string>();
+    services().document()->moveTo(services().jobs(), file, [this, done, linked](bool ok, const QString& text) {
+      if (!ok) return done(false, i18n::t(text));
+      auto* assets = services().window()->findChild<AssetsArea*>();
+      if (linked.empty() || !assets) {
+        if (!text.isEmpty()) services().toast(text, {}, {}, 10000);
+        return done(true, {});
+      }
+      assets->copyIntoProject(linked, [this, done, n = int(linked.size())](bool copied, int count, const QString&) {
+        services().toast(copied && count == n ? tr("Its %n linked file(s) were copied into the new folder", nullptr, count)
+                                              : tr("%1 of its %2 linked files were copied into the new folder; the rest stay where they were").arg(count).arg(n),
+                         {}, {}, 10000);
+        done(true, {});
+      });
     });
   }
   GitWatch* m_git = nullptr;
