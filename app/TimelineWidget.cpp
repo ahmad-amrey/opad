@@ -30,9 +30,9 @@ QString shortId(const std::string& id) { return QString::fromStdString(id.substr
 constexpr int kGap = 8;      // between markers
 }  // namespace
 
-// Ops the timeline draws. Visibility toggles, notes and pinned measurements are view state with their own
-// UI (browser eye, Annotations tab, measurement card) and would bury the structural history; their
-// tombstones go with them.
+// Ops the timeline draws. Visibility toggles, renames, notes and pinned measurements are view state with their own
+// UI (browser eye, Properties and the browser, Annotations tab, measurement card) and would bury the structural
+// history; their tombstones go with them.
 bool timelineShows(const opad::Document& doc, const opad::Op& op) {
   if (op.type == "annotation" || op.type == "measurement") return false;
   if (!opad::Document::known_type(op.type)) return false;  // a newer build's op: nothing to show or edit here
@@ -41,6 +41,9 @@ bool timelineShows(const opad::Document& doc, const opad::Op& op) {
   // changed, not steps of their own, and parameters live in their dialog.
   if (op.type == "edit" || op.type == "regen" || op.type == "param") return false;
   if (op.type == "appearance" && op.data.contains("visible")) return false;
+  // A name holds for a node's whole life (resolve applies the latest at any roll-back position): Properties and the
+  // browser change it, the file keeps each rename for diff, merge and undo.
+  if (op.type == "rename") return false;
   if (op.type == "delete") {
     const opad::Op* t = doc.find_op(op.data.value("target", ""));
     return !t || timelineShows(doc, *t);

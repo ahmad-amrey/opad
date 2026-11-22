@@ -29,12 +29,13 @@
 
 // OPAD_BENCH_TIMELINE=<prefix> (TODO 11 UI-99; case timeline in tools/bench_cases/smart.py) on the 40 mm base with a 10 mm
 // boss joined on top; the bench rounds the boss's top edges (Round), renames the body and colours it first. The pointer on
-// a marker (mouse events into the timeline): Boss's five faces in the candidate amber, Round's four, the rename's body
-// tinted whole, nothing once it leaves. A click on Round's marker selects its four faces with its actions on the chip, on
+// a marker (mouse events into the timeline): Boss's five faces in the candidate amber, Round's four, the colour's body
+// tinted whole, nothing once it leaves; the rename has no marker (a name holds for the body's whole life). A click on Round's marker selects its four faces with its actions on the chip, on
 // Base's (it made the body) the body, Right from there Boss's faces; Ctrl+C on the timeline copies the marker's op id (the
-// clipboard is given back). Names on the markers make them wider; the design history alone hides the rename and the
-// colour. Roll back to here on Boss: the round is not there, the playhead between the two markers, the chip says so; the
-// playhead dragged to the end rolls forward, dragged before Boss rolls back past it; a change made then is appended and
+// clipboard is given back). Names on the markers make them wider; the design history alone hides the colour. Roll back to
+// here on Boss: the round is not there, the playhead between the two markers, the chip says so; the playhead dragged to
+// the end rolls forward, dragged before Boss rolls back past it; a rename made then names the body there (still rolled
+// back, no marker); another change made then is appended and
 // rolls forward, so does a command that edits. The menu on no marker offers the view entries. UI-96 from the timeline:
 // Delete on Boss's marker asks about Round with the result previewed and Remove its faces instead, Delete Boss only leaves
 // Round failing as one step undone from the toast; Round's marker, used by nothing, deletes at once. Boss's marker clicked:
@@ -139,7 +140,8 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
             if (owners[i].op == state->round) state->roundFaces.push_back(r);
           }
           require(state->bossFaces.size() == 5 && state->roundFaces.size() == 4, "the boss owns 5 faces, Round 4");
-          require(t->markerCount() == 5 && !t->showNames() && !t->designOnly(), "five markers, icons only, every step");
+          require(t->markerCount() == 4 && t->markerAt(state->rename).isNull() && !t->showNames() && !t->designOnly(), "four markers (a rename is no step), icons only, every step");
+          pass("the rename added no marker: Base, Boss, Round and the colour");
           w.setWorkspace("design");
           w.m_viewport->standardView("iso");
           hover(state->boss);
@@ -155,12 +157,12 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
         case 3: {
           if (!waitFor(w.m_viewport->candidateRefsShown() == 4, "the pointer on Round's marker draws its four faces")) return;
           pass("on Round's marker, its four faces");
-          hover(state->rename);
+          hover(state->colour);
           break;
         }
         case 4: {
-          if (!waitFor(tinted() && w.m_viewport->candidateRefsShown() == 0 && !w.m_viewport->looksPending(), "the pointer on the rename's marker tints the body")) return;
-          pass("on the rename's marker, the body it renamed tinted whole");
+          if (!waitFor(tinted() && w.m_viewport->candidateRefsShown() == 0 && !w.m_viewport->looksPending(), "the pointer on the colour's marker tints the body")) return;
+          pass("on the colour's marker, the body it coloured tinted whole");
           QEvent leave(QEvent::Leave);
           QApplication::sendEvent(t, &leave);
           break;
@@ -213,10 +215,10 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
           w.action("timeline.designOnly")->trigger();
           require(t->designOnly() && t->markerCount() == 3 && t->markerAt(state->rename).isNull() && t->markerAt(state->colour).isNull(), "the design history alone: three markers");
           t->grab().save(prefix + ".design.png");
-          pass("the design history alone hides the rename and the colour");
+          pass("the design history alone hides the colour");
           w.action("timeline.designOnly")->trigger();
           w.action("timeline.names")->trigger();
-          require(!t->designOnly() && !t->showNames() && t->markerCount() == 5, "back to every step, icons only");
+          require(!t->designOnly() && !t->showNames() && t->markerCount() == 4, "back to every step, icons only");
           // Roll back to here, on Boss: the model as it was right after it.
           QMenu menu;
           w.buildTimelineMenu(menu, state->boss);
@@ -229,6 +231,7 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
           if (!waitFor(w.m_doc->rolledBack(), "Roll back to here rolls back")) return;
           const QRect boss = t->markerAt(state->boss), round = t->markerAt(state->round), head = t->playhead();
           require(w.m_doc->rollback() == state->round && w.m_doc->scene.feature(state->boss) && !w.m_doc->scene.feature(state->round), "rolled back before Round");
+          require(w.m_doc->node(state->body)->name == "Part", "rolled back to before the rename, the body keeps its name \"Part\"");
           require(head.center().x() > boss.right() && head.center().x() < round.left(), "the playhead between Boss and Round");
           require(timelineArea->chip() && timelineArea->chip()->isVisibleTo(w.m_chips) && w.action("timeline.rollForward")->isEnabled(), "the chip and Roll forward say it is rolled back");
           t->grab().save(prefix + ".rolledback.png");
@@ -246,9 +249,17 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
         case 11: {
           if (!waitFor(w.m_doc->rollback() == state->boss && !w.m_doc->scene.feature(state->boss), "the playhead dragged before Boss rolls back past it")) return;
           pass("the playhead dragged before Boss: the model without the boss");
-          const size_t ops = w.m_doc->doc.ops.size();
+          size_t ops = w.m_doc->doc.ops.size();
+          // A name holds for the body's whole life: renamed while rolled back, it is called so there, no marker comes and
+          // the model stays rolled back (as for a colour).
           w.m_doc->run("rename", opad::json{{"target", state->body}, {"name", "Part 2"}});
-          require(w.m_doc->doc.ops.size() == ops + 1 && !w.m_doc->rolledBack() && w.m_doc->scene.feature(state->round), "a change made while rolled back is appended and rolls forward");
+          require(w.m_doc->doc.ops.size() == ops + 1 && w.m_doc->rollback() == state->boss && w.m_doc->node(state->body)->name == "Part 2" && t->markerCount() == 4,
+                  "a rename while rolled back stays rolled back, names the body there and adds no marker");
+          pass("renamed while rolled back before Boss: the body is \"Part 2\" there, no marker, still rolled back");
+          ops = w.m_doc->doc.ops.size();
+          w.m_doc->run("component", opad::json{{"name", "Spare"}});
+          require(w.m_doc->doc.ops.size() == ops + 1 && !w.m_doc->rolledBack() && w.m_doc->scene.feature(state->round) && w.m_doc->node(state->body)->name == "Part 2",
+                  "a change made while rolled back is appended and rolls forward, the name kept");
           pass("a change made while rolled back is appended at the end and rolls forward");
           require(timelineArea->rollTo(state->round) && w.m_doc->rolledBack(), "rolled back again");
           w.action("design.chamfer")->trigger();  // a command that edits
@@ -688,7 +699,7 @@ OPAD_BENCH(OPAD_BENCH_ROLLBACK, rollback) {
 // is off at first: no History folder; on, its rows are the markers top to bottom. Round's row selected: its marker current
 // and pulsing, its four faces in amber. Boss's row menu is the marker's; its Roll back to here puts a "Rolled back here" row
 // between Boss and Round, Round greyed; a double-click on that row rolls forward. A double-click on Boss's row edits Boss.
-// The design history alone drops the rename's row. Deleting Boss alone leaves Round's row badged as failing (undone). Del on
+// The rename has no row (no step). Deleting Boss alone leaves Round's row badged as failing (undone). Del on
 // Round's row deletes it (no question: nothing uses it), its row then in italics; undone. Off again: no folder. Shots:
 // <prefix>.list.png, .rolledback.png (the browser).
 OPAD_BENCH(OPAD_BENCH_HISTORYLIST, historylist) {
@@ -788,7 +799,7 @@ OPAD_BENCH(OPAD_BENCH_HISTORYLIST, historylist) {
           w.m_viewport->standardView("iso");
           require(!folder() && !w.action("timeline.historyList")->isChecked(), "the History list is off at first");
           w.action("timeline.historyList")->trigger();
-          const QStringList want = {"Base", "Boss", "Round", t->label(*w.m_doc->doc.find_op(state->rename))};
+          const QStringList want = {"Base", "Boss", "Round"};  // the rename is no step: no row
           require(folder() && folder()->isExpanded() && rows() == want, "on: open, a row per marker, top to bottom: " + rows().join(" / ").toStdString());
           pass("the History list on: " + rows().join(" / "));
           w.m_browser->selectIds({"history:" + state->round});
@@ -809,7 +820,7 @@ OPAD_BENCH(OPAD_BENCH_HISTORYLIST, historylist) {
         case 3: {
           if (!waitFor(w.m_doc->rolledBack() && w.m_doc->rollback() == state->round, "Roll back to here from Boss's row")) return;
           const QStringList now = rows();
-          require(now.size() == 5 && now[2] == TimelineArea::tr("Rolled back here") && look(TimelineArea::kRollRow).bold, "the roll-back row between Boss and Round: " + now.join(" / ").toStdString());
+          require(now.size() == 4 && now[2] == TimelineArea::tr("Rolled back here") && look(TimelineArea::kRollRow).bold, "the roll-back row between Boss and Round: " + now.join(" / ").toStdString());
           require(look(state->round).dim && !look(state->boss).dim, "Round greyed, Boss not");
           browserShot(".rolledback.png");
           pass("rolled back from Boss's row: \"" + now[2] + "\" between Boss and Round, Round greyed");
@@ -818,14 +829,14 @@ OPAD_BENCH(OPAD_BENCH_HISTORYLIST, historylist) {
                   "a double-click on Round's row, after the marker, says to roll forward");
           pass("a double-click on Round's row, after the marker, says to roll forward first");
           timelineArea->rowActivated(TimelineArea::kRollRow);
-          require(!w.m_doc->rolledBack() && rows().size() == 4, "a double-click on the roll-back row rolls forward");
+          require(!w.m_doc->rolledBack() && rows().size() == 3, "a double-click on the roll-back row rolls forward");
           pass("a double-click on the roll-back row rolls forward");
           timelineArea->rowActivated("history:" + state->boss);
           require(w.m_design->featureActive() && w.m_design->editingOp() == state->boss, "a double-click on Boss's row edits Boss");
           pass("a double-click on Boss's row edits Boss");
           w.m_design->escape();
           w.action("timeline.designOnly")->trigger();
-          require(rows() == QStringList({"Base", "Boss", "Round"}), "the design history alone drops the rename's row: " + rows().join(" / ").toStdString());
+          require(rows() == QStringList({"Base", "Boss", "Round"}), "the design history alone keeps the three rows: " + rows().join(" / ").toStdString());
           w.action("timeline.designOnly")->trigger();
           pass("the design history alone: Base / Boss / Round");
           state->ops = w.m_doc->doc.ops.size();

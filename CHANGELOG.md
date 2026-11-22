@@ -30,6 +30,9 @@ before they ship.
   closed loop around it. A closed profile still offsets inward or outward. Select several chains (or curves that branch)
   and each is offset on its own by the same distance, instead of "the path must be one connected chain"; the preview
   shows with chain selection on, and the offset arrow stays put as you reach for it.
+- **Renaming is no longer a timeline step:** a body keeps the name you give it through its whole history, also with
+  the timeline rolled back, while an earlier feature is edited and after a regenerate. Renaming while rolled back
+  leaves the timeline where it is. Version comparisons and merges still see each rename.
 - **Search commands puts the tools of where you work first:** in a sketch, *Sketch fillet* comes before *Fillet* (and
   so on for Mirror, Offset, Move and the patterns; "measure" finds Measure in a sketch, Distance outside it).
   Everything is still listed.
