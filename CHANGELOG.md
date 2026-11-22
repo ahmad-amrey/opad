@@ -52,6 +52,9 @@ before they ship.
 - A body keeps its name, colour and visibility when the feature that made it breaks and is fixed again (a sketch change
   loses the profile it was made from, and you pick the profile again). It used to come back as a new body named after
   the feature.
+- A sketch tool's preview (Offset, Mirror, Pattern and the others with Apply) shows only what the tool makes or
+  changes. In a sketch with freedom left, or one saved a hair off its constraints, it drew every curve of the sketch
+  dashed, as if everything were picked.
 
 ## [0.10.0] - 2026-11-21
 

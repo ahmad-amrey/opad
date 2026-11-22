@@ -283,6 +283,10 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   and Move keep `connected_entities`, as does Select's double-click. A click on a picked curve drops that curve alone. Bench sketch-chaindim (also each
   dimension kind drawn whole, its lines, arrows and extension lines, while placed, typed and after: a line, two
   parallel lines, a point and a line, an angle), `ctest -R sketch-offset`.
+- An Apply tool's preview (`runSketchEdit`) draws `changed_entities`: exact against the work's own result (before the solve:
+  every change the tool made, however small) plus what the solve moved more than 1e-6 x the sketch's size; the solve of an
+  under-constrained sketch, or one saved off its constraints (opening never solves), shifts every point by ~1e-7, and an
+  exact diff drew the whole sketch dashed. No tool's work may solve the whole sketch itself. Bench sketch-handles (steps 19-20).
 - A refused sketch change says why where the user looks: `SketchEditor::refused` (a toast, through `DesignController::notice`)
   besides the status line (a solve refused in `end_change`, a Sketch fillet that does not fit). Sketch fillet names its
   reason (`fillet_problem`: fewer or more than two curves ending at the point, a spline, a tangent join, a radius too big with
