@@ -267,8 +267,17 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   Shift/Ctrl adds it: the view passes the modifiers to `sketchDoubleClick`); on a point it edits spline weights, on a
   dimension's value (an offset's distance too) it opens the value box, as before. Offset of an open chain goes to one side
   only, a parallel copy (`offset_into`: the kernel's open result, `BRepOffsetAPI_MakeOffset(..., IsOpenResult)`; collinear
-  lines by hand, the kernel finds no plane for them): the arrow points to the pointer's side and `offset_side` picks the
-  kernel sign whose copy lies on the arrow's side for the distance (negative: the other). Bench sketch-chaindim (also each
+  lines by hand, the kernel finds no plane for them): until the first pull, typed value or wheel step the arrow follows the
+  pointer's side and `offset_side` picks the kernel sign whose copy lies on that side (negative: the other), `offsetSideKey`
+  asking for a new preview when a chain's side changes; from the first value on each open chain's aim point is frozen
+  (`holdOffsetSides`: the arrow's tip for the arrow's chain, the pointer for the others; `resolveOffsetAims` makes the kernel
+  sign of it on the job's worker, never on a pointer move) and the arrow stays put
+  (one offset session: `resetOffsetSides` on setTool, Apply, undo, redo, begin). With chain on, the Offset click and window
+  take `chain_entities` (ends linked where only two curves of a construction kind meet, and at a branch between two that
+  each take the other for the smooth way on, <= 15 degrees and clearly nearest; the chain is the path or loop of links, the
+  same from any of its curves; a loose end back on a point the path runs through is trimmed, never the seed; coincident
+  ends join); Align, Rigid
+  and Move keep `connected_entities`, as does Select's double-click. A click on a picked curve drops that curve alone. Bench sketch-chaindim (also each
   dimension kind drawn whole, its lines, arrows and extension lines, while placed, typed and after: a line, two
   parallel lines, a point and a line, an angle), `ctest -R sketch-offset`.
 - A refused sketch change says why where the user looks: `SketchEditor::refused` (a toast, through `DesignController::notice`)

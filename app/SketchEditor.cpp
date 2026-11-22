@@ -253,7 +253,8 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   m_dimensionHandle=new DimensionHandle(viewport,jobs);qApp->installEventFilter(this);
   m_toolPreviewTimer.setSingleShot(true);m_toolPreviewTimer.setInterval(120);
   connect(&m_toolPreviewTimer,&QTimer::timeout,this,[this]{if(!m_active)return;if(m_editJob){m_toolPreviewTimer.start();return;}previewTool();});
-  connect(m_dimensionHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){m_options["distance"]=text;scheduleToolPreview();emit workflowChanged();});
+  // Pulled or typed: the offset's sides are held from here (holdOffsetSides), taken before the new value goes in.
+  connect(m_dimensionHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){holdOffsetSides();m_options["distance"]=text;scheduleToolPreview();emit workflowChanged();});
   m_dimensionHandle->setLabel(tr("Offset"));m_dimensionHandle->setCapturesKeys(false);  // the keys come through sketchKey
   connect(m_dimensionHandle,&DimensionHandle::accepted,this,[this](bool keep){if(m_active && m_tool=="offset" && !m_sel.empty())applyTool(keep);});
   m_input=new DynamicInput(viewport);
@@ -376,6 +377,7 @@ void SketchEditor::setVisible(bool visible) {
 }
 
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
+  resetOffsetSides();
   ++m_geometryRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   ++m_session;m_toolPreview.reset();m_previewRequested=false;
   ++m_modelRevision;  // what previews cached by curve id (trim cuts, an extend's run) was the last sketch's: ids start again
@@ -516,6 +518,7 @@ bool SketchEditor::end_change(const QString& what) {
 }
 
 void SketchEditor::undo() {
+  resetOffsetSides();
   if(m_previewComputing && m_editJob){invalidatePreview();m_editJob->cancel();m_editJob=nullptr;m_previewComputing=false;}
   if(m_editJob){
     if(!m_undoPending){m_undoPending=true;connect(m_editJob,&Job::finished,this,[this]{m_undoPending=false;if(m_active)undo();},Qt::QueuedConnection);}
@@ -545,6 +548,7 @@ void SketchEditor::undo() {
 
 void SketchEditor::redo() {
   if (m_editJob || m_redo.empty()) return;
+  resetOffsetSides();
   ++m_modelRevision;
   invalidatePreview();
   const bool planeChanged=m_plane!=m_redo.back().plane;
@@ -1032,6 +1036,7 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   const bool edgeSelection=!mirrorLine && QStringList{"offset","move","rotate","align","scale","copy","rect_pattern","polar_pattern","break","explode","mirror","break_link"}.contains(m_tool);
   if(edgeSelection && hitTest(u,v).kind==Hit::None){
     if(!(mods & (Qt::ShiftModifier|Qt::ControlModifier)))m_sel.clear();
+    m_boxStart=m_sel;
     m_boxSelecting=true;m_dragU=m_boxU=u;m_dragV=m_boxV=v;rebuild();emit changed();return;
   }
   if ((m_tool=="select" || (m_tool=="spline" && m_chain.empty())) && mods.testFlag(Qt::AltModifier)) return insertSplineNode(u,v);
@@ -1219,7 +1224,18 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   m_cursor = typedPoint(s);  // typed values hold it
   m_haveCursor = true;
   trackSlotSweep();  // an arc slot's end: which way round the pointer went
-  if(m_tool=="offset" && !dragging && !m_geometryJob)updateDimensionHandle();
+  if(m_tool=="offset" && !dragging && !m_geometryJob) {
+    updateDimensionHandle();
+    // Until the sides are held the copy goes to the pointer's side: the pointer crossing a chain (or the arrow turning
+    // round) asks for a new preview, keeping the shown one until it comes. It only moved the arrow, so the preview kept the
+    // old side while Apply took the new one.
+    // Compared with the sides the last preview was asked for: the shown one stays drawn but is no longer the one Apply
+    // commits (an Enter before the new one comes makes the new side, as the arrow shows it), and a job still computing the
+    // old side is dropped. A pending preview reads the pointer when it starts anyway.
+    if(!offsetSidesHeld() && !m_sel.empty() && !m_toolPreviewTimer.isActive() && m_offsetPlanned.sel==m_sel && offsetSideKey()!=m_offsetPlanned.key) {
+      invalidatePreview(true);dropPreviewJob();m_toolPreviewTimer.start(120);
+    }
+  }
   if (redraw) {if(m_placingDim||dimensionHover)rebuild();else updateTransient();}
   updateInput();  // the pointer's values, beside it
   noteHints();
@@ -1385,7 +1401,17 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
       if(m_tool=="select")for(size_t index:candidates.points){if(index>=m_sk.points.size())continue;const auto& p=m_sk.points[index];if(selectable(p.id)&&inside(p.x,p.y)&&selected.insert(p.id).second)m_sel.push_back(p.id);}
       if(m_tool=="select")for(const auto& c:m_sk.constraints)if(selectable(c.id)) {double x,y;labelPosition(c,x,y);if(inside(x,y))m_sel.push_back(c.id);}
     }
-    if(m_tool=="offset" && chainOnClick())selectConnected();
+    // Each curve the window added brings its chain, as a click does; what was picked before stays as it was (a curve dropped
+    // from a chain stays dropped when a Shift window adds others).
+    if(m_tool=="offset" && chainOnClick()) {
+      const std::set<int> before(m_boxStart.begin(),m_boxStart.end());
+      std::vector<int> seeds;for(int id:m_sel)if(!before.count(id))seeds.push_back(id);
+      if(!seeds.empty()) {
+        invalidatePreview();
+        std::set<int> have(m_sel.begin(),m_sel.end());
+        for(int id:chain_entities(m_sk,seeds))if(have.insert(id).second)m_sel.push_back(id);
+      }
+    }
     if(m_tool=="break_link")m_sel.erase(std::remove_if(m_sel.begin(),m_sel.end(),[this](int id){const auto* e=m_sk.entity(id);return !e || e->source.is_null();}),m_sel.end());  // linked curves only
     rebuild();emit changed();if(m_tool!="select"){toolPrompt();scheduleToolPreview();}return;
   }

@@ -210,7 +210,8 @@ void SketchPanel::buildFields() {
   while(m_fields->rowCount()) m_fields->removeRow(0);
   auto field=[&](const QString& key,const QString& label,const QString& value) {
     auto* edit=new QLineEdit(m_editor->option(key,value),this);edit->setObjectName("sketchOption-"+key);m_fields->addRow(label,edit);
-    connect(edit,&QLineEdit::textChanged,this,[this,key](const QString& text){m_editor->m_options[key]=text;m_editor->scheduleToolPreview();});
+    // The offset's distance typed here holds its sides, as typed by the arrow (holdOffsetSides: before the new value goes in).
+    connect(edit,&QLineEdit::textChanged,this,[this,key](const QString& text){if(key=="distance")m_editor->holdOffsetSides();m_editor->m_options[key]=text;m_editor->scheduleToolPreview();});
     // Enter in a value field applies, as Enter in the view does, when the tool has what it applies to (the guides of the
     // node weights and Transform image type here and press Enter); a QLineEdit lets Return go nowhere. From the event loop:
     // applying rebuilds these fields.

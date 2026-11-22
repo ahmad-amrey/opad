@@ -25,7 +25,7 @@ using namespace opad::design;
 // Mirror: a click picks one curve and the tool stays on the curves (the preview after the first curve used to move it on
 // to the line, so the second click became the line); a window picks the rest, Enter goes on to the line, a click on it
 // previews the mirror image and Enter keeps it. Move: a click picks one curve, with the tool's own "Select connected chain
-// on click" the whole outline (and a click again drops it; the option is the tool's, rotate and offset keep theirs), the
+// on click" the whole outline (and a click on a picked curve drops that curve alone; the option is the tool's, rotate and offset keep theirs), the
 // preview follows and Enter moves it. Project (on the box): a click in the view adds a source and previews it, a source
 // added in the panel previews both, the panel lists them, Backspace takes the last back, Enter adds them linked. Break
 // link: a click picks a linked curve (an unlinked one is refused), a window picks the linked ones, Enter unlinks them.
@@ -62,8 +62,8 @@ void SketchEditor::benchApply() {
   const int bottom = m_sk.add_line(c0, c1), side = m_sk.add_line(c1, c2), top = m_sk.add_line(c2, c3);
   const int axis = m_sk.add_line(m_sk.add_point(35, -5), m_sk.add_point(35, 15));
   const int r0 = m_sk.add_point(65, 0), r1 = m_sk.add_point(80, 0), r2 = m_sk.add_point(80, 10), r3 = m_sk.add_point(65, 10);
-  const int r01 = m_sk.add_line(r0, r1);
-  m_sk.add_line(r1, r2), m_sk.add_line(r2, r3), m_sk.add_line(r3, r0);
+  const int r01 = m_sk.add_line(r0, r1), r12 = m_sk.add_line(r1, r2);
+  m_sk.add_line(r2, r3), m_sk.add_line(r3, r0);
   end_change(QStringLiteral("Bench"));
   rebuild();
   auto keyboard = [this]() -> QWidget* { QWidget* w = QApplication::focusWidget(); return w ? w : m_viewport; };
@@ -177,7 +177,10 @@ void SketchEditor::benchApply() {
         place(72.5, 0);
         check(m_sel.size() == 4 && has(r01), "move: with Select connected chain on click, a click picks the whole rectangle");
         place(80, 5);
-        check(m_sel.empty(), "move: a click on a picked curve drops its chain");
+        check(m_sel.size() == 3 && has(r01) && !has(r12), "move: a click on a picked curve drops that curve alone");
+        place(80, 5);
+        check(m_sel.size() == 4 && has(r12), "move: the dropped curve clicked again comes back with its chain");
+        m_sel.clear();
         setTool("rotate");
         const bool rotateChain = chainOnClick();
         setTool("offset");

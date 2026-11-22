@@ -5,6 +5,13 @@
 #include "sketch_geom.hpp"
 namespace opad::design {
 std::vector<int> connected_entities(const Sketch& sketch,const std::vector<int>& seeds);
+// The chain through each seed curve, as other CAD programs select it: curve ends are linked where only two curves of a kind
+// (construction or not) meet, at any corner, and where several branch only between two that each take the other for the
+// smooth way on (turning at most 15 degrees, clearly the nearest); the chain is the path or loop those links make, the same
+// whichever of its curves is the seed or which way they were drawn. A path whose loose end comes back to a point it runs
+// through loses that end's curve (never the seed's side), so no three of its curves meet at a point. connected_entities takes
+// everything connected instead (the whole shape: what Move, Align and a rigid group want). Each seed, then its chain.
+std::vector<int> chain_entities(const Sketch& sketch,const std::vector<int>& seeds);
 struct SketchTransform {
   double x=0,y=0,angle=0,scale=1,cx=0,cy=0;
   bool mirror=false; // reflect about the local x axis through (cx,cy), then rotate/scale/translate

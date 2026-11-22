@@ -29,8 +29,10 @@ before they ship.
 - **Offsetting an open curve or chain** in a sketch makes a single parallel copy on the side you point to, instead of a
   closed loop around it. A closed profile still offsets inward or outward. Select several chains (or curves that branch)
   and each is offset on its own by the same distance, on the side you point to, instead of "the path must be one
-  connected chain"; a negative distance turns them all to the other side. The preview shows with chain selection on,
-  and the offset arrow stays put as you reach for it.
+  connected chain"; a negative distance turns them all to the other side. In Offset, clicking a curve takes its chain:
+  on through corners, and where curves branch only into the one that runs straight on; click a picked curve to leave it
+  out. The copy goes to the side you point to until you drag the arrow or type a distance, then stays there, and the
+  arrow stays put as you reach for it.
 - **Renaming is no longer a timeline step:** a body keeps the name you give it through its whole history, also with
   the timeline rolled back, while an earlier feature is edited and after a regenerate. Renaming while rolled back
   leaves the timeline where it is. Version comparisons and merges still see each rename.
