@@ -587,6 +587,99 @@ TEST(coil_and_thicken) {
   CHECK(resolve(doc).unresolved.empty());
 }
 
+// A step that fails keeps who its bodies were: a sketch change that loses the picked profile breaks the extrude, the profile
+// picked again brings back the same body, with its name, colour and hiding (a new body each time lost them all, and every
+// later reference to it).
+TEST(a_body_keeps_who_it_is_through_a_failed_step) {
+  Document doc = Document::create();
+  // `lines` short lines drawn first push the circle onto other curve ids, as redrawing it does.
+  auto circle = [](double r, int lines = 0) {
+    json shapes = json::array();
+    for (int i = 0; i < lines; ++i) shapes.push_back({{"kind", "line"}, {"picks", {{60.0 + 10 * i, 0}, {65.0 + 10 * i, 0}}}});
+    shapes.push_back({{"kind", "circle"}, {"picks", {{0, 0}}}, {"options", {{"radius", r}}}});
+    return json{{"shapes", shapes}};
+  };
+  const std::string sk = commands::run("sketch", {{"geometry", circle(20)}}, &doc)["sketch_id"];
+  auto boundary = [&] {
+    const Scene s = resolve(doc);
+    return agent::sketch_details(doc, s, {{"sketch", sk}, {"section", "profiles"}})["items"][0]["boundary"];
+  };
+  auto result_of = [&](const std::string& id) {
+    for (const auto& e : effective_ops(doc))
+      if (e.op->id == id) return e.data().value("result", json::object());
+    return json::object();
+  };
+  const json made = feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", sk}, {"boundary", boundary()}}})}, {"distance", "5 mm"}, {"operation", "new"}});
+  const std::string extrude = made["feature_id"], body = made["body_ids"][0];
+  commands::run("rename", {{"target", body}, {"name", "Lid adapter"}}, &doc);
+  commands::run("appearance", {{"target", body}, {"color", {0.2, 0.4, 0.8}}}, &doc);
+  // The circle drawn again (new curve ids): the profile the extrude picked is gone, so it fails and makes no body.
+  commands::run("sketch_edit", {{"target", sk}, {"geometry", circle(25, 1)}}, &doc);
+  Scene s = resolve(doc);
+  CHECK(!s.node(body));
+  const json failed = result_of(extrude);
+  CHECK(failed.contains("error"));
+  CHECK(failed.contains("held") && failed["held"].size() == 1 && failed["held"][0]["id"] == body);
+  // A second change while it still fails keeps them too.
+  commands::run("sketch_edit", {{"target", sk}, {"geometry", circle(26, 2)}}, &doc);
+  CHECK_EQ(result_of(extrude).value("held", json::array()).size(), size_t(1));
+  // The profile picked again: the same body, still called what it was renamed to, still coloured.
+  const json back = commands::run("feature_edit", {{"target", extrude}, {"inputs", {{"profiles", json::array({{{"sketch", sk}, {"boundary", boundary()}}})}}}}, &doc);
+  (void)back;
+  s = resolve(doc);
+  const Node* n = s.node(body);
+  CHECK(n != nullptr);
+  if (n) {
+    CHECK_EQ(n->name, std::string("Lid adapter"));
+    CHECK(n->has_color && std::fabs(n->color[2] - 0.8) < 1e-9);
+  }
+  CHECK_NEAR(volume_of_node(doc, s, body), M_PI * 26 * 26 * 5, 1e-6);
+  CHECK(!result_of(extrude).contains("held"));
+}
+
+// While a feature fails its bodies' names stay taken (a copy made meanwhile is numbered past them), and a later feature built
+// on the failing one's body works again once it is fixed: the body it refers to is the same body.
+TEST(a_failing_features_bodies_keep_their_names_and_references) {
+  Document doc = Document::create();
+  auto circle = [](double r, int lines = 0) {
+    json shapes = json::array();
+    for (int i = 0; i < lines; ++i) shapes.push_back({{"kind", "line"}, {"picks", {{60.0 + 10 * i, 0}, {65.0 + 10 * i, 0}}}});
+    shapes.push_back({{"kind", "circle"}, {"picks", {{0, 0}}}, {"options", {{"radius", r}}}});
+    return json{{"shapes", shapes}};
+  };
+  const std::string sk = commands::run("sketch", {{"geometry", circle(20)}}, &doc)["sketch_id"];
+  auto boundary = [&] {
+    const Scene s = resolve(doc);
+    return agent::sketch_details(doc, s, {{"sketch", sk}, {"section", "profiles"}})["items"][0]["boundary"];
+  };
+  const json made = feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", sk}, {"boundary", boundary()}}})}, {"distance", "5 mm"}, {"operation", "new"}});
+  const std::string extrude = made["feature_id"], disc = made["body_ids"][0];
+  const std::string pin = feature_cmd(doc, "box", {{"x", "60 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "5 mm"}})["body_ids"][0];
+  // A mirror of the pin about one of the disc's flat faces.
+  std::string copy, name;
+  for (int face = 0; face < 3 && copy.empty(); ++face) {
+    try {
+      copy = feature_cmd(doc, "mirror", {{"bodies", json::array({{{"body", pin}, {"kind", "body"}}})}, {"plane", {{"face", disc + "/face/" + std::to_string(face)}}}, {"operation", "new"}})["body_ids"][0];
+    } catch (const Error&) {
+    }
+  }
+  CHECK(!copy.empty());
+  if (copy.empty()) return;
+  name = resolve(doc).node(copy)->name;
+  // The disc's profile lost: the extrude fails, and the mirror with it (its plane is gone).
+  commands::run("sketch_edit", {{"target", sk}, {"geometry", circle(25, 1)}}, &doc);
+  CHECK(!resolve(doc).node(copy));
+  // Mirrored again meanwhile: the copy does not take the failing mirror's name.
+  const std::string other = feature_cmd(doc, "mirror", {{"bodies", json::array({{{"body", pin}, {"kind", "body"}}})}, {"plane", {{"base", "xz"}}}, {"operation", "new"}})["body_ids"][0];
+  CHECK(resolve(doc).node(other)->name != name);
+  // The profile picked again: the disc is the same body, so the mirror built on its face works again, its copy as before.
+  commands::run("feature_edit", {{"target", extrude}, {"inputs", {{"profiles", json::array({{{"sketch", sk}, {"boundary", boundary()}}})}}}}, &doc);
+  const Scene s = resolve(doc);
+  CHECK(s.node(disc) && s.node(copy));
+  if (s.node(copy)) CHECK_EQ(s.node(copy)->name, name);
+  CHECK(s.node(other) && s.node(other)->name != name);
+}
+
 CHECK_MAIN()
 
 TEST(spline_nodes_insert_without_shape_change_and_weights_persist) {
