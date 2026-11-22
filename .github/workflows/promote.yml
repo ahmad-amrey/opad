@@ -68,12 +68,12 @@ jobs:
             exit 1
           fi
 
-          # The exact commit passed Tested: every platform built, tested and install-checked (the run that published its
-          # release candidate, Build on dev with Publish). Merging into dev runs nothing, so this is where the checks bite.
+          # The exact commit passed Tested: every platform built, tested and install-checked (the run of the merge into dev
+          # that published its release candidate, reusing its pull request's build).
           conclusion=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?check_name=Tested&per_page=20" \
             --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.started_at) | last | .conclusion // ""')
           if [ "$conclusion" != success ]; then
-            echo "::error::dev's commit $sha was not built and tested (Tested: ${conclusion:-none}). Publish its release candidate first: Actions > Build, test and release > Run workflow on dev with Publish ticked; promote once it has passed."
+            echo "::error::dev's commit $sha has not passed Tested (${conclusion:-none}). Wait for the run of its merge into dev (it publishes the release candidate), or Actions > Build, test and release > Run workflow on dev with Publish ticked; promote once it has passed."
             exit 1
           fi
 

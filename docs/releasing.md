@@ -1,10 +1,10 @@
 # Checks and releases
 
-OPAD has two long-lived branches. **`dev`** takes every change freely: merging into it runs no checks, so work flows
-without waiting. A *development build* is made on demand: building, testing and install-checking every platform, and
-published only when all of it passes. **`main`** holds the latest release: it only moves forward to such a fully tested
-commit of `dev` (*Promote dev to main*, a fast-forward), and the version in `CMakeLists.txt` then decides whether that
-publishes a release. Both run in GitHub Actions: `.github/workflows/ci.yml`
+OPAD has two long-lived branches. **`dev`** is the pre-release branch: work reaches it only through pull requests that
+have been built, tested and install-checked on every platform (`Tested`) and are up to date with `dev`, and every merge
+publishes a *development build* (a pre-release) of what `dev` now holds. **`main`** holds the latest release: it only
+moves forward to a commit of `dev` (*Promote dev to main*, a fast-forward), and the version in `CMakeLists.txt` then
+decides whether that publishes a release. Nothing reaches `main` that did not come through `dev`. Both run in GitHub Actions: `.github/workflows/ci.yml`
 (the "Build, test and release" workflow) and `.github/workflows/promote.yml` ("Promote dev to main").
 
 ## One version, written once
@@ -27,11 +27,12 @@ development build shows as its notes; a release turns it into `## [X.Y.Z] - YYYY
 
 | Event | Version checks | Builds, unit tests, install tests | Publishes |
 |---|---|---|---|
-| Merge or push into `dev` | none | none | nothing |
-| Actions > Build, test and release > Run workflow on `dev`, **Publish** ticked | yes | Windows, Linux, macOS (reused if this exact code was built already, below) | when everything passes: a **development build**, pre-release `vA.B.C-dev.<build>`, or the **release candidate** `vX.Y.Z-rc.<build>` when the version is new |
-| *Promote dev to main* | `dev`'s commit passed that full run (`Tested`), its version is new, `main` is in `dev`'s history | none (it only moves `main`) | nothing by itself |
+| Pull request into `dev` | yes; it says what its merge will publish | Windows, Linux, macOS | nothing (the merge publishes) |
+| Merge into `dev` (the push) | yes | none when the pull request was up to date: its build is reused (below) | when everything passed: a **development build**, pre-release `vA.B.C-dev.<build>`, or the **release candidate** `vX.Y.Z-rc.<build>` when the version is new |
+| Actions > Build, test and release > Run workflow on `dev`, **Publish** ticked | yes | as for a merge | the same, by hand (a publish that failed) |
+| *Promote dev to main* | `dev`'s commit passed `Tested`, its version is new, `main` is in `dev`'s history | none (it only moves `main`) | nothing by itself |
 | Push to `main` (the promotion) | yes | none: the commit is `dev`'s, already built | the **release** `vX.Y.Z`, from the release candidate's very packages |
-| Pull request into `main` (a hotfix only) | yes; "Merging this pull request publishes OPAD X.Y.Z" | Windows, Linux, macOS | nothing (the merge publishes) |
+| Pull request into `main` (emergencies only, below) | yes; "Merging this pull request publishes OPAD X.Y.Z" | Windows, Linux, macOS | nothing (the merge publishes) |
 | Tag `vX.Y.Z` pushed by hand | the tag must equal the version and be on `main` | as for `main` | the release |
 | Actions > Build, test and release > Run workflow, **Publish** not ticked (any branch) | yes | Windows, Linux, macOS ("rebuild" builds even code that was built before) | nothing |
 
@@ -54,8 +55,8 @@ and passed (or this code was already built and passed, below); it fails when any
 
 ## Development builds and the release candidate
 
-A development build is published by *Actions > Build, test and release > Run workflow* on `dev` with **Publish** ticked, only when every
-platform builds and passes its tests and install checks. It is a GitHub **pre-release** tagged with a SemVer
+A development build is published by every merge into `dev` (or by hand: *Actions > Build, test and release > Run
+workflow* on `dev` with **Publish** ticked), only when every platform built and passed its tests and install checks. It is a GitHub **pre-release** tagged with a SemVer
 pre-release version: `vA.B.C-dev.<build>`
 for a development build (A.B.C is the next patch after the released version on `dev`) and `vX.Y.Z-rc.<build>` for the
 release candidate of an unreleased X.Y.Z, so `0.10.0 < 0.10.1-dev.20 < 0.10.1-rc.25 < 0.10.1`. Only the tag carries the
@@ -74,7 +75,8 @@ publishes those same packages as `vX.Y.Z`: what you tested is byte for byte what
 
 Every run that passes everywhere records the git tree of the code it built (an artifact `tested-<tree>`). A later run
 with exactly the same tree skips the builds and takes the packages from that earlier run: the push of a merged pull
-request whose branch was up to date with its base, and the promotion of `dev` to `main`. Only runs of this workflow in
+request whose branch was up to date with its base (so a merge into `dev` publishes its pull request's packages within a
+minute or two), and the promotion of `dev` to `main` (which finds that same pull request's run). Only runs of this workflow in
 this repository count, and the tree includes `ci.yml`, so packages are never taken from a run whose workflow differed.
 Packages are kept 30 days, so a release candidate can be tested for weeks before its promotion reuses it; after that the
 code is built again.
@@ -93,9 +95,10 @@ The rules live in the repository's settings, not in a file; set them once (owner
 
 **`dev`**: *Settings > Rules > Rulesets > New branch ruleset*, name `dev`, *Enforcement status* Active, *Target
 branches*: *Add target > Include by pattern* `dev` (no quotes). Leave the *Bypass list* empty. Tick **Restrict
-deletions**, **Block force pushes** and **Require a pull request before merging** (approvals can stay 0), and no status
-checks: every change reaches `dev` through a pull request, so `dev` stays a clean pipeline into `main`, but nothing waits
-for a build. The checks bite where code reaches people: a published development build and `main`.
+deletions**, **Block force pushes**, **Require a pull request before merging** (approvals can stay 0) and **Require
+status checks to pass** with **Require branches to be up to date before merging** ticked and the check `Tested` added
+(*Add checks*, type `Tested`, pick the one from GitHub Actions). Up to date matters: the merge then has the very tree its
+pull request tested, so `dev` never holds untested code and the merge reuses that build instead of building again.
 
 **`main`**: two rulesets, both targeting *Include default branch*, because a bypass lifts every rule of its ruleset:
 
@@ -146,17 +149,16 @@ the release would never run. On your computer:
    Write for the people using OPAD: what they can do now, what behaves differently, what to watch for. The opening
    sentences are what the update notice in OPAD shows. The headings under the version are free; only the
    `## [X.Y.Z] - date` line is read.
-2. Merge its pull request into `dev` (no checks to wait for).
-3. *Actions > Build, test and release > Run workflow* on `dev` with **Publish** ticked. When every platform passes, the run publishes
-   **OPAD X.Y.Z release candidate (build N)**. Install it (or let a copy set to *Offer development builds* offer it) and
-   test it on your machines.
+2. Its pull request into `dev` is built and tested; merge it when `Tested` passes.
+3. The merge publishes **OPAD X.Y.Z release candidate (build N)** by itself. Install it (or let a copy set to *Offer
+   development builds* offer it) and test it on your machines.
 4. When it is good: *Actions > Promote dev to main > Run workflow*. `main` moves to that commit, and the run on `main`
    publishes `vX.Y.Z` with the release candidate's packages, the changelog section, a downloads table with first-start
    notes (`tools/release_downloads.md`), GitHub's list of the pull requests merged since the previous release,
    `SHA256SUMS.txt` and the third-party notices.
 
-A fix found while testing the release candidate is merged into `dev` like any change; publish again (step 3) for the
-next release candidate. Promote refuses a `dev` whose newest commit has not passed such a run. While the version is not
+A fix found while testing the release candidate is merged into `dev` like any change, and its merge publishes the next
+release candidate. Promote refuses a `dev` whose newest commit has not passed such a run. While the version is not
 released, its entries go into its own section, not under `[Unreleased]`: the checks refuse a non-empty `[Unreleased]`
 then, since those entries would be missing from the release.
 
@@ -166,13 +168,16 @@ Download section links to `https://github.com/ahmad-amrey/opad/releases/latest/d
 the newest release, and OPAD's update check downloads `releases/download/<tag>/<name>` for the user's system. Renaming
 a package means changing those links in README.md and README.ar.md and the names in `app/UpdateCheck.cpp` too.
 
-## Hotfixes and recovery
+## Batches, emergencies and recovery
 
-**A fix that cannot wait for `dev`** (it holds unfinished work): branch from `main`, fix, raise the patch version with
-its dated section, and open the pull request into `main`; merging it publishes the release. Then bring it into `dev`,
-since the next promotion requires `dev` to contain `main`: a branch from `main`, merge `dev` into it (resolving any
-conflict there), and a pull request from that branch into `dev` (it is then up to date with `dev`, as its ruleset
-asks).
+**Several pieces of work at once**: a short-lived branch from `dev`, the pieces merged into it there, and one pull
+request into `dev`: one full check, one development build. Delete the branch afterwards.
+
+**Emergencies only: a fix straight into `main`** (when `dev` holds work that must not ship): branch from `main`, fix,
+raise the patch version with its dated section, and open the pull request into `main`; merging it publishes the release.
+It is the one way into `main` that skips `dev`, so bring it back at once, since the next promotion requires `dev` to
+contain `main`: a branch from `main`, merge `dev` into it (resolving any conflict there), and a pull request from that
+branch into `dev`. Until then `dev` and `main` differ, so nothing on `dev` can be promoted.
 
 **Several promotions of one version**: only the push that changes `main`'s version publishes, so promote refuses when
 `main` already has dev's version (an earlier promotion whose release run failed). Re-run the failed jobs of that run

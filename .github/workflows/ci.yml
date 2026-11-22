@@ -1,12 +1,13 @@
 # Builds and tests OPAD on Windows, Linux and macOS and publishes the development builds and the releases
 # (docs/releasing.md).
 #
-# Two branches. dev takes changes freely: merging into it runs nothing. A development build is published on demand:
-# Actions > Build, test and release > Run workflow on dev with "Publish" ticked builds, tests and install-checks every platform and, only
-# when all pass, publishes a GitHub pre-release `vX.Y.(Z+1)-dev.<build>` (`vX.Y.Z-rc.<build>`, the release candidate,
-# when the version is new) that installed copies set to "Offer development builds" are told about. main only moves
-# forward to such a tested commit of dev ("Promote dev to main", .github/workflows/promote.yml, a fast-forward), so it
-# always holds the latest release; pull requests into main (hotfixes) and pushes to it are built and checked as ever.
+# Two branches. dev is the pre-release branch: work reaches it only by pull requests, each built, tested and
+# install-checked on every platform first ("Tested", required by dev's ruleset together with "up to date"), and every
+# merge publishes a GitHub pre-release `vX.Y.(Z+1)-dev.<build>` (`vX.Y.Z-rc.<build>`, the release candidate, when the
+# version is new) that installed copies set to "Offer development builds" are told about. The merge reuses the pull
+# request's packages (below), so the pre-release comes out at once. Run workflow on dev with "Publish" ticked does the
+# same by hand (a failed publish). main only moves forward to such a tested commit of dev ("Promote dev to main",
+# .github/workflows/promote.yml, a fast-forward), so it always holds the latest release.
 #
 # Releases follow the version in CMakeLists.txt (project(opad VERSION X.Y.Z)), the one place it is written: when a push
 # to main changes it to a version without a published release, normally the promotion of a dev that raised it, the run
@@ -32,8 +33,8 @@
 # check orders development builds by it.
 #
 # Actions are pinned to exact commits; update the SHA and the version comment together. The check to require in the
-# main ruleset is "Tested" alone (it fails when the version checks or any platform failed or were cancelled); dev
-# requires none.
+# main and dev rulesets is "Tested" alone (it fails when the version checks or any platform failed or were cancelled);
+# dev's ruleset also requires pull requests to be up to date, so a merge has the very tree its pull request tested.
 name: Build, test and release
 # Each run's title says what it is (the Actions list shows it): a pull request's check, a pre-release, a plain build, or
 # main's release run.
@@ -42,6 +43,8 @@ run-name: >-
       && format('Pull request #{0} check: {1}', github.event.pull_request.number, github.event.pull_request.title)
     || (github.event_name == 'workflow_dispatch' && inputs.publish)
       && format('Pre-release: publish a development build from {0}', github.ref_name)
+    || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
+      && 'Pre-release: dev moved (publishes a development build)'
     || github.event_name == 'workflow_dispatch'
       && format('Build and test {0} (nothing published)', github.ref_name)
     || github.ref_type == 'tag'
@@ -50,14 +53,14 @@ run-name: >-
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   push:
-    branches: [main]
+    branches: [main, dev]  # dev: every merge publishes a development build
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]  # releases only: never a pre-release tag (vX.Y.Z-dev.N, -rc.N)
   workflow_dispatch:
     inputs:
       publish:
-        description: On dev, publish a development build (the release candidate when the version is new) if everything passes
+        description: On dev, publish a development build (the release candidate when the version is new) if everything passes (a push to dev does it by itself)
         type: boolean
         default: false
       rebuild:
@@ -70,7 +73,8 @@ permissions:
 
 # A newer push to the same pull request replaces its run. Runs on dev, main and tags each have their own group (by
 # branch and commit): GitHub keeps one pending run per group and cancels the older pending one, which could be a
-# release; a promotion's run on main never waits behind, or is cancelled by, dev's run of the same commit.
+# release or a development build; two merges into dev publish one pre-release each, and a promotion's run on main never
+# waits behind, or is cancelled by, dev's run of the same commit.
 concurrency:
   group: build-${{ github.event_name == 'pull_request' && github.ref || format('{0}@{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -119,7 +123,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BEFORE: ${{ github.event.before }}
-          PUBLISH: ${{ inputs.publish && 'true' || 'false' }}
+          PUBLISH: ${{ (inputs.publish || (github.event_name == 'push' && github.ref == 'refs/heads/dev')) && 'true' || 'false' }}
         run: |
           version=$(sed -n 's/^project(opad VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           if [ -z "$version" ]; then
@@ -175,12 +179,20 @@ jobs:
               else
                 release=true
               fi
-            elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            elif [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$GITHUB_BASE_REF" = main ]; then
               echo "::notice title=Release::Merging this pull request publishes OPAD $version."
             fi
           fi
-          # Run workflow on dev with "Publish": a development build of whatever dev holds (the release candidate when the
-          # version is new), published by the Release job only if every platform passes.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$GITHUB_BASE_REF" = dev ]; then
+            if [ "$released" = false ]; then
+              echo "::notice title=Release candidate::Merging this pull request publishes the release candidate of OPAD $version (a pre-release)."
+            else
+              echo "::notice title=Development build::Merging this pull request publishes a development build (a pre-release, offered only to copies set to Offer development builds)."
+            fi
+          fi
+          # A push to dev (a merged pull request), or Run workflow on dev with "Publish": a development build of whatever
+          # dev holds (the release candidate when the version is new), published by the Release job only if every platform
+          # passes.
           dev=false
           if [ "$PUBLISH" = true ]; then
             if [ "$GITHUB_REF" != refs/heads/dev ]; then
@@ -219,7 +231,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REBUILD: ${{ inputs.rebuild && 'true' || 'false' }}
-          PUBLISH: ${{ inputs.publish && 'true' || 'false' }}
+          PUBLISH: ${{ (inputs.publish || (github.event_name == 'push' && github.ref == 'refs/heads/dev')) && 'true' || 'false' }}
         run: |
           tree=$(git rev-parse 'HEAD^{tree}')
           echo "tree=$tree" >> "$GITHUB_OUTPUT"
@@ -232,7 +244,8 @@ jobs:
           # A build is reused only from a run whose commit has exactly this tree. ci.yml is part of the tree, so the
           # packages were made by the same reviewed workflow that is running now, never by a branch or fork whose own
           # workflow could have produced anything. A pull request's run counts when its branch was up to date with
-          # its base (its head then has the tree of the merge); a promotion to main finds dev's build of that commit.
+          # its base (its head then has the tree of the merge): the merge into dev publishes that run's packages, and
+          # the promotion to main finds the same run again (dev's push run reused it and records nothing new).
           run=""
           # Only this repository's own runs (a fork's run may carry the same artifact name), every page.
           candidates=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=tested-$tree&per_page=100" \
@@ -714,7 +727,7 @@ jobs:
     name: Release
     # Explicit status checks: a plain condition implicitly requires every upstream job to have succeeded, and the
     # platform jobs behind Tested are skipped when an earlier build is reused. A push to main or a tag publishes the
-    # release; a push to dev, a development build (a pre-release).
+    # release; a push to dev (or Publish on dev), a development build (a pre-release).
     if: >-
       !cancelled() && (needs.version.outputs.release == 'true' || needs.version.outputs.dev == 'true')
       && needs.version.result == 'success' && needs.tested.result == 'success'
@@ -814,7 +827,7 @@ jobs:
               echo "::notice::$tag is already published for this commit (a re-run)."
               exit 0
             fi
-            echo "::error::$tag already exists for another commit (${target:-unknown}): this push's build is not newer. Re-run the workflow on dev with \"rebuild\"."
+            echo "::error::$tag already exists for another commit (${target:-unknown}): this push's build is not newer. Run the workflow on dev with \"Publish\" and \"rebuild\"."
             exit 1
           fi
           start=()
@@ -865,7 +878,7 @@ jobs:
     name: Warm cache (Windows)
     needs: version
     if: >-
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+      ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'))
        || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'))
       && needs.version.outputs.reuse-run != ''
     runs-on: windows-latest  # the platform job's runner: a cache is only found on the system that saved it
@@ -946,7 +959,7 @@ jobs:
     name: Warm cache (Linux)
     needs: version
     if: >-
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+      ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'))
        || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'))
       && needs.version.outputs.reuse-run != ''
     runs-on: ubuntu-24.04  # the platform job's runner: a cache is only found on the system that saved it
@@ -1020,7 +1033,7 @@ jobs:
     name: Warm cache (macOS)
     needs: version
     if: >-
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+      ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'))
        || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'))
       && needs.version.outputs.reuse-run != ''
     runs-on: macos-15  # the platform job's runner: a cache is only found on the system that saved it
