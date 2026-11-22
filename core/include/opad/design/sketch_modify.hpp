@@ -26,13 +26,23 @@ struct SketchAlign { int reference=0,pivot=0,target=0; AlignTo to=AlignTo::Verti
 SketchTransform align_transform(const Sketch& sk,const SketchAlign& align);
 std::vector<int> align_entities(Sketch& sk,const std::vector<int>& ids,const SketchAlign& align);
 std::vector<int> append_sketch_shape(Sketch& sk,const TopoDS_Shape& shape,const Frame& frame={},bool construction=false,bool fixed=false);
+// The curves `ids` as the chains an offset makes one copy of each: a chain runs on through the points where exactly two of
+// them meet (by point, or apart in one place) and stops at a free end or where several branch; a circle, an ellipse or a
+// closed spline is a chain of its own. `closed`: it comes back to where it started (it grows outward or inward, else it
+// offsets to one side). Points are left out; the order follows `ids` (each chain's curves in their order along it).
+struct OffsetGroup { std::vector<int> ids; bool closed=false; };
+std::vector<OffsetGroup> offset_groups(const Sketch& sk,const std::vector<int>& ids);
 // The kernel's offset of the connected chain `ids` (lines, arcs, splines) by `distance` (the sign picks the side), as new
-// plain curves; returns them.
+// plain curves; returns them. Several chains: one offset_groups chain at a time.
 std::vector<int> offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round);
 // An open chain offsets to one side only, a parallel copy (no end caps, never closed): the signed distance (|distance|
 // with the kernel's sign) whose copy lies nearer (tx, ty), the side the pointer is on. A closed chain: its kernel sign as
 // given is kept by the caller (positive grows outward).
 double offset_side(const Sketch& sk,const std::vector<int>& ids,double distance,bool round,double tx,double ty);
+// The signed distance one chain of offset_groups is offset by, as if it were picked alone with the pointer at (tx, ty): a
+// closed chain `distance` (positive grows outward); an open one its copy on the side of the chain the pointer is on for a
+// positive distance, on the other side for a negative one (so a negative distance turns every chain round).
+double offset_toward(const Sketch& sk,const OffsetGroup& chain,double distance,bool round,double tx,double ty);
 // The same, held by an offset relationship (SkConstraint::Type::Offset, `expr` kept as typed): the chain and its offset keep
 // their shape and move and turn together, and a new value of the relationship (double-click its label, or an expression's
 // parameter) makes the offset again at that distance (refresh_offsets). Returns the relationship.

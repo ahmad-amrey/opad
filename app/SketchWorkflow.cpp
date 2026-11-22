@@ -561,33 +561,28 @@ void SketchEditor::scheduleToolPreview() {
   }
   else m_toolPreviewTimer.stop();
 }
-// The selection to offset is one closed chain (every end shared by two of its curves, or a circle, an ellipse, a closed
-// spline): it grows outward for a positive distance; an open one offsets to one side.
-bool SketchEditor::offsetClosed() const {
-  std::map<int,int> ends;
-  bool any=false;
-  for(int id:m_sel)if(const auto* e=m_sk.entity(id)) {
-    if(e->type==SkEntity::Type::Circle || e->type==SkEntity::Type::Ellipse){any=true;continue;}
-    if(e->type!=SkEntity::Type::Line && e->type!=SkEntity::Type::Arc && e->type!=SkEntity::Type::Spline)continue;
-    if(e->type==SkEntity::Type::Spline && (e->periodic || e->p.front()==e->p.back())){any=true;continue;}
-    ++ends[e->type==SkEntity::Type::Arc?e->p[1]:e->p.front()];++ends[e->type==SkEntity::Type::Arc?e->p[2]:e->p.back()];
-  }
-  if(ends.empty())return any;
-  return std::all_of(ends.begin(),ends.end(),[](const auto& end){return end.second%2==0;});
-}
-
 void SketchEditor::updateDimensionHandle() {
   if(!m_active || !m_visible || m_tool!="offset" || m_sel.empty()){m_dimensionHandle->hide();return;}
   if(m_dimensionHandle->interacting())return;
+  auto selected=[&](int id){return std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end() && m_sk.entity(id);};
+  // The pointer on its way to the arrow or its box (or over the curve at the arrow's foot): the handle stays where it is.
+  // Following the pointer, its foot slid along the curve and, with a negative distance, the arrow sat on the far side and
+  // flipped over as the pointer crossed the curve: it ran away from the mouse until a typed value froze it.
+  if(m_inView && m_haveCursor && m_dimensionHandle->isVisible() && selected(m_offsetAnchor) &&
+     m_dimensionHandle->approached(m_viewport->widgetPoint(m_frame.to_world(m_lastU,m_lastV))))
+    return configureDimensionHandle(m_offsetArrow.x,m_offsetArrow.y,m_offsetArrow.dx,m_offsetArrow.dy);
   // The arrow goes to the selected curve under the pointer and stays on it after the pointer leaves it (on its way to
   // the arrow): falling back to the first selected curve made the arrow jump back there, so only that edge could be
   // pulled.
-  auto selected=[&](int id){return std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end() && m_sk.entity(id);};
   if(m_hover.kind==Hit::Entity && selected(m_hover.id))m_offsetAnchor=m_hover.id;
   if(!selected(m_offsetAnchor)){m_offsetAnchor=0;for(int id:m_sel)if(m_sk.entity(id)){m_offsetAnchor=id;break;}}
   const SkEntity* entity=m_offsetAnchor?m_sk.entity(m_offsetAnchor):nullptr;
   if(!entity || entity->p.empty())return;
   const auto* a=m_sk.point(entity->p.front());if(!a)return;
+  // The chain the arrow is on (offset_groups: each chain of the selection is offset on its own): a closed one (a loop, a
+  // circle) grows outward for a positive distance, an open one offsets to one side.
+  OffsetGroup chain;
+  for(auto& g:offset_groups(m_sk,m_sel))if(std::find(g.ids.begin(),g.ids.end(),m_offsetAnchor)!=g.ids.end()){chain=std::move(g);break;}
   double x=a->x,y=a->y,dx=1,dy=0;
   if(entity->type==SkEntity::Type::Circle || entity->type==SkEntity::Type::Arc){
     const double angle=m_haveCursor?std::atan2(m_cursor.v-y,m_cursor.u-x):0.;dx=std::cos(angle);dy=std::sin(angle);
@@ -604,14 +599,9 @@ void SketchEditor::updateDimensionHandle() {
       }
     }
     // A closed chain grows outward for a positive distance whichever way its curves run: point the arrow outward.
-    std::vector<std::pair<std::pair<double,double>,std::pair<double,double>>> loop;std::map<int,int> ends;
-    for(int id:m_sel)if(const auto* e=m_sk.entity(id)) {
-      if(e->type==SkEntity::Type::Line || e->type==SkEntity::Type::Arc || e->type==SkEntity::Type::Spline){
-        const int first=e->type==SkEntity::Type::Arc?e->p[1]:e->p.front(),last=e->type==SkEntity::Type::Arc?e->p[2]:e->p.back();++ends[first];++ends[last];}
-      const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)loop.push_back({pts[i-1],pts[i]});
-    }
-    const bool closed=!ends.empty() && std::all_of(ends.begin(),ends.end(),[](const auto& end){return end.second%2==0;});
-    if(closed) {
+    std::vector<std::pair<std::pair<double,double>,std::pair<double,double>>> loop;
+    for(int id:chain.ids)if(const auto* e=m_sk.entity(id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)loop.push_back({pts[i-1],pts[i]});}
+    if(chain.closed) {
       const double probe=std::max(1e-9,0.25*tol());const double qx=x+dx*probe,qy=y+dy*probe;bool inside=false;
       for(const auto& [a,b]:loop)if((a.second>qy)!=(b.second>qy) && qx<a.first+(qy-a.second)*(b.first-a.first)/(b.second-a.second))inside=!inside;
       if(inside){dx=-dx;dy=-dy;}
@@ -619,7 +609,10 @@ void SketchEditor::updateDimensionHandle() {
   }
   // An open selection offsets to one side only (offset_side): the arrow points to the side the pointer is on and a positive
   // distance goes that way. A closed one (a loop, a circle) keeps its arrow outward.
-  if(!offsetClosed() && m_haveCursor && (m_cursor.u-x)*dx+(m_cursor.v-y)*dy<0){dx=-dx;dy=-dy;}
+  if(!chain.closed && m_haveCursor && (m_cursor.u-x)*dx+(m_cursor.v-y)*dy<0){dx=-dx;dy=-dy;}
+  configureDimensionHandle(x,y,dx,dy);
+}
+void SketchEditor::configureDimensionHandle(double x,double y,double dx,double dy) {
   m_offsetArrow={x,y,dx,dy};
   try {
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});

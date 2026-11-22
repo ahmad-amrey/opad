@@ -51,7 +51,7 @@ CASES = [
     ("smartselect", boss, {"OPAD_BENCH_SMARTSELECT": "{prefix}"}),
     ("smartselect-rtl", boss, {"OPAD_BENCH_SMARTSELECT": "{prefix}", "OPAD_LANG": "ar"}),
     # The timeline and the geometry (UI-99): a marker under the pointer shows what its step made (Boss's faces, Round's, the
-    # renamed body), a click selects it (a feature's faces, the body Base made), Right steps on, Ctrl+C copies the op id;
+    # coloured body; a rename has none), a click selects it (a feature's faces, the body Base made), Right steps on, Ctrl+C copies the op id;
     # names on the markers, the design history alone; Roll back to here, the playhead dragged to the end and back, a change
     # made while rolled back rolls forward.
     ("timeline", boss, {"OPAD_BENCH_TIMELINE": "{prefix}"}),

@@ -1415,24 +1415,33 @@ void SketchEditor::mirrorSelection(int axisLine) {
 // ---------------------------------------------------------------- offset, project
 // Offsets the selected chain of lines and arcs by a distance (negative = the other side). By default the copy is held to
 // the chain by an offset relationship (option "relation": rigid): the two keep their shape and move together, and a
-// double-click on its distance label makes the offset again at another distance. "none" makes plain curves.
+// double-click on its distance label makes the offset again at another distance. "none" makes plain curves. Several chains
+// selected (offset_groups: apart, or branching): each is offset on its own by the same distance, as if picked alone.
 void SketchEditor::offsetSelection() {
-  std::vector<int> ids;
-  for(int id:m_sel)if(const auto* e=m_sk.entity(id);e && e->type!=ET::Point)ids.push_back(id);
   try {
-    if(ids.empty())throw opad::Error("select a connected curve chain first");
+    const auto groups=offset_groups(m_sk,m_sel);
+    if(groups.empty())throw opad::Error("select a connected curve chain first");
     const QString text=option("distance","5 mm");
     const auto table=sketch_parameters(m_sk,paramTable(m_doc->scene));
-    double distance=table.length(text.toStdString());
+    const double distance=table.length(text.toStdString());
     const bool round=option("corners","round")=="round";
-    // An open chain: one side only, the arrow's (the pointer's) for a positive distance, the other for a negative one.
-    if(!offsetClosed()) {
-      updateDimensionHandle();
-      distance=offset_side(m_sk,ids,distance,round,m_offsetArrow.x+m_offsetArrow.dx*distance,m_offsetArrow.y+m_offsetArrow.dy*distance);
+    // An open chain: one side only, the pointer's for a positive distance, the other for a negative one, each chain as if
+    // picked alone (offset_toward). The chain the arrow is on takes the arrow's side (which points to the pointer, and stays
+    // put while the pointer is at it: a pull to a negative value leaves the pointer past the curve); the others the
+    // pointer's. A closed one grows outward for a positive distance.
+    if(std::any_of(groups.begin(),groups.end(),[](const OffsetGroup& g){return !g.closed;}))updateDimensionHandle();
+    std::vector<std::pair<std::vector<int>,double>> offsets;
+    for(const auto& g:groups) {
+      const bool anchor=std::find(g.ids.begin(),g.ids.end(),m_offsetAnchor)!=g.ids.end();
+      const bool arrow=anchor || !m_haveCursor;
+      const double tx=arrow?m_offsetArrow.x+m_offsetArrow.dx*std::fabs(distance):m_cursor.u,ty=arrow?m_offsetArrow.y+m_offsetArrow.dy*std::fabs(distance):m_cursor.v;
+      offsets.push_back({g.ids,offset_toward(m_sk,g,distance,round,tx,ty)});
     }
     const bool hold=option("relation","rigid")=="rigid";
     const std::string expr=plainValue(text)?std::string():table.explicit_length(text.toStdString());
-    runSketchEdit(tr("Offset"),[ids,distance,round,hold,expr](Sketch& sk){if(hold)offset_relationship(sk,ids,distance,round,expr);else offset_entities(sk,ids,distance,round);});
+    runSketchEdit(tr("Offset"),[offsets,round,hold,expr](Sketch& sk){
+      for(const auto& [ids,d]:offsets)if(hold)offset_relationship(sk,ids,d,round,expr);else offset_entities(sk,ids,d,round);
+    });
   }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
 }
 

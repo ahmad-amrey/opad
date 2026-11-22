@@ -18,8 +18,8 @@
 using namespace opad::design;
 void SketchEditor::benchHandles() {
   setTool("rect");placePrecise("0","0",0);placePrecise("40","30",0);
-  auto phase=std::make_shared<int>(0),ticks=std::make_shared<int>(0);auto* timer=new QTimer(this);timer->setInterval(150);
-  connect(timer,&QTimer::timeout,this,[this,phase,ticks,timer]{try {
+  auto phase=std::make_shared<int>(0),ticks=std::make_shared<int>(0),count=std::make_shared<int>(0);auto* timer=new QTimer(this);timer->setInterval(150);
+  connect(timer,&QTimer::timeout,this,[this,phase,ticks,count,timer]{try {
     auto require=[](bool ok,const char* text){if(!ok)throw opad::Error(text);};
     if(++*ticks>120)throw opad::Error("handle preview timed out");
     if(m_editJob || m_geometryJob || m_toolPreviewTimer.isActive())return;
@@ -69,6 +69,82 @@ void SketchEditor::benchHandles() {
         require(std::fabs(std::fabs(width(true)-width(false))/2-1)<1e-6,"the offset is made again 1 mm off the rectangle");
         require(dimensionText(*now)==units::compact(units::Kind::Length,1),"its label reads 1 mm");
         trace::log("bench: sketch offset relationship: made by the tool, double-click edit 3 -> 1 mm PASS");
+        // A branching set (a T of three lines, picked as one by the chain click) at -2 mm, as in the report: each line is
+        // offset on its own; "the path must be one connected chain" left the tool without a preview.
+        begin_change();const int o=m_sk.add_point(100,0);
+        for(auto [x,y]:std::vector<std::pair<double,double>>{{80,0},{120,0},{100,20}})m_sk.add_line(o,m_sk.add_point(x,y));
+        require(end_change("bench T"),"the T drawn");fitSketch();(*count)=int(m_sk.entities.size());
+        setTool("offset");m_options["distance"]="-2 mm";m_options["corners"]="round";sketchPress(110,0,Qt::NoModifier);
+        require(m_sel.size()==3 && chainOnClick(),"the chain click takes the T's three lines");
+        break;
+      }
+      case 9:{
+        require(m_toolPreview && int(m_toolPreview->entities.size())==(*count)+3,"a preview of three offsets, one per line of the T");
+        trace::log("bench: sketch offset of a branching chain: preview shows one offset per chain PASS");
+        // Zoomed in as in the report (2 mm far wider than the arrow, which then lies wholly on the far side of the line), the
+        // pointer below the bar and right of the stem.
+        const auto target=m_frame.to_world(110,0),normal=m_frame.normal();auto eye=target;for(int i=0;i<3;++i)eye[i]+=normal[i]*100;
+        m_viewport->setCameraJson({{"eye",eye},{"target",target},{"up",m_frame.y},{"scale",std::max(1,m_viewport->height())/50.0},{"projection","orthographic"},{"absolute",true}});
+        sketchMove(110,-6,Qt::NoModifier,false);
+        const QPointF foot=m_viewport->widgetPoint(m_frame.to_world(110,0)),two=m_viewport->widgetPoint(m_frame.to_world(110,2));
+        require(QLineF(foot,two).length()>DimensionHandle::kApproach+46,"zoomed in: 2 mm wider than the arrow and its reach");
+        m_options["distance"]="-2 mm";scheduleToolPreview();
+        break;
+      }
+      case 10:case 11:{
+        // Each chain as if picked alone with the pointer where it is: -2 mm puts every copy on the side away from the pointer
+        // (the bar's above it, the stem's left of it), 2 mm every copy on the pointer's side. Only the chain the arrow is on
+        // used to turn round; the stem kept x = 102 for both signs.
+        const bool negative=*phase==11;  // the phase was counted up as this one started
+        require(bool(m_toolPreview),"the preview at either sign");
+        std::vector<std::pair<double,double>> mids;
+        for(const auto& e:m_toolPreview->entities)if(!m_sk.entity(e.id) && e.type==SkEntity::Type::Line) {
+          const SkPoint *a=m_toolPreview->point(e.p[0]),*b=m_toolPreview->point(e.p[1]);mids.push_back({(a->x+b->x)/2,(a->y+b->y)/2});}
+        auto has=[&](double x,double y){return std::any_of(mids.begin(),mids.end(),[&](const auto& m){return std::hypot(m.first-x,m.second-y)<1e-6;});};
+        const double s=negative?-1:1;  // the pointer is below the bar (-y) and right of the stem (+x)
+        require(mids.size()==3 && has(90,-2*s) && has(110,-2*s) && has(100+2*s,10),
+                negative?"at -2 mm every chain's copy lies away from the pointer (the bar's above, the stem's left)":"at 2 mm every chain's copy lies on the pointer's side");
+        trace::log(QString("bench: sketch offset sign: at %1 every chain of the T on the %2 side PASS").arg(negative?"-2 mm":"2 mm",negative?"far":"pointer's"));
+        m_options["distance"]=negative?"2 mm":"-2 mm";scheduleToolPreview();  // the other sign next, then -2 mm again for the pull
+        break;
+      }
+      case 12:{
+        // Without typing first: the pointer goes to the arrow from a way off, a step at a time as a mouse moves, and the
+        // arrow stays put under it (it used to slide along the line and flip over as the pointer crossed it).
+        const QLineF arrow=m_dimensionHandle->arrowLine();
+        QPointF at=arrow.center()+QPointF(110,250);
+        auto moveTo=[&](QPointF p){double u,v;require(m_viewport->planePoint(p,m_frame,u,v),"the pointer off the sketch plane");sketchMove(u,v,Qt::NoModifier,false);};
+        moveTo(at);
+        bool reached=false;QLineF held;
+        for(int step=0;step<60 && !reached;++step) {
+          const QLineF now=m_dimensionHandle->arrowLine();
+          if(m_dimensionHandle->approached(at)) {
+            if(held.isNull())held=now;
+            require(QLineF(now.p1(),held.p1()).length()<0.5 && QLineF(now.p2(),held.p2()).length()<0.5,"the arrow moved away from the approaching pointer");
+          }
+          if(m_dimensionHandle->grips(at) && QLineF(at,now.center()).length()<3){reached=true;break;}
+          const QPointF to=now.center()-at;const double length=std::hypot(to.x(),to.y());
+          at+=length<=8?to:to/length*8;moveTo(at);
+        }
+        require(reached,"the pointer never got onto the offset arrow: it ran away");
+        // Pulled from there (the press through the view, as a real one), the distance follows and the preview with it.
+        const auto before=option("distance");
+        auto send=[&](QEvent::Type type,QPointF p,Qt::MouseButton button,Qt::MouseButtons buttons){
+          QMouseEvent e(type,p,m_viewport->mapToGlobal(p),button,buttons,Qt::NoModifier);QApplication::sendEvent(m_viewport,&e);};
+        send(QEvent::MouseButtonPress,at,Qt::LeftButton,Qt::LeftButton);
+        require(m_dimensionHandle->dragging(),"a press on the arrow pulls it");
+        const QPointF out=arrow.p2()-arrow.p1();const QPointF pull=out/std::max(1.0,std::hypot(out.x(),out.y()))*30;
+        send(QEvent::MouseMove,at+pull,Qt::NoButton,Qt::LeftButton);
+        send(QEvent::MouseButtonRelease,at+pull,Qt::LeftButton,Qt::NoButton);
+        require(option("distance")!=before,"pulling the arrow did not change the distance");
+        break;
+      }
+      case 13:{
+        require(m_toolPreview && int(m_toolPreview->entities.size())==(*count)+3,"the preview after the pull");
+        applyTool();
+        int offsets=0;for(const auto& c:m_sk.constraints)if(c.type==SkConstraint::Type::Offset && c.sources==1)++offsets;
+        require(offsets==3,"three offset relationships, one per line of the T");
+        trace::log("bench: sketch offset arrow: approached and pulled without typing first, three chains applied PASS");
         break;
       }
       default:timer->stop();trace::log("bench: chain selection, automatic offset preview, drag handle, apply and undo PASS");QCoreApplication::exit(0);

@@ -301,4 +301,118 @@ TEST(open_chain_offsets_to_one_side) {
   }
 }
 
+// Several chains selected (the chain click takes a branching set, or chains lie apart): each is offset on its own.
+TEST(offset_groups_split_the_selection_into_chains) {
+  auto sizes = [](const std::vector<OffsetGroup>& groups) {
+    std::vector<std::pair<size_t, bool>> out;
+    for (const auto& g : groups) out.push_back({g.ids.size(), g.closed});
+    return out;
+  };
+  using Sizes = std::vector<std::pair<size_t, bool>>;
+  {  // two rectangles apart: two closed chains
+    Plate p = make_plate();
+    const int a = p.sk.add_point(60, 0), b = p.sk.add_point(80, 0), c = p.sk.add_point(80, 10), d = p.sk.add_point(60, 10);
+    std::vector<int> ids = p.sides;
+    for (int id : {p.sk.add_line(a, b), p.sk.add_line(b, c), p.sk.add_line(c, d), p.sk.add_line(d, a)}) ids.push_back(id);
+    CHECK((sizes(offset_groups(p.sk, ids)) == Sizes{{4, true}, {4, true}}));
+  }
+  {  // an L picked from its second line, a line apart and a point: the L as one open chain in its order, the line alone
+    Sketch sk;
+    const int a = sk.add_point(0, 10), b = sk.add_point(0, 0), c = sk.add_point(10, 0);
+    const int l1 = sk.add_line(a, b), l2 = sk.add_line(b, c), apart = sk.add_line(sk.add_point(20, 0), sk.add_point(30, 0));
+    const auto groups = offset_groups(sk, {l2, apart, a, l1});
+    CHECK((sizes(groups) == Sizes{{2, false}, {1, false}}));
+    CHECK((groups[0].ids == std::vector<int>{l1, l2}));
+  }
+  {  // three lines meeting at one point (a T): three chains
+    Sketch sk;
+    const int o = sk.add_point(0, 0);
+    const std::vector<int> ids{sk.add_line(o, sk.add_point(10, 0)), sk.add_line(o, sk.add_point(-10, 0)), sk.add_line(o, sk.add_point(0, 10))};
+    CHECK((sizes(offset_groups(sk, ids)) == Sizes{{1, false}, {1, false}, {1, false}}));
+  }
+  {  // a rectangle with a line off one corner and a circle: the loop, the tail, the circle
+    Plate p = make_plate();
+    std::vector<int> ids = p.sides;
+    ids.push_back(p.sk.add_line(p.sk.entity(p.sides[1])->p[0], p.sk.add_point(50, -10)));
+    ids.push_back(p.sk.add_circle(p.sk.add_point(20, 10), 3));
+    CHECK((sizes(offset_groups(p.sk, ids)) == Sizes{{4, true}, {1, false}, {1, true}}));
+  }
+  {  // two lines whose ends are two points in one place: one chain
+    Sketch sk;
+    const int l1 = sk.add_line(sk.add_point(0, 0), sk.add_point(10, 0)), l2 = sk.add_line(sk.add_point(10, 0), sk.add_point(10, 10));
+    CHECK((sizes(offset_groups(sk, {l1, l2})) == Sizes{{2, false}}));
+  }
+}
+
+// Each open chain takes its side from the pointer, as if picked alone, and a negative distance turns every chain round
+// (not only the one nearest the pointer: one 10 mm away kept its side when the arrow's point was used for all).
+TEST(negative_distance_turns_every_chain) {
+  auto copies = [](Sketch sk, const std::vector<int>& ids, double distance, double px, double py) {
+    std::vector<std::pair<double, double>> mids;  // each copy's middle, in the order of the chains
+    for (const auto& g : offset_groups(sk, ids))
+      for (int id : offset_entities(sk, g.ids, offset_toward(sk, g, distance, false, px, py), false)) {
+        const SkEntity* e = sk.entity(id);
+        const SkPoint *a = sk.point(e->p.front()), *b = sk.point(e->p.back());
+        mids.push_back({(a->x + b->x) / 2, (a->y + b->y) / 2});
+      }
+    return mids;
+  };
+  auto near = [](std::pair<double, double> p, double x, double y) { return std::hypot(p.first - x, p.second - y) < 1e-6; };
+  {  // two lines apart, y = 0 and y = 10, the pointer between them
+    Sketch sk;
+    const int low = sk.add_line(sk.add_point(0, 0), sk.add_point(20, 0)), high = sk.add_line(sk.add_point(0, 10), sk.add_point(20, 10));
+    const auto plus = copies(sk, {low, high}, 2, 10, 5), minus = copies(sk, {low, high}, -2, 10, 5);
+    CHECK(plus.size() == 2 && near(plus[0], 10, 2) && near(plus[1], 10, 8));
+    CHECK(minus.size() == 2 && near(minus[0], 10, -2) && near(minus[1], 10, 12));
+  }
+  {  // a T (three chains at its junction), the pointer right of the stem and above the bar
+    Sketch sk;
+    const int o = sk.add_point(100, 0);
+    const std::vector<int> ids{sk.add_line(o, sk.add_point(80, 0)), sk.add_line(o, sk.add_point(120, 0)), sk.add_line(o, sk.add_point(100, 20))};
+    const auto plus = copies(sk, ids, 2, 110, 5), minus = copies(sk, ids, -2, 110, 5);
+    CHECK(plus.size() == 3 && near(plus[0], 90, 2) && near(plus[1], 110, 2) && near(plus[2], 102, 10));
+    CHECK(minus.size() == 3 && near(minus[0], 90, -2) && near(minus[1], 110, -2) && near(minus[2], 98, 10));
+  }
+  {  // a closed chain grows outward for a positive distance wherever the pointer is
+    Plate p = make_plate();
+    const auto groups = offset_groups(p.sk, p.sides);
+    CHECK(groups.size() == 1 && offset_toward(p.sk, groups[0], 2, false, 20, 10) == 2 && offset_toward(p.sk, groups[0], -2, false, 100, 100) == -2);
+  }
+}
+
+TEST(each_chain_offsets_as_if_alone) {
+  // An L and a line apart: the L's copy is the one it makes alone (an open chain of two), the line's a line.
+  Sketch sk;
+  const int a = sk.add_point(0, 10), b = sk.add_point(0, 0), c = sk.add_point(10, 0);
+  const int l1 = sk.add_line(a, b), l2 = sk.add_line(b, c), apart = sk.add_line(sk.add_point(20, 0), sk.add_point(30, 0));
+  auto points = [](const Sketch& s, const std::vector<int>& made) {
+    std::vector<std::pair<double, double>> out;
+    for (int id : made)
+      for (int p : s.entity(id)->p) out.push_back({std::round(s.point(p)->x * 1e6) / 1e6, std::round(s.point(p)->y * 1e6) / 1e6});
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+  };
+  Sketch together = sk;
+  std::vector<std::vector<int>> made;
+  for (const auto& g : offset_groups(together, {l1, l2, apart})) made.push_back(offset_entities(together, g.ids, 2, false));
+  CHECK_EQ(made.size(), size_t(2));
+  Sketch chain = sk, line = sk;
+  CHECK((points(together, made[0]) == points(chain, offset_entities(chain, {l1, l2}, 2, false))));
+  CHECK((points(together, made[1]) == points(line, offset_entities(line, {apart}, 2, false))));
+  CHECK_EQ(made[0].size(), size_t(2));
+  CHECK_EQ(made[1].size(), size_t(1));
+  // Held: one relationship per chain, each refreshing on its own.
+  Sketch held = sk;
+  std::vector<int> rels;
+  for (const auto& g : offset_groups(held, {l1, l2, apart})) rels.push_back(offset_relationship(held, g.ids, 2, false));
+  CHECK_EQ(rels.size(), size_t(2));
+  CHECK(solve(held).converged);
+  held.constraint(rels[1])->value = 4;
+  evaluate_dimensions(held);
+  CHECK(solve(held).converged);
+  CHECK_EQ(held.constraint(rels[0])->built, 2.0);
+  CHECK_EQ(std::fabs(held.constraint(rels[1])->built), 4.0);
+}
+
 CHECK_MAIN()

@@ -30,6 +30,10 @@ class DimensionHandle : public QWidget {
   static constexpr double kHitRadius=12;  // widget px around the arrow that take a press: a 24 px wide target (UI-124)
   QLineF arrowLine() const {return {m_arrowStart,m_arrowEnd};}  // on screen, tip to head
   bool overArrow(const QPointF& widgetPoint) const;
+  // The pointer is on its way to it: within kApproach of the arrow, within kHitRadius of the line from where it stands
+  // (the origin) to the arrow, or near its box. A tool that moves the handle with the pointer leaves it there meanwhile.
+  bool approached(const QPointF& widgetPoint) const;
+  static constexpr double kApproach=3*kHitRadius;
   double value() const {return m_value;}  // what the drag or the arrows made of it (the box shows it rounded)
   // How far the arrow sits along the axis per unit of value: 0.5 for a symmetric extrusion, whose end moves half the
   // distance. Kept while a drag runs.

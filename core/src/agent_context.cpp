@@ -294,8 +294,10 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
       auto single=[&]{if(ids.size()!=1)throw Error(tool+": select exactly one entity or point");return ids.front();};
       if(tool=="offset"){  // held by an offset relationship unless inputs.relation is false: its distance (d<id>) edits later
         const double distance=length("distance",5);const bool round=inputs.value("round",true);
-        if(inputs.value("relation",true))design::offset_relationship(sk,ids,distance,round,inputs.contains("distance")&&inputs["distance"].is_string()?inputs["distance"].get<std::string>():std::string());
-        else design::offset_entities(sk,ids,distance,round);
+        const std::string expr=inputs.contains("distance")&&inputs["distance"].is_string()?inputs["distance"].get<std::string>():std::string();
+        const auto groups=design::offset_groups(sk,ids);  // each chain of the selection offset on its own, as the desktop does
+        if(groups.empty())throw Error("select a connected curve chain first");
+        for(const auto& g:groups)if(inputs.value("relation",true))design::offset_relationship(sk,g.ids,distance,round,expr);else design::offset_entities(sk,g.ids,distance,round);
       }
       else if(tool=="move" || tool=="copy" || tool=="rotate" || tool=="scale" || tool=="mirror") {
         design::SketchTransform transform;transform.x=length("x",0);transform.y=length("y",0);transform.cx=length("cx",0);transform.cy=length("cy",0);

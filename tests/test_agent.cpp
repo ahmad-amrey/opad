@@ -62,6 +62,15 @@ int main(){try {
   const auto profiles=agent::sketch_details(doc,scene,{{"sketch",sk},{"section","profiles"}});CHECK_EQ(profiles["total"],1);CHECK(!profiles["items"][0]["boundary"].empty());
   commands::run("sketch_tool",{{"target",sk},{"tool","offset"},{"entities",{first}},{"chain",true},{"inputs",{{"distance","2 mm"}}}},&doc);
   scene=resolve(doc);CHECK(scene.sketch(sk)->geometry.at("entities").size()>4);
+  {  // two chains apart (an L and a line): one offset relationship each, as if each were offset alone
+    design::Sketch two;const auto p=two.add_point(0,30),q=two.add_point(0,40),r=two.add_point(10,40),s=two.add_point(30,30),t=two.add_point(30,40);
+    const auto l1=two.add_line(p,q),l2=two.add_line(q,r),l3=two.add_line(s,t);
+    commands::run("sketch",{{"geometry",two.to_json()}},&doc);scene=resolve(doc);const auto id=scene.sketches.back().id;
+    commands::run("sketch_tool",{{"target",id},{"tool","offset"},{"entities",{l1,l2,l3}},{"inputs",{{"distance","2 mm"}}}},&doc);
+    const auto made=design::Sketch::from_json(resolve(doc).sketch(id)->geometry);
+    std::vector<int> sources;for(const auto& c:made.constraints)if(c.type==design::SkConstraint::Type::Offset)sources.push_back(c.sources);
+    CHECK((sources==std::vector<int>{2,1}));CHECK_EQ(made.entities.size(),6u);
+  }
   commands::run("sketch_edit",{{"target",sk},{"plane",{{"base","yz"}}}},&doc);scene=resolve(doc);CHECK(std::abs(scene.sketch(sk)->frame.normal()[0])>.99);
   for(const auto& command:commands::list()) {
     const auto schema=agent::command_schema(command);CHECK_EQ(schema["type"],"object");

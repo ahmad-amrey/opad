@@ -179,8 +179,13 @@ int main(int argc, char** argv) {
       CHECK(doc.rolledBack() && doc.rollback() == c && doc.scene.feature(b)->inputs["height"] == "8 mm" && !doc.scene.feature(c));
       edit(a, "6 mm");  // rolled back by the user, an edit of an earlier step: still rolled back
       CHECK(doc.rolledBack() && doc.rollback() == c && doc.scene.feature(a)->inputs["height"] == "6 mm");
-      doc.run("rename", opad::json{{"target", doc.scene.all_bodies().front()}, {"name", "x"}});  // anything else: at the end
-      CHECK(!doc.rolledBack() && doc.rollback().empty() && doc.scene.feature(c));
+      // A name holds for the body's whole life (no timeline step): renamed while rolled back, it is named there and the
+      // model stays rolled back.
+      const std::string named = doc.scene.all_bodies().front();
+      doc.run("rename", opad::json{{"target", named}, {"name", "x"}});
+      CHECK(doc.rolledBack() && doc.rollback() == c && doc.scene.node(named)->name == "x");
+      doc.run("component", opad::json{{"name", "Spare"}});  // anything else: at the end
+      CHECK(!doc.rolledBack() && doc.rollback().empty() && doc.scene.feature(c) && doc.scene.node(named)->name == "x");
       // How a body looks is view state: a later hide shows on an earlier state where the body is (one whose body comes later
       // is left out quietly), and hiding while rolled back keeps the roll-back.
       auto bodyOf = [&](const std::string& op) {

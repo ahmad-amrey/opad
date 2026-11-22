@@ -32,6 +32,8 @@
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/sketch_geom.hpp"
+#include "opad/diff.hpp"
+#include "opad/merge.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mass.hpp"
 
@@ -2814,4 +2816,46 @@ TEST(bodies_moved_out_of_a_deleted_component_stay) {
   commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc);
   unchanged(out, out0);
   for (const auto& u : resolve(doc).unresolved) CHECK(u.op_type == "transform" || u.op_type == "reparent");  // of the lid, into the lid
+}
+
+// A name holds for a body's whole life (a rename is no timeline step): a rolled-back scene and a regenerated body keep
+// the latest name, while the rename stays in the file's history for the diff, the merge and undo.
+TEST(a_name_holds_for_the_whole_life_of_a_body) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "len"}, {"expr", "20 mm"}}, &doc);
+  const json plate = feature_cmd(doc, "box", {{"length", "len"}, {"width", "20 mm"}, {"height", "5 mm"}});
+  const std::string body = plate["body_ids"][0];
+  const json later = feature_cmd(doc, "box", {{"x", "50 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "5 mm"}});
+  const std::string before_text = doc.serialize();
+  const Document before = Document::parse(before_text);
+  commands::run("rename", {{"target", body}, {"name", "Base plate"}}, &doc);
+  CHECK_EQ(resolve(doc).node(body)->name, std::string("Base plate"));
+  // Rolled back to the later box (it is being edited): the plate exists there and is called what it is called now.
+  CHECK_EQ(resolve(doc, later["feature_id"]).node(body)->name, std::string("Base plate"));
+  CHECK(resolve(doc, later["feature_id"]).unresolved.empty());
+  // Rolled back to the plate's own feature: no plate yet, and the rename is no unresolved op.
+  const Scene first = resolve(doc, plate["feature_id"]);
+  CHECK(!first.node(body) && first.unresolved.empty());
+  // Regenerated (new geometry, same node): the name stays.
+  const std::string key = resolve(doc).node(body)->body_key;
+  commands::run("param", {{"name", "len"}, {"expr", "30 mm"}}, &doc);
+  const Scene now = resolve(doc);
+  CHECK(now.node(body)->body_key != key);
+  CHECK_EQ(now.node(body)->name, std::string("Base plate"));
+  CHECK_EQ(resolve(doc, later["feature_id"]).node(body)->name, std::string("Base plate"));
+  // Version aware: the diff still says renamed, and a rename on one side merges with a design change on the other.
+  Document renamed = Document::parse(before_text);
+  commands::run("rename", {{"target", body}, {"name", "Base plate"}}, &renamed);
+  bool said = false;
+  const json diff = semantic_diff(before, renamed);
+  for (const auto& c : diff["changes"]) said = said || c.value("change", std::string()) == "renamed";
+  CHECK(said);
+  Document edited = Document::parse(before_text);
+  commands::run("param", {{"name", "len"}, {"expr", "30 mm"}}, &edited);
+  const FileMerge m = merge_files(before_text, renamed.serialize(), edited.serialize());
+  CHECK(m.error.empty() && m.conflicts.empty());
+  const Document merged = Document::parse(m.text());
+  CHECK_EQ(resolve(merged).node(body)->name, std::string("Base plate"));
+  CHECK_EQ(resolve(merged, later["feature_id"]).node(body)->name, std::string("Base plate"));
+  CHECK_NEAR(total_volume(merged), 30 * 20 * 5 + 10 * 10 * 5, 1e-6);
 }
