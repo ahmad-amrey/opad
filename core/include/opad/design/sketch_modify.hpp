@@ -38,6 +38,12 @@ std::vector<int> append_sketch_shape(Sketch& sk,const TopoDS_Shape& shape,const 
 // closed spline is a chain of its own. `closed`: it comes back to where it started (it grows outward or inward, else it
 // offsets to one side). Points are left out; the order follows `ids` (each chain's curves in their order along it).
 struct OffsetGroup { std::vector<int> ids; bool closed=false; };
+// The curves of `after` that are new or whose shape differs from `before`. `exact`: any difference at all (what a tool's
+// work did); else a point moved by less than a millionth of the sketch's size counts as still (what a solve did: a sketch
+// with freedom left, or saved a hair off its constraints, comes out of every solve with all its points shifted by about
+// 1e-7, and an exact comparison drew every curve of it as changed). An Apply tool's preview draws the union of the two:
+// exact against the work's own result, with the tolerance against the solved one.
+std::vector<int> changed_entities(const Sketch& before,const Sketch& after,bool exact=false);
 std::vector<OffsetGroup> offset_groups(const Sketch& sk,const std::vector<int>& ids);
 // The kernel's offset of the connected chain `ids` (lines, arcs, splines) by `distance` (the sign picks the side), as new
 // plain curves; returns them. Several chains: one offset_groups chain at a time.

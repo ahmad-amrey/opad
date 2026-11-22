@@ -229,6 +229,33 @@ void SketchEditor::benchHandles() {
         trace::log("bench: sketch offset side: after a pull the arrow and the copy stay put as the pointer moves, Apply makes the preview PASS");
         break;
       }
+      case 19:{
+        // The rc.35 report: a sketch a hair off its constraints (saved so, as the editor never moves stored points on opening)
+        // comes out of the offset's solve with every point shifted by ~1e-7, and the preview drew every curve dashed, as if the
+        // whole sketch were picked. A rectangle held by horizontals and verticals, its corners then nudged off them (as stored
+        // unsolved: no solve after the nudge), then the line offset.
+        begin_change();
+        {const int a=m_sk.add_point(300,0),b=m_sk.add_point(340,0),c=m_sk.add_point(340,20),d=m_sk.add_point(300,20);
+         const int l[4]={m_sk.add_line(a,b),m_sk.add_line(b,c),m_sk.add_line(c,d),m_sk.add_line(d,a)};
+         for(int i=0;i<4;++i)m_sk.add_constraint(i%2?SkConstraint::Type::Vertical:SkConstraint::Type::Horizontal,{l[i]});
+         require(end_change("bench rectangle"),"the held rectangle drawn");
+         m_sk.point(b)->y+=3e-7;m_sk.point(d)->x+=2e-7;}
+        setTool("offset");m_options["distance"]="2 mm";m_options["corners"]="round";
+        sketchMove(220,-6,Qt::NoModifier,false);sketchPress(220,0,Qt::NoModifier);sketchMove(220,-6,Qt::NoModifier,false);
+        require(m_sel.size()==1,"the line picked alone again");
+        break;
+      }
+      case 20:{
+        require(bool(m_toolPreview),"the nudged sketch's preview");
+        bool shifted=false;
+        for(const auto& p:m_sk.points)if(const auto* q=m_toolPreview->point(p.id))shifted=shifted || q->x!=p.x || q->y!=p.y;
+        require(shifted,"the solve moved the nudged points back (else this step shows nothing)");
+        require(!m_previewDrawn.empty() && std::none_of(m_previewDrawn.begin(),m_previewDrawn.end(),[&](int id){return bool(m_sk.entity(id));}),
+                "the preview draws the offset's copy alone, not every curve the solve shifted by a hair");
+        trace::log("bench: sketch offset preview: a sketch a hair off its constraints, only the copy drawn PASS");
+        setTool("select");
+        break;
+      }
       default:timer->stop();trace::log("bench: chain selection, automatic offset preview, drag handle, apply and undo PASS");QCoreApplication::exit(0);
     }
   }catch(const std::exception& e){timer->stop();trace::log(QString("bench: handles FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();

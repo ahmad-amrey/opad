@@ -545,4 +545,44 @@ TEST(chain_ignores_drawing_direction_and_seed_order) {
   CHECK((set(chain_entities(sk, {top, left, right})) == set(chain_entities(sk, {right, top, left}))));
 }
 
+// The rc.35 report: a sketch saved a hair off its constraints (the editor never moves stored points on opening), or with
+// freedom left, comes out of the offset's solve with every point shifted by about 1e-7, and the preview, comparing exactly,
+// drew every curve as changed, as if the whole sketch were picked. Only what the offset makes is drawn.
+TEST(the_preview_draws_only_what_an_offset_makes_in_a_sketch_a_hair_off_its_constraints) {
+  auto p = make_plate();
+  auto& sk = p.sk;
+  sk.add_constraint(CT::Horizontal, {p.sides[0]});
+  sk.add_constraint(CT::Vertical, {p.sides[1]});
+  sk.add_constraint(CT::Horizontal, {p.sides[2]});
+  sk.add_constraint(CT::Vertical, {p.sides[3]});
+  const int line = sk.add_line(sk.add_point(60, 0), sk.add_point(100, 0));
+  sk.points[1].y += 3e-7;  // the bottom no longer quite horizontal, the left no longer quite upright
+  sk.points[3].x += 2e-7;
+  const Sketch before = sk;
+  for (int held = 0; held < 2; ++held) {
+    Sketch after = before;
+    if (held) offset_relationship(after, {line}, 5, true); else offset_entities(after, {line}, 5, true);
+    CHECK(solve(after).converged);
+    bool shifted = false;
+    for (const auto& q : before.points) shifted = shifted || after.point(q.id)->x != q.x || after.point(q.id)->y != q.y;
+    CHECK(shifted);  // the solve put the plate back: what drew every curve
+    const auto drawn = changed_entities(before, after);
+    CHECK(drawn.size() == 1 && !before.entity(drawn[0]));
+  }
+  // A real change is still drawn: the top raised by a tenth of a millimetre reshapes the top and both sides.
+  Sketch raised = before;
+  raised.points[2].y += 0.1;
+  raised.points[3].y += 0.1;
+  const auto drawn = changed_entities(before, raised);
+  CHECK((std::set<int>(drawn.begin(), drawn.end()) == std::set<int>{p.sides[1], p.sides[2], p.sides[3]}));
+  // What a tool's own work did is compared exactly (the preview's other half): in a plan 30 m across, a line straightened by
+  // a hundredth of a millimetre is below the solve's tolerance there, and still the tool's change.
+  Sketch plan = before;
+  plan.add_point(30000, 0);
+  Sketch straightened = plan;
+  straightened.point(straightened.entity(line)->p[1])->y += 0.01;
+  CHECK(changed_entities(plan, straightened).empty());
+  CHECK((changed_entities(plan, straightened, true) == std::vector<int>{line}));
+}
+
 CHECK_MAIN()

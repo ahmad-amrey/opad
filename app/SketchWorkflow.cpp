@@ -179,25 +179,27 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
   const int modelRevision=m_modelRevision;
   const auto solved=std::make_shared<SolveResult>();const auto options=solveOptions();const int session=m_session;
   auto shape=std::make_shared<TopoDS_Compound>();auto prs=std::make_shared<std::shared_ptr<BodyPrs>>();const auto frame=m_frame;
+  const auto drawn=std::make_shared<std::vector<int>>();
   QPointer<SketchEditor> guard(this);
-  m_editJob=m_jobs->async(label,[after,before,solved,options,work,preview,shape,prs,frame](Progress progress){
+  m_editJob=m_jobs->async(label,[after,before,solved,options,work,preview,shape,prs,frame,drawn](Progress progress){
     if(progress.cancelled())return;work(*after);if(progress.cancelled())return;
+    std::optional<Sketch> worked;if(preview)worked=*after;  // what the tool itself did, before the solve's last digits
     after->validate();*solved=solve(*after,options);
     if(!solved->converged)throw opad::Error("the operation conflicts with existing constraints");
     if(preview) {
       BRep_Builder builder;builder.MakeCompound(*shape);
-      std::map<int,const SkEntity*> oldEntities;for(const auto& e:before->entities)oldEntities[e.id]=&e;
-      std::map<int,const SkPoint*> oldPoints,newPoints;for(const auto& p:before->points)oldPoints[p.id]=&p;for(const auto& p:after->points)newPoints[p.id]=&p;
-      for(const auto& e:after->entities) {
+      // What the tool made or reshaped, however little (exact: Align straightening a line by a hundredth in a plan of 30 m),
+      // and what the solve then moved visibly; the rest of the sketch the solve shifted by its last digits is left out.
+      {const auto own=changed_entities(*before,*worked,true),moved=changed_entities(*before,*after);
+       std::set<int> take(own.begin(),own.end());take.insert(moved.begin(),moved.end());
+       for(const auto& e:after->entities)if(take.count(e.id))drawn->push_back(e.id);}
+      for(int id:*drawn) {
         if(progress.cancelled())return;
-        const auto* old=oldEntities.count(e.id)?oldEntities[e.id]:nullptr;
-        bool same=old && old->type==e.type && old->p==e.p && old->r==e.r && old->weights==e.weights;
-        if(same)for(int id:e.p){const auto* p=oldPoints.count(id)?oldPoints[id]:nullptr;const auto* q=newPoints[id];if(!p||!q||p->x!=q->x||p->y!=q->y){same=false;break;}}
-        if(same)continue;const auto edge=entity_edge(*after,e,frame);if(!edge.IsNull())builder.Add(*shape,edge);
+        const auto edge=entity_edge(*after,*after->entity(id),frame);if(!edge.IsNull())builder.Add(*shape,edge);
       }
       Bnd_Box box;BRepBndLib::Add(*shape,box);*prs=BodyPrs::build(*shape,box);
     }
-  },[this,guard,before,after,solved,session,preview,closes,previewRevision,modelRevision,shape,prs](bool ok,const QString& error){
+  },[this,guard,before,after,solved,session,preview,closes,previewRevision,modelRevision,shape,prs,drawn](bool ok,const QString& error){
     if(!guard || !m_active || m_session!=session)return;
     m_editJob=nullptr;m_previewComputing=false;
     // A preview for an older value: shown while the handle is still dragged (the newest one is computed next), but
@@ -224,7 +226,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
     }
     if(m_modelRevision!=modelRevision)return;
     if(preview){
-      if(!stale){m_toolPreview=after;m_previewSolved=*solved;}
+      if(!stale){m_toolPreview=after;m_previewSolved=*solved;m_previewDrawn=*drawn;}
       m_viewport->removeOverlay(m_toolPreviewOverlay);
       auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());overlay->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DASH);  // dashed: what Enter would add, apart from the amber references (as the guides draw it)
       m_toolPreviewOverlay=overlay;if(m_visible)showToolPreview();

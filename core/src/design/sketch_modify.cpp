@@ -463,6 +463,28 @@ double samples_apart(const std::vector<gp_Pnt>& a,const std::vector<gp_Pnt>& b) 
 }
 }  // namespace
 
+std::vector<int> changed_entities(const Sketch& before,const Sketch& after,bool exact) {
+  double lx=1e300,ly=1e300,hx=-1e300,hy=-1e300;
+  if(!exact)for(const Sketch* s:{&before,&after})
+    for(const auto& p:s->points){lx=std::min(lx,p.x);ly=std::min(ly,p.y);hx=std::max(hx,p.x);hy=std::max(hy,p.y);}
+  const double size=hx>=lx?std::hypot(hx-lx,hy-ly):0,still=exact?0:1e-6*std::max(1.0,size);
+  std::map<int,const SkEntity*> was;for(const auto& e:before.entities)was[e.id]=&e;
+  std::map<int,const SkPoint*> from,to;for(const auto& p:before.points)from[p.id]=&p;for(const auto& p:after.points)to[p.id]=&p;
+  std::vector<int> out;
+  for(const auto& e:after.entities) {
+    const auto it=was.find(e.id);const SkEntity* old=it==was.end()?nullptr:it->second;
+    bool same=old && old->type==e.type && old->p==e.p && (exact?old->r==e.r:std::fabs(old->r-e.r)<=still) && old->weights==e.weights;
+    for(size_t i=0;same && i<e.p.size();++i) {
+      const auto p=from.find(e.p[i]),q=to.find(e.p[i]);
+      same=p!=from.end() && q!=to.end() &&
+           (exact?p->second->x==q->second->x && p->second->y==q->second->y
+                 :std::hypot(p->second->x-q->second->x,p->second->y-q->second->y)<=still);
+    }
+    if(!same)out.push_back(e.id);
+  }
+  return out;
+}
+
 std::vector<int> offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round) {
   const Sketch source=sk;
   return offset_into(source,sk,ids,distance,round);
