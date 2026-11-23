@@ -5,10 +5,21 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
-## [Unreleased]
+## [0.10.1] - 2026-11-22
 
-Working with an AI assistant is now calm and readable: OPAD tells you in plain words what Claude, Codex or another AI
-app looked at and changed in your design, marks its steps in the timeline, and asks you only when it needs you.
+Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,
+dimensions between lines draw properly, and Sketch fillet says why a corner can't be rounded. Version control keeps each
+design in a folder of its own, with linked files saved by relative paths, and OPAD can offer you development builds
+before they ship.
+Working with an AI assistant is calm and readable now: OPAD tells you in plain words what Claude, Codex or another
+AI app looked at and changed, marks its steps in the timeline, and asks you only when it needs you.
+
+### Added
+- **Stop AI work** (Tools, the chip's menu and the panel) stops what the assistant is doing and removes its preview;
+  changes it already made stay. **Pause changes** lets it look but not change anything until you resume.
+- **Development builds, if you want them.** *Help > Offer development builds* makes OPAD offer the builds of the
+  development branch and the release candidates too, not only releases, so you can try fixes and features before they
+  ship. *About* now shows the build number.
 
 ### Changed
 - **AI activity in plain words.** The panel now reads like a log of what was done, with your part and step names and
@@ -25,24 +36,6 @@ app looked at and changed in your design, marks its steps in the timeline, and a
   "Undo Claude: Added …". The assistant's name is saved with the step.
 - **Settings > AI assistants** (was AI integration) sets up Claude Code, Claude Desktop or Codex with one click, shows
   whether each is ready, and gives a sentence to try. Setup for other apps moved to *Other AI apps*.
-
-### Added
-- **Stop AI work** (Tools, the chip's menu and the panel) stops what the assistant is doing and removes its preview;
-  changes it already made stay. **Pause changes** lets it look but not change anything until you resume.
-
-## [0.10.1] - 2026-11-22
-
-Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,
-dimensions between lines draw properly, and Sketch fillet says why a corner can't be rounded. Version control keeps each
-design in a folder of its own, with linked files saved by relative paths, and OPAD can offer you development builds
-before they ship.
-
-### Added
-- **Development builds, if you want them.** *Help > Offer development builds* makes OPAD offer the builds of the
-  development branch and the release candidates too, not only releases, so you can try fixes and features before they
-  ship. *About* now shows the build number.
-
-### Changed
 - **Version control in a folder of its own.** Setting up version control for a document that shares its folder with
   other files now offers to move it into a folder of its own first, so the repository holds just your design. AI agents
   setting up version control ask you first too, then move the design or use the folder as it is.
