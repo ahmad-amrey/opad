@@ -406,7 +406,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         require(st->reply.value("isError", false), "the stopped call did not commit");
         require(!m_running && noRunning(), "still no row running once the stopped call replied");
         pass("Stop: its divider and toast; the call did not commit; no row left running");
-        tool("undo", json::object(), true);
+        tool("undo", {{"expected_revision", m_doc->revision}}, true);
         return true;
       },
       [=, this] {  // undo / redo replies name an AI step as they always did
@@ -415,7 +415,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         const auto undone = QString::fromStdString(st->reply["structuredContent"]["result"].value("undone", ""));
         if (english) require(undone == "Agent: annotate", "the undo reply's label, as before: " + undone);
         else require(!undone.contains("Claude"), "the undo reply's label is not the window's: " + undone);
-        tool("redo", json::object(), true);
+        tool("redo", {{"expected_revision", m_doc->revision}}, true);
         return true;
       },
       [=, this] {
