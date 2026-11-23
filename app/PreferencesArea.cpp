@@ -80,7 +80,7 @@ class PreferencesArea : public AreaController {
     preferences::addPage({"recovery", tr("Autosave and recovery"), "restore", 70, {"autosave", "snapshot", "crash"}, [this] { return recovery(); }});
     preferences::addPage({"vcs", tr("Version control"), "git", 80, {"git", "merge", "branch", "protected", "protection", "agent", "main"}, [this] { return versionControl(); }});
     preferences::addPage({"keyboard", tr("Keyboard and mouse"), "keyboard", 90, {"shortcuts", "keys", "navigation", "mouse", "orbit", "preset", "wheel", "scroll", "trackpad", "touchpad", "zoom", "pan"}, [this] { return keyboard(); }});
-    preferences::addPage({"ai", tr("AI integration"), "agent", 100, {"agent", "mcp", "assistant"}, [window] { return ai(window); }});
+    preferences::addPage({"ai", tr("AI assistants"), "aiMark", 100, {"agent", "mcp", "assistant", "ai", "claude", "codex"}, [window] { return ai(window); }});
     connect(services().viewport(), &Viewport::scrollInputQuestion, this, [this] { askScrollInput(); });
   }
 
@@ -436,15 +436,19 @@ class PreferencesArea : public AreaController {
     auto* page = new QWidget;
     preferences::Form form(page);
     auto* agent = window->findChild<AgentBridge*>();
-    form.section(tr("Local agent access"), tr("An AI client on this computer can read the open document through OPAD's MCP server and, when allowed, edit it live."));
-    QCheckBox* enabled = form.check("agent/enabled", tr("Enable local agent access"), false);
-    QCheckBox* edit = form.check("agent/edit", tr("Allow design edits"), false);
-    auto apply = [agent, enabled, edit] { if (agent) agent->setAccess(enabled->isChecked(), edit->isChecked()); };
+    form.section(tr("AI assistants"), tr("An AI app on this computer (Claude Code, Claude Desktop, Codex…) can look at the open design and, if you allow it, change it."));
+    QCheckBox* enabled = form.check("agent/enabled", tr("Let AI assistants see your designs"), false);
+    QCheckBox* edit = form.check("agent/edit", tr("…and change them (each change can be undone)"), false);
+    form.check("agent/announce", tr("Tell me when an AI assistant connects"), true);
+    auto apply = [agent, enabled, edit] { if (agent) agent->setAccess(enabled->isChecked(), enabled->isChecked() && edit->isChecked()); };
     QObject::connect(enabled, &QCheckBox::toggled, page, apply);
-    QObject::connect(edit, &QCheckBox::toggled, page, apply);
+    QObject::connect(edit, &QCheckBox::toggled, page, [enabled, apply](bool on) {
+      if (on && !enabled->isChecked()) enabled->setChecked(true);  // changes need seeing
+      else apply();
+    });
     if (agent) {
-      form.button(tr("Connection and client setup…"), [agent] { agent->settings(); }, "agent/setup");
-      form.button(tr("Agent activity"), [agent] { agent->showActivity(); }, "agent/activity");
+      form.button(tr("Connect an AI assistant…"), [agent] { agent->settings(0); }, "agent/setup");
+      form.button(tr("Show AI activity"), [agent] { agent->showActivity(); }, "agent/activity");
     }
     form.finish();
     return page;

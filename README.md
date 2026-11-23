@@ -324,13 +324,14 @@ so anything one of them can do, the others can too.
 
 ### AI agents over MCP
 
-`opad-cli mcp` is an MCP server that works on files. With **Tools > AI integration** on, `opad-cli mcp --live` connects
-an agent to the window you have open instead: you watch it work, every change it makes is one undo step for you, and
-**Agent activity** shows what it is doing, with a Stop button. Changes can be previewed or grouped in a transaction,
-and agents can render pictures of the model. The setup page registers OPAD with Codex and gives the MCP JSON for other
-local clients and VS Code.
+`opad-cli mcp` is an MCP server that works on files. With AI access on (**Tools > AI assistants**), `opad-cli mcp --live`
+connects an AI assistant to the window you have open instead: you watch it work, and every change it makes is one undo
+step for you. **AI activity** says in plain words what it looked at and changed ("Filleted 4 edges of Bracket, 2 mm"),
+with Show, Undo and Stop; the AI chip in the status bar tells you when it works, waits for a preview or needs you.
+Changes can be previewed or grouped in a transaction, and assistants can render pictures of the model. Settings sets up
+Claude Code, Claude Desktop or Codex with one click and gives the setup to copy into other apps and VS Code.
 
-![An agent builds a small boat through the live bridge in four batched calls; Agent activity lists each call](docs/media/agent.gif)
+![An agent builds a small boat through the live bridge in four batched calls; the activity lists each call](docs/media/agent.gif)
 
 ### Command line
 

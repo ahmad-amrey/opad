@@ -10,4 +10,10 @@ CASES = [
     # (registered for an old data folder, its program missing); Point it at this OPAD rewrites only Claude Desktop's
     # mcpServers.opad (a .bak copy), Remove takes it out; step 3 turns access on; step 4's prompt names the document.
     ("agent-connect", "empty", {"OPAD_BENCH_AGENT_CONNECT": "{prefix}", **ISOLATED}),
+    # AI activity (app/AgentActivityBench.cpp): an assistant through the bridge's socket and what the user sees of it, step by
+    # step: no panel on connect, a toast; the chip per state; live_state adds no row; lookups fold; a look's picture; a task
+    # as one group row, Discard; retried errors make no row; look only's needs-you row and Allow changes; a change in words
+    # with Undo on the newest step only, "Claude: ..." as the undo step, ai_client on the op; Stop's divider and toast.
+    ("agent-activity", "empty", {"OPAD_BENCH_AGENT_ACTIVITY": "{prefix}", "OPAD_BENCH_AGENT": "{root}/activity-agent"}),
+    ("agent-activity-ar", "empty", {"OPAD_BENCH_AGENT_ACTIVITY": "{prefix}", "OPAD_BENCH_AGENT": "{root}/activity-agent-ar", "OPAD_LANG": "ar"}),
 ]

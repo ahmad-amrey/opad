@@ -14,6 +14,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <memory>
 
@@ -25,21 +26,34 @@ using namespace agentclients;
 AgentClientRow::AgentClientRow(Client client, QString executable, QString discovery, QWidget* parent)
     : QWidget(parent), m_client(client), m_executable(std::move(executable)), m_discovery(std::move(discovery)) {
   setObjectName(client == Client::ClaudeCode ? "agentClientClaudeCode" : client == Client::ClaudeDesktop ? "agentClientClaudeDesktop" : "agentClientCodex");
-  auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(0, 4, 0, 4);
+  // A card: the app's name, its state as a word or two, the one action that fits; the technical line under Details.
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  auto* card = new QFrame;
+  card->setObjectName("card");
+  outer->addWidget(card);
+  auto* layout = new QVBoxLayout(card);
+  layout->setContentsMargins(12, 8, 12, 8);
   layout->setSpacing(4);
   auto* head = new QHBoxLayout;
+  head->setSpacing(8);
   layout->addLayout(head);
-  m_title = new QLabel(QStringLiteral("<b>%1</b>").arg(name().toHtmlEscaped()));
-  head->addWidget(m_title);
+  m_title = new QLabel(name());
+  m_title->setStyleSheet(QStringLiteral("font-weight:500"));
+  head->addWidget(m_title, 1);
+  m_pill = new QLabel;
+  m_pill->setObjectName("agentClientPill");
+  head->addWidget(m_pill);
   m_status = new QLabel;
   m_status->setObjectName("agentClientState");
   m_status->setWordWrap(true);
   m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  head->addWidget(m_status, 1);
+  m_status->hide();
   if (usesProgram()) {
-    auto* row = new QHBoxLayout;
-    layout->addLayout(row);
+    m_pathRow = new QWidget;
+    auto* row = new QHBoxLayout(m_pathRow);
+    row->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(m_pathRow);
     const char* key = client == Client::ClaudeCode ? "agent/claudeExecutable" : "agent/codexExecutable";
     m_path = new QLineEdit(QSettings().value(key).toString());
     m_path->setObjectName(client == Client::ClaudeCode ? "claudeExecutable" : "codexExecutable");
@@ -56,15 +70,28 @@ AgentClientRow::AgentClientRow(Client client, QString executable, QString discov
   }
   auto* buttons = new QHBoxLayout;
   layout->addLayout(buttons);
-  m_connect = new QPushButton(tr("Connect"));
+  m_connect = new QPushButton(tr("Set up"));
   m_connect->setObjectName("agentClientConnect");
-  m_point = new QPushButton(tr("Point it at this OPAD"));
+  m_point = new QPushButton(tr("Use this OPAD"));
   m_point->setObjectName("agentClientPoint");
   m_remove = new QPushButton(tr("Remove"));
   m_remove->setObjectName("agentClientRemove");
   m_check = new QPushButton(tr("Check again"));
-  for (auto* b : {m_connect, m_point, m_remove, m_check}) buttons->addWidget(b);
+  m_check->setObjectName("tertiary");
+  m_details = new QToolButton;
+  m_details->setObjectName("toastAction");
+  m_details->setText(tr("Details"));
+  m_details->setAutoRaise(true);
+  m_details->setCheckable(true);
+  connect(m_details, &QToolButton::toggled, this, [this](bool on) {
+    m_status->setVisible(on);
+    m_details->setText(on ? tr("Hide details") : tr("Details"));
+  });
+  for (auto* b : {m_connect, m_point, m_remove}) buttons->addWidget(b);
   buttons->addStretch();
+  buttons->addWidget(m_check);
+  buttons->addWidget(m_details);
+  layout->addWidget(m_status);
   connect(m_connect, &QPushButton::clicked, this, &AgentClientRow::connectClient);
   connect(m_point, &QPushButton::clicked, this, &AgentClientRow::pointHere);
   connect(m_remove, &QPushButton::clicked, this, &AgentClientRow::removeClient);
@@ -111,9 +138,9 @@ QString AgentClientRow::program() const {
 
 QString AgentClientRow::restartHint() const {
   switch (m_client) {
-    case Client::ClaudeCode: return tr("Start a new Claude Code session (or run /mcp in it) so it starts OPAD's server.");
-    case Client::ClaudeDesktop: return tr("Quit Claude Desktop (also from the system tray or menu bar) and open it again.");
-    case Client::Codex: return tr("Restart Codex (or its MCP server) so it starts OPAD's server.");
+    case Client::ClaudeCode: return tr("Start a new Claude Code session to use it.");
+    case Client::ClaudeDesktop: return tr("Quit Claude Desktop (also from the tray) and open it again.");
+    case Client::Codex: return tr("Restart Codex to use it.");
   }
   return {};
 }
@@ -134,7 +161,23 @@ void AgentClientRow::show(State state, const QString& detail) {
     case State::Failed: text = tr("Could not read its settings: %1").arg(detail); colour = t.red; break;
   }
   m_status->setText(text);
-  m_status->setStyleSheet(QString("color: %1;").arg(theme::css(colour)));
+  m_status->setStyleSheet(QString("color: %1; font-size: 12px;").arg(theme::css(t.fg2)));
+  // The state in a word or two, with its glyph (a state is never told by colour alone).
+  QString pill;
+  switch (state) {
+    case State::Unchecked: pill = tr("Checking…"); colour = t.fg3; break;
+    case State::NotFound: pill = tr("Not installed on this computer"); colour = t.fg3; break;
+    case State::NotRegistered: pill = tr("Not set up"); colour = t.fg2; break;
+    case State::Registered: pill = QStringLiteral("✓ ") + tr("Ready"); break;
+    case State::Disabled: pill = QStringLiteral("⚠ ") + tr("Turned off in %1").arg(name()); break;
+    case State::Missing: pill = QStringLiteral("⚠ ") + tr("Set up, but the app's program has moved"); break;
+    case State::Stale: pill = QStringLiteral("⚠ ") + tr("Set up for another copy of OPAD"); break;
+    case State::Failed: pill = QStringLiteral("⚠ ") + tr("Couldn't read its settings"); break;
+  }
+  m_pill->setText(pill);
+  m_pill->setToolTip(text);
+  m_pill->setStyleSheet(QString("color: %1; font-size: 12px;").arg(theme::css(colour)));
+  if (m_pathRow) m_pathRow->setVisible(state == State::NotFound || (m_path && !m_path->text().trimmed().isEmpty()));
   const bool program = !usesProgram() || !this->program().isEmpty();
   m_connect->setVisible(state == State::NotRegistered);
   m_connect->setEnabled(program && !m_running);
@@ -277,13 +320,13 @@ void AgentClientRow::connectClient() {
     if (entry) {
       if (classify(entry, m_executable, m_discovery) == State::Registered) {
         refresh();
-        return message(tr("Already connected. %1").arg(restartHint()));
+        return message(tr("Already set up. %1").arg(restartHint()));
       }
       return pointHere();  // something else is registered as "opad": replaced by this copy
     }
     add([this](bool success, QString error) {
       refresh();
-      message(success ? tr("Connected. %1").arg(restartHint()) : tr("%1 refused: %2").arg(name(), error));
+      message(success ? tr("Done. %1").arg(restartHint()) : tr("%1 couldn't be set up: %2").arg(name(), error));
     });
   });
 }
@@ -295,7 +338,7 @@ void AgentClientRow::pointHere() {
     auto then = [this] {
       add([this](bool success, QString error) {
         refresh();
-        message(success ? tr("Now pointed at this OPAD. %1").arg(restartHint()) : tr("%1 refused: %2").arg(name(), error));
+        message(success ? tr("Done: it now uses this OPAD. %1").arg(restartHint()) : tr("%1 couldn't be set up: %2").arg(name(), error));
       });
     };
     if (!entry) return then();

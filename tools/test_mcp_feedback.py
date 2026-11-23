@@ -274,14 +274,14 @@ def main():
         registration("check", "Not connected")
         registration("connect", "Connected to this OPAD")
         opad_entry()
-        registration("connect", "Already connected")
+        registration("connect", "Already set up")
         registration("remove", "Removed.")
         subprocess.run([str(codex), "mcp", "get", "keep-other", "--json"], env=env, cwd=home, check=True, capture_output=True)
         # Registered for this program but an old discovery folder (a pre-0.9.0 copy): kept on Remove, replaced by Point it at this OPAD.
         subprocess.run([str(codex), "mcp", "add", "opad", "--", str(cli), "mcp", "--live", "--discovery", str(root / "old-agent")], env=env, cwd=home, check=True, capture_output=True)
         registration("check", "old data folder")
         registration("remove", "was not removed")
-        registration("point", "Now pointed at this OPAD")
+        registration("point", "it now uses this OPAD")
         opad_entry()
         # Registered for a program that is gone: Point it at this OPAD or Remove.
         subprocess.run([str(codex), "mcp", "remove", "opad"], env=env, cwd=home, check=True, capture_output=True)

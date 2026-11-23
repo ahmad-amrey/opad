@@ -10,6 +10,7 @@
 #include <QLocalSocket>
 
 #include "AgentBridge.hpp"
+#include "Units.hpp"
 #include "GitAgent.hpp"
 #include "opad/live.hpp"
 
@@ -20,13 +21,6 @@ namespace {
 QString field(const json& v, const char* key) { return v.contains(key) && v[key].is_string() ? QString::fromStdString(v[key].get<std::string>()) : QString(); }
 }  // namespace
 
-QStringList AgentBridge::activityLines() const {
-  QStringList lines;
-  if (m_activity)
-    for (int i = 0; i < m_activity->count(); ++i) lines << m_activity->item(i)->text();
-  return lines;
-}
-
 void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& name, json args, const std::string& receipt, const std::string& hash) {
   const bool write = gitagent::writes(name, args), files = gitagent::changesFiles(name), receipted = gitagent::receipted(name, args);
   auto refuse = [this, s](const std::string& code, const QString& message, const std::string& receiptKey = {}, const std::string& next = {}) {
@@ -35,6 +29,12 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
     error["structuredContent"]["state"] = "failed";
     error["structuredContent"]["error"]["next"] = next.empty() ? json("git_status") : json(next);
     activity(tr("Agent git: %1").arg(message));
+    if (code == "protected_branch") {  // the user's rule: said plainly, with where to change it
+      needsYou(tr("Not allowed to change a protected branch"), tr("Your branch protection stops AI assistants here. Work can go on a branch instead."),
+               QStringLiteral("dismiss"), QString(), message);
+    } else {
+      failed(code, message);
+    }
     reply(s, std::move(error), receiptKey);
   };
   if (receipted && !args.contains("request_id"))
@@ -44,7 +44,7 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
       if (found->second.hash != hash) return fail(s, "request_id_reused", tr("This request ID already belongs to different arguments."));
       return replyReceipt(s, found->second);
     }
-    if (!m_edit) return fail(s, "read_only", tr("Agent access is view-only. Git commands that change the repository need editing permission (Settings > AI integration)."));
+    if (!canEdit()) return fail(s, "read_only", tr("Agent access is view-only. Git commands that change the repository need editing permission (Settings > AI integration)."));
     if (m_busy) return fail(s, "busy", tr("An agent operation is still running. Wait or use Stop."));
     if (files && editorBusy()) return fail(s, "edit_session_busy", tr("Finish the active sketch or feature operation before agent edits."));
     if (files && m_prepared) return fail(s, "prepared_active", tr("Commit or cancel the current transaction first."));
@@ -162,6 +162,38 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
     else if (name == "git_tag") line = tr("Agent tagged %1 as %2").arg(field(r, "target").left(7), field(r, "tag"));
     else line = tr("Completed: %1 (%2 ms)").arg(QString::fromStdString(name)).arg(started->elapsed());
     activity(line);
+    {  // its row: what happened in the repository, in words
+      const QString client = who(s).brief, subject = field(r, "subject"), source = field(r, "source").isEmpty() ? field(r, "upstream") : field(r, "source");
+      const auto q = [](const QString& t) { return agentsay::isolate(t); };
+      QString said;
+      bool read = !write;
+      if (name == "git_commit") said = tr("Committed %1 on %2").arg(agentsay::quote(subject), q(branch));
+      else if (name == "git_branch_create") said = r.value("switched", false) ? tr("Made the branch %1 and switched to it").arg(q(field(r, "created"))) : tr("Made the branch %1").arg(q(field(r, "created")));
+      else if (name == "git_switch") said = tr("Switched to %1").arg(q(branch));
+      else if (name == "git_merge" || name == "git_pull") {
+        if (state == "preview") { said = tr("Checked what merging %1 would bring").arg(q(source)); read = true; }
+        else if (state == "conflicts") said = tr("Merging %1 stopped on %2 conflicts").arg(q(source)).arg(r.value("conflicts", json::array()).size());
+        else if (state == "up_to_date") said = tr("Already up to date");
+        else said = tr("Merged %1 into %2").arg(q(source), q(branch));
+      } else if (name == "git_merge_abort") said = tr("Called off the merge; the files are back as they were");
+      else if (name == "git_resolve") { said = state == "resolved" ? tr("Settled the conflicts in %1").arg(q(field(r, "path"))) : tr("Listed the conflicts in %1").arg(q(field(r, "path"))); read = state != "resolved"; }
+      else if (name == "git_push") said = tr("Uploaded %1 to %2").arg(q(branch), q(field(r, "remote")));
+      else if (name == "git_fetch") said = tr("Checked for new commits");
+      else if (name == "git_init") said = tr("Set up version control (branch %1)").arg(q(branch));
+      else if (name == "git_tag") said = tr("Marked this version as %1").arg(q(field(r, "tag")));
+      else said = agentsay::done(name, json::object(), r, m_doc->scene, m_doc->scene, units::current()).text;
+      if (read) addRead(said, client);
+      else {
+        ActivityEvent e;
+        e.kind = ActivityEvent::Change;
+        e.icon = QStringLiteral("git");
+        e.text = said;
+        e.client = client;
+        e.canShow = false;
+        e.ms = started->elapsed();
+        post(e);
+      }
+    }
     trace::log(QStringLiteral("agent: %1 %2 ms").arg(QString::fromStdString(name)).arg(started->elapsed()));
     if (write && state != "preview") emit gitChanged(files);
     emit statusChanged();

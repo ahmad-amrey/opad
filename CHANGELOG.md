@@ -5,6 +5,31 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
+## [Unreleased]
+
+Working with an AI assistant is now calm and readable: OPAD tells you in plain words what Claude, Codex or another AI
+app looked at and changed in your design, marks its steps in the timeline, and asks you only when it needs you.
+
+### Changed
+- **AI activity in plain words.** The panel now reads like a log of what was done, with your part and step names and
+  your units: "Looked at the model from the front", "Added a 40 × 20 × 10 mm box", "Filleted 4 edges of Bracket, 2 mm".
+  Lookups fold into one line, a picture the assistant took shows as a thumbnail, and a task it does in several steps is
+  one entry with its steps under it. Hover an entry to light up its part, Show frames it, and Undo takes it back while it
+  is the latest step. The panel never opens by itself.
+- **The AI chip** in the status bar carries a new AI mark and says what is going on in a word or two: *Connect AI*,
+  *AI ready*, *Claude*, *Claude · working*, *Claude · preview*, *Claude needs you*, with a count of changes made while the
+  panel was closed. Its menu stops the assistant, sets what it may do, pauses its changes for now, or disconnects it.
+- **When the assistant needs you**, one entry says so in amber with one button: for example, if it may only look and
+  tries to change something, *Allow changes* lets it. Errors it fixes by itself no longer fill the panel.
+- **Steps an AI made** carry its mark in the timeline, their tooltip names the assistant, and Undo reads
+  "Undo Claude: Added …". The assistant's name is saved with the step.
+- **Settings > AI assistants** (was AI integration) sets up Claude Code, Claude Desktop or Codex with one click, shows
+  whether each is ready, and gives a sentence to try. Setup for other apps moved to *Other AI apps*.
+
+### Added
+- **Stop AI work** (Tools, the chip's menu and the panel) stops what the assistant is doing and removes its preview;
+  changes it already made stay. **Pause changes** lets it look but not change anything until you resume.
+
 ## [0.10.1] - 2026-11-22
 
 Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,

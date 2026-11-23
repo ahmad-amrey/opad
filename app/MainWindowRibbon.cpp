@@ -45,8 +45,9 @@ void MainWindow::buildToolsActions() {
     resultToast(tr("Cache cleared: %1").arg(QDir::toNativeSeparators(dir)), dir);
   });
   // The Tools menu's own entries (Appendix A §4) and the gear menu's: what used to be plain entries of one menu.
-  addAction("tools.ai", tr("AI integration…"), "agent", QKeySequence(), [this] { if (m_agent) m_agent->settings(); });
-  addAction("tools.agentActivity", tr("Agent activity"), "history", QKeySequence(), [this] { if (m_agent) m_agent->showActivity(); });
+  addAction("tools.ai", tr("AI assistants…"), "aiMark", QKeySequence(), [this] { if (m_agent) m_agent->settings(); });
+  addAction("tools.agentActivity", tr("AI activity"), "aiMark", QKeySequence(), [this] { if (m_agent) m_agent->toggleActivity(); });
+  addAction("tools.agentStop", tr("Stop AI work"), "aiMark", QKeySequence(), [this] { if (m_agent) m_agent->userStop(); });
   // The files OPAD opens from Explorer (Preferences > Files has the same button); where the system declares them, the page.
   addAction("tools.fileTypes", tr("File types…"), "open", QKeySequence(), [this] {
     if (associations::supported()) FileTypesDialog(this).exec();
@@ -128,7 +129,7 @@ void MainWindow::buildMenus() {
   QMenu* version = menuBar()->addMenu(tr("Ve&rsion"));  // version control's (VcsArea): hidden when no area fills it
   version->setObjectName("versionMenu");
   QMenu* tools = menuBar()->addMenu(tr("&Tools"));
-  add(tools, {"tools.commands", "tools.shortcuts", "-", "tools.ai", "tools.agentActivity", "-", "tools.fileTypes", "tools.cache"});
+  add(tools, {"tools.commands", "tools.shortcuts", "-", "tools.ai", "tools.agentActivity", "tools.agentStop", "-", "tools.fileTypes", "tools.cache"});
   QMenu* help = menuBar()->addMenu(tr("&Help"));
   add(help, {"help.licenses", "help.aboutqt", "-", "help.about"});
   const QMap<QString, QMenu*> menus{{"file", file},       {"edit", edit},         {"view", view},       {"insert", insert}, {"inspect", inspect},
