@@ -606,7 +606,11 @@ while it runs: a press/release pair that drifts is a rubber band, not a click.
   `tessellate()` does not, so headless renders and exports stay byte-identical. Zoom refinement
   (`ViewportRefine.cpp`): once the camera is still for 350 ms, visible bodies whose chords exceed a pixel get
   drawing-only arrays (`BodyShape::setDisplayPrs`, `BodyPrs::build(..., drawingOnly)`) meshed on a copy on a worker;
-  picking and highlights keep the base mesh; budgets 1.5M triangles per body, 4M per pass, 12M kept (LRU). Bench:
+  picking and highlights keep the base mesh; budgets 1.5M triangles per body, 4M per pass, 12M kept (LRU). Anything
+  drawn from a body's mesh copies the drawn arrays (`BodyShape::drawnIndex`: selection, smart selection's candidate =
+  the timeline hover, glows) and is rebuilt when a pass swaps them; Compare's parts (`refineCompareKey`, their prs must
+  carry `deflection` or they are skipped) and its face tints (`refineTintKey`, coloured like the tint) refine too, a
+  result landing only while the object's base arrays are the ones it was made from (`refineBase`). Bench:
   `OPAD_BENCH_SCENE=<png>` + `OPAD_BENCH_CAMERA=<camera json>` or `OPAD_BENCH_VIEW=iso OPAD_BENCH_ZOOM=<factor>`
   (`OPAD_BENCH_WAIT` ms, default 3000; the hidden window never paints, so the bench asks for the refinement).
 - Translucent elements of a layer are drawn when the next layer that clears the depth starts, else at the very end.

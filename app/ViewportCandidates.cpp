@@ -44,19 +44,21 @@ void edgeLine(const TopoDS_Edge& e, const gp_Trsf& body, std::vector<gp_Pnt>& ou
 }
 }  // namespace
 
-void Viewport::showCandidateRefs(const std::vector<opad::Ref>& refs) {
+void Viewport::showCandidateRefs(const std::vector<opad::Ref>& refs, bool again) {
   const bool same = refs.size() == m_candidateRefs.size() && std::equal(refs.begin(), refs.end(), m_candidateRefs.begin(), [](const opad::Ref& a, const opad::Ref& b) {
     return a.body == b.body && a.kind == b.kind && a.index == b.index;
   });
-  if (same) return;
+  if (same && !again) return;
   m_candidateRefs = refs;
   if (Job* job = std::exchange(m_candidateJob, nullptr)) job->cancel();
-  m_candidateShown = 0;
-  if (m_initialised && !m_candidateHl.IsNull()) {
+  auto dropShown = [this] {
+    if (!m_initialised || m_candidateHl.IsNull()) return;
     m_ctx->Remove(m_candidateHl, Standard_False);
     m_candidateHl.Nullify();
+    m_candidateShown = 0;
     redrawScene();
-  }
+  };
+  if (!again) dropShown();  // again: the old one stays until the new one is drawn, no blink
   // Whole bodies: tinted through the compositor (it applies the look in its own sliced job).
   std::map<std::string, LookDelta> whole;
   const QColor amber = m_tokens.candidate;
@@ -82,19 +84,29 @@ void Viewport::showCandidateRefs(const std::vector<opad::Ref>& refs) {
     (*wanted)[it->second].subs.push_back({r.kind == opad::Ref::Kind::Face ? TopAbs_FACE : TopAbs_EDGE, r.index});
     ++total;
   }
-  if (!whole.empty() || !m_lookLayers[static_cast<size_t>(LookSource::Candidate)].empty()) setLookLayer(LookSource::Candidate, std::move(whole));
-  if (!m_initialised || wanted->empty()) return;
+  if (!again && (!whole.empty() || !m_lookLayers[static_cast<size_t>(LookSource::Candidate)].empty())) setLookLayer(LookSource::Candidate, std::move(whole));
+  if (!m_initialised || wanted->empty()) return dropShown();
   struct State {
     size_t b = 0, shown = 0;
     std::vector<gp_Pnt> tv, sv;
     std::vector<int> ti;
   };
   auto st = std::make_shared<State>();
-  // One body per step: its faces and edges mapped once, the wanted ones copied out of their meshes.
+  // One body per step: its faces and edges mapped once, the wanted ones copied out of the arrays the body is drawn with
+  // (a zoom refinement's when it has one: the base mesh's chords showed as steps over the finer surface).
   auto step = [wanted, st]() -> bool {
     if (st->b >= wanted->size()) return false;
     const Wanted& w = (*wanted)[st->b++];
     const gp_Trsf body = w.ais->LocalTransformation();  // rigid placements live on the object (displayBody)
+    const Handle(BodyShape) shape = Handle(BodyShape)::DownCast(w.ais);
+    const BodyPrs* drawn = shape.IsNull() ? nullptr : shape->drawnIndex();
+    auto drawnLine = [&](const std::shared_ptr<const std::vector<gp_Pnt>>& line) {
+      if (!line) return;
+      for (size_t n = 1; n < line->size(); ++n) {
+        st->sv.push_back((*line)[n - 1].Transformed(body));
+        st->sv.push_back((*line)[n].Transformed(body));
+      }
+    };
     TopTools_IndexedMapOfShape faces, edges;
     for (const auto& [type, index] : w.subs) {
       TopTools_IndexedMapOfShape& map = type == TopAbs_FACE ? faces : edges;
@@ -102,6 +114,22 @@ void Viewport::showCandidateRefs(const std::vector<opad::Ref>& refs) {
       if (index < 0 || index >= map.Extent()) continue;
       const TopoDS_Shape& sub = map(index + 1);
       ++st->shown;
+      if (drawn) {
+        if (type == TopAbs_EDGE) {
+          drawnLine(drawn->edgeLineOf(index));
+          continue;
+        }
+        std::vector<gp_Pnt> corners;
+        drawn->faceTrianglesOf(index, corners);
+        for (size_t k = 0; k + 2 < corners.size(); k += 3) {
+          const int base = static_cast<int>(st->tv.size());
+          for (size_t c = 0; c < 3; ++c) st->tv.push_back(corners[k + c].Transformed(body));
+          st->ti.insert(st->ti.end(), {base + 1, base + 2, base + 3});
+        }
+        if (edges.IsEmpty()) TopExp::MapShapes(w.ais->Shape(), TopAbs_EDGE, edges);
+        for (TopExp_Explorer e(sub, TopAbs_EDGE); e.More(); e.Next()) drawnLine(drawn->edgeLineOf(edges.FindIndex(e.Current()) - 1));
+        continue;
+      }
       if (type == TopAbs_EDGE) {
         edgeLine(TopoDS::Edge(sub), body, st->sv);
         continue;
@@ -121,9 +149,11 @@ void Viewport::showCandidateRefs(const std::vector<opad::Ref>& refs) {
     }
     return st->b < wanted->size();
   };
-  auto done = [this, st](bool completed) {
+  auto done = [this, st, dropShown](bool completed) {
     m_candidateJob = nullptr;
-    if (!completed || (st->tv.empty() && st->sv.empty())) return;
+    if (!completed) return;
+    dropShown();  // the one shown before (copied again: from the arrays drawn now)
+    if (st->tv.empty() && st->sv.empty()) return;
     // The candidate amber alone (UI-95): no halo, the core and its "halo" one line, a stronger tint than the selection's.
     GlowStyle style;
     style.fill = style.edge = style.halo = Quantity_Color(m_tokens.candidate.redF(), m_tokens.candidate.greenF(), m_tokens.candidate.blueF(), Quantity_TOC_sRGB);

@@ -55,6 +55,9 @@ before they ship.
 - A sketch tool's preview (Offset, Mirror, Pattern and the others with Apply) shows only what the tool makes or
   changes. In a sketch with freedom left, or one saved a hair off its constraints, it drew every curve of the sketch
   dashed, as if everything were picked.
+- Zoomed in close, curved faces stay smooth in two more places: the faces a timeline step made, highlighted while you
+  point at it, and Compare's coloured bodies (the other version's, and the changed faces of a modified body). Both
+  showed the coarse steps of the whole-model mesh instead of the smooth surface around them.
 
 ## [0.10.0] - 2026-11-21
 

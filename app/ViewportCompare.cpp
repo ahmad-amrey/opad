@@ -213,6 +213,7 @@ void Viewport::setCompare(const std::vector<ComparePart>& parts, const std::vect
   }
   applySideMasks();
   redrawScene();
+  m_refineTimer.start();  // seen close up already: the parts refined as the document's bodies are
 }
 
 void Viewport::restyleCompare(const std::vector<ComparePart>& parts, const std::vector<CompareArrow>& arrows) {
@@ -252,6 +253,7 @@ void Viewport::clearCompare() {
     if (!ais.IsNull()) m_ctx->Remove(ais, Standard_False);  // Remove resets the view affinity
   m_compareParts.clear();
   m_compareViews.clear();
+  dropRefined(refineComparePrefix());  // their zoom refinements went with them
   if (!m_compareArrows.IsNull()) m_ctx->Remove(m_compareArrows, Standard_False);
   m_compareArrows.Nullify();
   redrawScene();
@@ -300,6 +302,7 @@ void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::Fa
         const auto refined = m_refined.find(item->second.key);
         if (body->setDisplayPrs(refined != m_refined.end() ? refined->second.prs : nullptr)) recompute(body);
       }
+    m_refined.erase(refineTintKey(it->first));  // the coloured arrays' refinement too
     it = m_faceTints.erase(it);
   }
   // New ones: the body's base mesh coloured on a worker (bodies drawn rigidly from worker arrays only).
@@ -352,6 +355,7 @@ void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::Fa
       const auto body = Handle(BodyShape)::DownCast(item->second.ais);
       if (body.IsNull()) continue;
       tint->second.ais = body.get();
+      tint->second.arrays = b.out;  // refined like the body's own once the camera rests close (refineVisible)
       if (!body->setDisplayPrs(b.out)) continue;
       m_ctx->RecomputePrsOnly(body, Standard_False);
       redraw = true;
@@ -365,6 +369,7 @@ void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::Fa
     if (!redraw) return;
     if (m_style == Style::HiddenEdges) scheduleEdgeOverlay();
     redrawScene();
+    m_refineTimer.start();  // zoomed in already: the coloured faces refined too
   }, JobKind::Background);
 }
 

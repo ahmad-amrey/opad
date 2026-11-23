@@ -82,10 +82,26 @@ bool Viewport::benchRefinedHighlight(const QString& prefix) {
   BRepMesh_IncrementalMesh(body->Shape(), 0.002, Standard_False, 0.1, Standard_True);
   const int remeshed = BRep_Tool::Triangulation(TopoDS::Face(faces(wall + 1)), loc)->NbTriangles();
   selectRefs({face});
-  settleUntil([&] { return !m_subHl.IsNull() && !m_subJob; }, 10000);
-  require(triangles() == drawnWall && remeshed != drawnWall,
+  settleUntil([&] { return !m_subHl.IsNull() && !m_subJob && !m_refineJob; }, 10000);
+  const BodyPrs* drawnThen = body->drawnIndex();  // a refinement of the fitted view may have landed meanwhile: its arrays are drawn
+  const int drawnThenWall = drawnThen ? drawnThen->faceTriangles[size_t(wall)].second : drawnWall;
+  require(triangles() == drawnThenWall && remeshed != drawnThenWall,
           QString("meshed again in place (%1 triangles now), the selected wall is still highlighted as drawn (%2 triangles)").arg(remeshed).arg(triangles()));
   clearSelection();
+  // A timeline step hovered (smart selection's candidate, the faces it made): from the drawn arrays too, never from the
+  // triangulation meshed again in place, and copied again once the refinement swaps them (below).
+  auto candidate = [this] {
+    int n = 0;
+    if (const auto hl = Handle(SubHighlight)::DownCast(m_candidateHl); !hl.IsNull())
+      for (const auto& a : hl->m_triangles) n += a->ItemNumber();
+    return n;
+  };
+  settleUntil([] { return false; }, 500);  // the cleared selection settles first (smart selection then drops its candidate)
+  showCandidateRefs({face});
+  const BodyPrs* drawnNow = body->drawnIndex();  // a refinement may have landed meanwhile
+  const int drawnNowWall = drawnNow ? drawnNow->faceTriangles[size_t(wall)].second : -1;
+  require(candidate() == drawnNowWall && remeshed != drawnNowWall,
+          QString("a hovered step's wall is drawn as the body is (%1 triangles, the shape's own %2)").arg(candidate()).arg(remeshed));
   // Zoomed in on the wall, still: refined (a pass at a time, as the camera coming to rest asks).
   m_needFit = false;
   m_view->SetProj(V3d_Yneg);
@@ -101,6 +117,10 @@ bool Viewport::benchRefinedHighlight(const QString& prefix) {
     return false;
   const auto& shown = body->displayPrs();
   const int refinedWall = shown->faceTriangles[size_t(wall)].second;
+  settleUntil([&] { return candidate() == refinedWall && !m_candidateJob; }, 10000);
+  require(candidate() == refinedWall && refinedWall > baseTriangles,
+          QString("refined, the hovered step's wall is copied again from the refined mesh (%1 triangles, the base mesh's %2)").arg(candidate()).arg(baseTriangles));
+  showCandidateRefs({});
   // The wall selected: the highlight from the refined triangles, depth-tested.
   selectRefs({face});
   settleUntil([&] { return !m_subHl.IsNull() && !m_subJob; }, 10000);
@@ -131,6 +151,46 @@ bool Viewport::benchRefinedHighlight(const QString& prefix) {
   }
   clearSelection();
   return all;
+}
+
+opad::json Viewport::benchRefineCloseUp(const std::string& node, double zoom) {
+  // The document's body, else Compare's part of that id (a body removed since: only its ghost is drawn).
+  Handle(BodyShape) body;
+  if (const auto item = m_items.find(node); item != m_items.end()) body = Handle(BodyShape)::DownCast(item->second.ais);
+  for (size_t k = 0; body.IsNull() && k < m_compareParts.size(); ++k)
+    if (m_compareParts[k].first == node && m_initialised && m_ctx->IsDisplayed(m_compareParts[k].second)) body = Handle(BodyShape)::DownCast(m_compareParts[k].second);
+  if (!m_initialised || body.IsNull() || !body->prs()) return {};
+  const opad::json camera = cameraJson();
+  m_needFit = false;
+  m_view->FitAll(body->prs()->box.Transformed(body->LocalTransformation()), 0.1, Standard_False);
+  m_view->SetZoom(zoom);
+  m_view->Redraw();
+  // A pass at a time, as the camera coming to rest asks, until a pass wants nothing more.
+  settleUntil([this] {
+    if (m_refineJob) return false;
+    refineVisible();
+    return !m_refineJob;
+  }, 30000);
+  auto drawn = [](const Handle(BodyShape)& shape, const std::shared_ptr<const BodyPrs>& base) {
+    const auto& shown = shape->displayPrs();
+    const auto& from = base ? base : shape->prs();
+    return opad::json{{"refined", shown && shown != from}, {"deflection", shown ? shown->deflection : from->deflection},
+                      {"base", from->deflection}, {"painted", (shown ? shown : from)->painted.size()}, {"basePainted", from->painted.size()}};
+  };
+  const auto tint = m_faceTints.find(node);
+  opad::json out{{"body", drawn(body, tint != m_faceTints.end() && tint->second.ais == body.get() ? tint->second.arrays : nullptr)}, {"parts", opad::json::array()}};
+  out["body"]["tinted"] = tint != m_faceTints.end() && tint->second.ais == body.get();
+  for (const auto& [id, ais] : m_compareParts) {
+    const auto part = Handle(BodyShape)::DownCast(ais);
+    if (part.IsNull() || !part->prs()) continue;
+    opad::json p = drawn(part, nullptr);
+    p["id"] = id;
+    p["displayed"] = m_ctx->IsDisplayed(part);
+    out["parts"].push_back(p);
+  }
+  setCameraJson(camera);
+  m_view->Redraw();
+  return out;
 }
 
 OPAD_BENCH(OPAD_BENCH_REFINED_HIGHLIGHT, refinedHighlight) {
