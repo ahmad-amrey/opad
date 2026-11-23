@@ -6,6 +6,7 @@
 // transaction's label, a note's text, a file name) is quoted and capped, and never stands alone as a claim.
 // Pure functions, safe on a worker: tr() lookups, the scenes they are given and a units::Display captured on the UI thread.
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QString>
 #include <QStringList>
 #include <string>
@@ -66,4 +67,10 @@ QString lookups(int n);                            // "1 lookup", "2 lookups", "
 QString changesCount(int n);                       // "1 change", "2 changes", "4 changes"
 QString stepsSoFar(int n);                         // "1 step so far", ...
 QString plain(QString text);                       // without the isolation marks (tests, Copy as text)
+
+// Who made a step, from its op's data: "Claude (AI)" for an AI assistant's (by "Agent", its name saved as ai_client; "AI"
+// when none was saved), else the name it was saved with. authorLine adds when: "Claude (AI) · 14:02" for an AI step made
+// today (the time the activity panel shows), the date too on another day; a person's step as it always read ("by · date").
+QString author(const opad::json& opData);
+QString authorLine(const opad::json& opData, const QDateTime& now);
 }  // namespace agentsay

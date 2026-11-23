@@ -341,18 +341,19 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
   if(kind!=agentsay::Kind::Hidden && kind!=agentsay::Kind::Fold && transaction.empty()){
     ActivityEvent e;e.kind=ActivityEvent::Running;e.icon=QStringLiteral("aiMark");e.client=client;e.canShow=false;
     e.text=agentsay::running(name,args,m_doc->scene,display);m_call.running=e.text;
-    m_running=post(e);m_working.start();
+    dropRetrying();m_running=post(e);m_working.start();
     QTimer::singleShot(420,this,[this]{emit statusChanged();});
   }
   auto ready=[this,session,name,args=std::move(args),receipt,write,preview,transaction,epoch,revision,state,linked,started,known=session->known,steps=session->steps,display,client,kind](std::shared_ptr<Snapshot> source,const QString& error){
     if(epoch!=m_epoch || !session->socket || !session->bound){fail(session,"cancelled",tr("Agent operation cancelled."),receipt);return;}
     if(!source){m_busy=false;fail(session,"snapshot_failed",error,receipt);return;}
     if(name=="transaction_begin"){
+      if(m_prepared){m_dropReason=tr("Replaced by a new task. Nothing changed.");clearPrepared(false,true);}  // else its row stayed "preview"
       m_prepared=std::make_shared<Prepared>();m_prepared->snapshot=source;m_prepared->id=newId();m_prepared->label=QString::fromStdString(args.at("label").get<std::string>());m_prepared->owner=session->socket;m_prepared->transaction=true;
       m_prepared->receipts.push_back(receipt);
       ActivityEvent e;e.kind=ActivityEvent::Group;e.state=ActivityEvent::Staged;e.icon=QStringLiteral("commit");e.client=client;
       e.text=tr("%1's task: %2").arg(client,agentsay::quote(m_prepared->label,48));e.second=tr("Preview, not applied yet · %1").arg(agentsay::stepsSoFar(0));
-      m_group=m_staged=m_prepared->event=post(e);
+      m_group=m_staged=m_prepared->event=post(e);emit statusChanged();  // the chip and the viewport's preview chip
       m_busy=false;m_receipts[receipt].state="staged";reply(session,live_result({{"state","staged"},{"transaction",m_prepared->id},{"base_revision",revision},{"revision",revision},{"lifetime",transaction_policy()}}),receipt);return;
     }
     struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta,steps;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;
@@ -629,7 +630,12 @@ void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::stri
     QString done=prepared->transaction?tr("%1 (%2)").arg(agentsay::plain(agentsay::quote(prepared->label,48)),agentsay::changesCount(int(prepared->steps.size()))):agentsay::plain(prepared->said.text);
     if(done.isEmpty())done=prepared->label;
     if(done.size()>60)done=done.left(59)+QChar(0x2026);
+    const size_t opsBefore=m_doc->doc.ops.size();  // what follows is what this commit made (its row lists them all)
     m_committing=true;m_doc->commitSnapshot(*prepared->snapshot->doc,prepared->snapshot->scene,revision,tr("%1: %2").arg(client,done));m_committing=false;
+    if(opsBefore<m_doc->doc.ops.size()){  // undo / redo replies keep naming it as before
+      m_replyLabels.emplace_back(m_doc->doc.ops[opsBefore].id,tr("Agent: %1").arg(prepared->label));
+      if(m_replyLabels.size()>100)m_replyLabels.pop_front();
+    }
     m_receipts[receipt].state="committed";
     m_receipts[receipt].revision=m_doc->revision;
     for(const auto& key:prepared->receipts){m_receipts[key].state="committed";m_receipts[key].revision=m_doc->revision;}
@@ -651,12 +657,18 @@ void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::stri
       }
       e.state=ActivityEvent::Applied;e.subjects=subjects;e.client=client;e.canShow=true;e.issue=false;
       e.op=!said.op.empty() && m_doc->doc.find_op(said.op)?said.op:(m_doc->doc.ops.empty()?std::string():m_doc->doc.ops.back().id);
+      e.ops.clear();for(size_t i=std::min(opsBefore,m_doc->doc.ops.size());i<m_doc->doc.ops.size();++i)e.ops.push_back(m_doc->doc.ops[i].id);
       e.canUndo=m_doc->undoTopHas(e.op);e.ms=e.at.msecsTo(QDateTime::currentDateTime());
       post(e);
       if(prepared->event==m_staged){m_staged=0;m_group=0;}
       if(!m_panel || !m_panel->isVisible())++m_unseen;
       refreshRows();
     }
-  }catch(const std::exception& e){m_committing=false;fail(session,"commit_failed",QString::fromUtf8(e.what()),receipt);}
+  }catch(const std::exception& e){
+    m_committing=false;
+    m_running=prepared->event;  // failed() turns the call's row (running, or the staged preview or task) into the failure
+    if(prepared->event==m_staged){m_staged=0;m_group=0;}
+    fail(session,"commit_failed",QString::fromUtf8(e.what()),receipt);
+  }
   release(prepared);emit statusChanged();
 }

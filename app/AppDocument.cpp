@@ -821,6 +821,13 @@ bool AppDocument::undoTopHas(const std::string& opId) const {
   return false;
 }
 
+bool AppDocument::redoTopHas(const std::string& opId) const {
+  if (m_redo.empty() || opId.empty()) return false;
+  for (const auto& op : m_redo.back().ops)
+    if (op.id == opId) return true;
+  return false;
+}
+
 bool AppDocument::redoHas(const std::string& opId) const {
   for (const auto& step : m_redo)
     for (const auto& op : step.ops)

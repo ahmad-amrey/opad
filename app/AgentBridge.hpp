@@ -17,6 +17,7 @@ class QLocalSocket;
 class AreaServices;
 class Toast;
 class QMenu;
+class QTimer;
 class DesignController;
 class Viewport;
 class ToolPanel;
@@ -50,10 +51,21 @@ class AgentBridge : public QObject {
   opad::json liveState() const;  // what live_state answers (benches read it too)
   // Used only by the isolated application acceptance harness.
   void bench();
-  bool benchActivity(const QString& prefix);  // OPAD_BENCH_AGENT_ACTIVITY (AgentActivityBench.cpp)
+  // OPAD_BENCH_AGENT_ACTIVITY (AgentActivityBench.cpp); propertiesLine: the Properties panel's author line for a step
+  // shown from its timeline marker (the window's part, which the bridge does not reach).
+  bool benchActivity(const QString& prefix,std::function<QString(const std::string&)> propertiesLine);
   QStringList activityLines() const;  // the technical log's lines, as they always read (benches)
   QStringList feedLines() const;      // the AI activity panel's rows as the user reads them (benches)
   ActivityPanel* activityPanel() const {return m_feed;}  // null until shown once (benches)
+  // A row's action, as its buttons do: show, back, undo, timeline, select, copy, dismiss, notNow, discard, allowEdit, save.
+  // The viewport's preview chip calls discard on the staged row (AgentArea.cpp).
+  void rowAction(quint64 id,const QString& action);
+  quint64 rowForOp(const std::string& op) const;  // the row of the change that made this step (0: none in the feed)
+  void revealRow(quint64 id);                     // the panel shown, scrolled to the row (the timeline's Show in AI activity)
+  // What an AI assistant has staged and not applied (a preview or a task): its row, the assistant's name, its steps in words.
+  struct Staged {quint64 row=0;QString client;QStringList steps;};
+  Staged staged() const;
+  static bool sameCamera(const opad::json& a,const opad::json& b);  // two Viewport::cameraJson alike to a hair (Back; benches)
  signals:
   void statusChanged();
   // An agent's git tool changed the repository (AgentGit.cpp); `files`: the work tree may have changed too (a switch,
@@ -109,8 +121,13 @@ class AgentBridge : public QObject {
   void stripMenu(const QPoint& global);
   void accessMenu(QMenu& menu);
   void ensurePanel();
-  void rowAction(quint64 id,const QString& action);
   void hoverRow(quint64 id);
+  void endShowing();  // Back goes: the row reads Show again
+  void dropNeeds(const QString& action);  // the needs-you row (with this action; empty: any) goes, its question toast too
+  void dropRetrying();                    // a "Retrying…" row goes: the next call is under way, or Stop
+  // undo / redo replies name an AI assistant's step as they always did ("Agent: <tool or task>"), whatever its undo step
+  // reads in the window ("Claude: Added a 40 × 20 × 10 mm box"); `shown` for every other step.
+  QString replyLabel(bool undo,const QString& shown) const;
   void allowChanges();
   AgentChip::State chipState() const;
   struct Names {QString full,brief;};
@@ -165,4 +182,9 @@ class AgentBridge : public QObject {
   QDateTime m_leftAt;QString m_leftName;  // who left and when: "Claude left" for 60 s
   std::map<std::string,std::vector<qint64>> m_retries;  // a retryable code's times (three in 20 s: "Retrying…")
   QPointer<Toast> m_needsToast;
+  // Show on a change row: the camera before it (Back), the camera it rested at (a move away from it ends Back), and the
+  // watch that compares them while Back is offered (a camera read every 250 ms, nothing else).
+  json m_backCamera,m_shownCamera;QTimer* m_cameraWatch=nullptr;
+  quint64 m_retrying=0;  // a call's row that says "Retrying…" (its next call replaces it)
+  std::deque<std::pair<std::string,QString>> m_replyLabels;  // an AI commit's first op -> its reply label (the last 100)
 };

@@ -13,6 +13,8 @@ class AnnotationsPanel : public QWidget {
  public:
   explicit AnnotationsPanel(AppDocument* doc, QWidget* parent = nullptr);
   std::string currentOpId() const { return m_current; }
+  QComboBox* authorFilter() const { return m_author; }  // benches: "All authors", "AI" (an assistant's notes), names
+  int shownCount() const { return m_shown; }            // the cards the filters let through
  signals:
   // A card was clicked: what its note is anchored to, or every pick of a pinned measurement, to light up in the view (help
   // audit P9.4).
@@ -33,4 +35,5 @@ class AnnotationsPanel : public QWidget {
   QLabel* m_count;
   QWidget* m_cards;
   std::string m_current;
+  int m_shown = 0;
 };

@@ -210,7 +210,8 @@ class ActivityRow : public QFrame {
       action(agentsay::Say::tr("Show"), QStringLiteral("show"));
       action(agentsay::Say::tr("Discard"), QStringLiteral("discard"));
     } else if (change && e.state != ActivityEvent::Gone && e.state != ActivityEvent::Undone && e.state != ActivityEvent::Dropped) {
-      if (e.canShow && !e.subjects.empty()) action(m_showing ? agentsay::Say::tr("Back") : agentsay::Say::tr("Show"), QStringLiteral("show"));
+      // Show saved the camera: Back puts it there again (AgentBridge::rowAction), until the camera moves.
+      if (e.canShow && !e.subjects.empty()) action(m_showing ? agentsay::Say::tr("Back") : agentsay::Say::tr("Show"), m_showing ? QStringLiteral("back") : QStringLiteral("show"));
       if (e.canUndo) action(agentsay::Say::tr("Undo"), QStringLiteral("undo"));
       else if (!e.op.empty() && e.canShow) action(agentsay::Say::tr("Show in timeline"), QStringLiteral("timeline"));
     }
@@ -251,6 +252,11 @@ class ActivityRow : public QFrame {
     setEvent(m_event, m_panel->m_multiple);
   }
   bool showing() const { return m_showing; }
+  QStringList actionTexts() const {
+    QStringList out;
+    for (auto* b : m_actions) out << b->text();
+    return out;
+  }
  protected:
   void enterEvent(QEnterEvent*) override {
     m_hover = true;
@@ -468,7 +474,12 @@ ActivityPanel::ActivityPanel(QWidget* parent) : QWidget(parent) {
 }
 
 bool ActivityPanel::event(QEvent* e) {
-  if (e->type() == QEvent::LayoutDirectionChange || e->type() == QEvent::DevicePixelRatioChange) restyle();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+  const QEvent::Type scaleChange = QEvent::DevicePixelRatioChange;
+#else
+  const QEvent::Type scaleChange = QEvent::ScreenChangeInternal;  // Qt 6.4 (Ubuntu 24.04): no DevicePixelRatioChange yet
+#endif
+  if (e->type() == QEvent::LayoutDirectionChange || e->type() == scaleChange) restyle();
   return QWidget::event(e);
 }
 
@@ -546,6 +557,7 @@ void ActivityPanel::post(const ActivityEvent& e) {
 }
 
 void ActivityPanel::remove(quint64 id) {
+  if (id == m_showing) m_showing = 0;
   for (size_t i = 0; i < m_events.size(); ++i)
     if (m_events[i].id == id) {
       m_rows[i]->deleteLater();
@@ -557,6 +569,7 @@ void ActivityPanel::remove(quint64 id) {
 }
 
 void ActivityPanel::clear() {
+  m_showing = 0;
   for (auto* r : m_rows) r->deleteLater();
   m_rows.clear();
   m_events.clear();
@@ -611,6 +624,33 @@ void ActivityPanel::setMultiple(bool on) {
 
 void ActivityPanel::refreshRows() {
   for (size_t i = 0; i < m_rows.size(); ++i) m_rows[i]->setEvent(m_events[i], m_multiple);
+}
+
+void ActivityPanel::setShowing(quint64 id) {
+  if (id == m_showing) return;
+  if (auto* old = rowFor(m_showing)) old->setShowing(false);
+  m_showing = 0;
+  if (auto* row = rowFor(id)) {
+    row->setShowing(true);
+    m_showing = id;
+  }
+}
+
+void ActivityPanel::reveal(quint64 id) {
+  auto* row = rowFor(id);
+  if (!row) return;
+  m_revealed = id;
+  row->setFocus(Qt::OtherFocusReason);  // its actions show (focusInEvent)
+  m_scroll->ensureWidgetVisible(row, 0, 24);
+  // A panel just shown lays its rows out first: once more after that.
+  QTimer::singleShot(0, this, [this, id] {
+    if (auto* r = rowFor(id)) m_scroll->ensureWidgetVisible(r, 0, 24);
+  });
+}
+
+QString ActivityPanel::actionsOf(quint64 id) const {
+  auto* row = rowFor(id);
+  return row ? row->actionTexts().join(QLatin1Char('|')) : QString();
 }
 
 void ActivityPanel::scrollToEnd() { m_scroll->verticalScrollBar()->setValue(m_scroll->verticalScrollBar()->maximum()); }

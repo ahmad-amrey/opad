@@ -1022,4 +1022,21 @@ QString failure(const std::string& code, const QString& message, const QString& 
   if (what.isEmpty()) return why.isEmpty() ? Say::tr("A request couldn't be done. Nothing changed.") : Say::tr("Couldn't finish: %1. Nothing changed.").arg(why);
   return why.isEmpty() ? Say::tr("Couldn't finish “%1”. Nothing changed.").arg(what) : Say::tr("Couldn't finish “%1”: %2. Nothing changed.").arg(what, why);
 }
+QString author(const opad::json& opData) {
+  const std::string by = opData.is_object() ? opData.value("by", std::string()) : std::string();
+  if (by != "Agent") return QString::fromStdString(by);
+  const std::string client = opData.value("ai_client", std::string());
+  return Say::tr("%1 (AI)").arg(client.empty() ? Say::tr("AI") : QString::fromStdString(client));
+}
+
+QString authorLine(const opad::json& opData, const QDateTime& now) {
+  const QString who = author(opData);
+  const std::string ts = opData.is_object() ? opData.value("ts", std::string()) : std::string();
+  if (!opData.is_object() || opData.value("by", std::string()) != "Agent") return Say::tr("%1 · %2").arg(who, i18n::localTime(ts));
+  const QDateTime at = QDateTime::fromString(QString::fromStdString(ts), Qt::ISODate);
+  if (!at.isValid()) return who;
+  const QDateTime local = at.toLocalTime();
+  return Say::tr("%1 · %2").arg(who, local.date() == now.toLocalTime().date() ? local.toString(QStringLiteral("HH:mm")) : i18n::localTime(ts));
+}
+
 }  // namespace agentsay

@@ -80,6 +80,9 @@ class AreaServices {
   // A chip in the status bar's row beside the document's path (the git chip): kept while messages show and never squeezed
   // below its size hint (UI-08, StatusRow.hpp). From statusWidgets on.
   void addStatusChip(QWidget* chip);
+  // The live selection published for AI assistants (UI-06, MainWindow::writeSelectionFile): on, it is written at once; off,
+  // the file goes and a write under way cannot put it back. AgentArea calls it when AI access comes on or goes off.
+  void publishSelection(bool on);
   PathChip* pathChip() const;  // the path in the status bar: its menu takes entries (PathChip::menuRequested); from statusWidgets on
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none
   // A command like the built-in ones: its shortcut from the user's settings, locked while a file loads, errors shown as

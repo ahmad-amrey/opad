@@ -46,6 +46,7 @@ AgentBridge::AgentBridge(AppDocument* doc,DesignController* design,Viewport* vie
   connect(&m_server,&QLocalServer::newConnection,this,&AgentBridge::accept);
   // Another state of the document: unfinished work stops; whether bound connections follow is known once it is in (changed).
   connect(doc,&AppDocument::aboutToReplace,this,[this]{
+    dropNeeds(QString());  // its Save or Allow was about the document that goes
     stop();if(m_cache)dispose(std::move(m_cache));m_changes=json::array();
     if(!m_replacing.pending)m_replacing={m_doc->hasDocument?m_doc->doc.header.uuid:std::string(),m_doc->path(),m_doc->hasDocument && !m_doc->browse,true};
   });
@@ -122,6 +123,7 @@ void AgentBridge::setAccess(bool enabled,bool edit){
       if(auto* t=stack->toast(tr("AI access couldn't start: another program may be using it."),tr("Details"),[this]{settings(1);},0))t->setToolTip(reason);
   }
   if(!m_enabled){m_server.close();const auto sessions=m_sessions;for(auto& session:sessions)if(session->socket)session->socket->disconnectFromServer();}
+  if(canEdit() && m_enabled)dropNeeds(QStringLiteral("allowEdit"));  // allowed from the chip's menu or Settings: nothing left to ask
   publish();
 }
 bool AgentBridge::publishesSelection()const{return m_enabled || std::any_of(m_sessions.begin(),m_sessions.end(),[](const auto& s){return s->bound;});}
@@ -200,7 +202,7 @@ void AgentBridge::accept(){while(m_server.hasPendingConnections()){
       divider(tr("%1 disconnected · %2").arg(name.brief,QTime::currentTime().toString("HH:mm")));
       QTimer::singleShot(61000,this,[this]{emit statusChanged();});
     }
-    if(m_busy && m_owner==session->socket){++m_epoch;if(m_job)m_job->cancel();m_busy=false;m_owner.clear();}
+    if(m_busy && m_owner==session->socket){++m_epoch;m_busy=false;if(m_job)m_job->cancel();m_owner.clear();}  // not busy first, as stop()
     if(session->socket)session->socket->deleteLater();std::erase(m_sessions,session);
     if(!boundCount())m_paused=false;  // Pause changes lasts while someone is connected
     emit statusChanged();
@@ -396,7 +398,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     const bool back=name=="undo";
     if(m_prepared){m_receipts.erase(key);fail(s,"prepared_active",tr("Commit or cancel the current transaction first."));return;}
     if(back?!m_doc->canUndo():!m_doc->canRedo()){m_receipts.erase(key);fail(s,back?"nothing_to_undo":"nothing_to_redo",back?tr("There is nothing to undo."):tr("There is nothing to redo."));return;}
-    const QString label=back?m_doc->undoLabel():m_doc->redoLabel();
+    const QString label=replyLabel(back,back?m_doc->undoLabel():m_doc->redoLabel());
     if(back)m_doc->undo();else m_doc->redo();
     m_receipts[key].state="committed";m_receipts[key].revision=m_doc->revision;
     reply(s,live_result({{"state","committed"},{"revision",m_doc->revision},{"result",{{back?"undone":"redone",label.toStdString()}}}}),key);
@@ -416,8 +418,16 @@ void AgentBridge::clearPrepared(bool cancelReceipts,bool dropRow){if(m_prepared)
   if(dropRow){m_staged=0;m_group=0;}
   m_dropReason.clear();
   m_viewport->clearPreviewBodies();dispose(std::move(m_prepared));
+  emit statusChanged();  // the preview chips go (every caller's path, also a document change's)
 }}
-void AgentBridge::stop(){++m_epoch;clearPrepared();if(m_job)m_job->cancel();m_busy=false;m_owner.clear();emit statusChanged();}
+void AgentBridge::stop(){
+  // Not busy before the cancel: Job::cancel runs the call's done callback at once, and failed() takes the running row as the
+  // cancelled call's only when nothing is busy (else the row stayed "running" and the chip said "working").
+  ++m_epoch;clearPrepared();m_busy=false;if(m_job)m_job->cancel();m_owner.clear();
+  if(m_running && m_feed)if(auto* r=row(m_running);r && r->kind==ActivityEvent::Running)m_feed->remove(m_running);  // stopped before its job began
+  m_running=0;dropRetrying();
+  emit statusChanged();
+}
 void AgentBridge::disconnectClients(){
   stop();const auto sessions=m_sessions;
   for(const auto& session:sessions){session->bound=false;if(session->socket)session->socket->abort();}

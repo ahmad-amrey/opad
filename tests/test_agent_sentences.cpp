@@ -145,6 +145,23 @@ TEST(client_names) {
   CHECK(display(QString(100, QLatin1Char('a'))).full.size() == 40);
 }
 
+TEST(ai_steps_name_their_assistant) {
+  using agentsay::author;
+  using agentsay::authorLine;
+  const QDateTime now = QDateTime::currentDateTime();
+  const std::string today = now.toUTC().toString(Qt::ISODate).toStdString();
+  const json ai = {{"by", "Agent"}, {"ai_client", "Claude"}, {"ts", today}};
+  CHECK(str(author(ai)) == "Claude (AI)");
+  CHECK_MSG(str(authorLine(ai, now)) == "Claude (AI) · " + now.toString("HH:mm").toStdString(), str(authorLine(ai, now)));
+  CHECK(str(author({{"by", "Agent"}})) == "AI (AI)");  // an older step: no name saved
+  const json older = {{"by", "Agent"}, {"ai_client", "Codex"}, {"ts", "2024-03-05T09:30:00Z"}};
+  CHECK_MSG(str(authorLine(older, now)).rfind("Codex (AI) · 2024-03-0", 0) == 0, str(authorLine(older, now)));  // another day: the date too
+  const json person = {{"by", "Ahmad"}, {"ts", "2024-03-05T09:30:00Z"}};
+  CHECK(str(author(person)) == "Ahmad");
+  CHECK_MSG(str(authorLine(person, now)).rfind("Ahmad · 2024-03-0", 0) == 0, str(authorLine(person, now)));  // as it always read
+  CHECK(str(authorLine({{"by", "Agent"}, {"ai_client", "Claude"}}, now)) == "Claude (AI)");  // no time saved
+}
+
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
   return check::run_all(argc, argv);

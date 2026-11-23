@@ -13,6 +13,8 @@
 #include <QSettings>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <algorithm>
+#include <cmath>
 #include <unordered_set>
 
 #include "AgentBridge.hpp"
@@ -24,6 +26,20 @@
 #include "Viewport.hpp"
 
 using opad::json;
+
+// Two cameras alike to a hair (cameraJson: eye, target, up, scale, projection): the same view, as far as Back is concerned.
+bool AgentBridge::sameCamera(const json& a, const json& b) {
+  if (a.value("projection", "") != b.value("projection", "")) return false;
+  const auto alike = [](double x, double y) { return std::abs(x - y) <= 1e-6 * (1.0 + std::max(std::abs(x), std::abs(y))); };
+  for (const char* key : {"eye", "target", "up"}) {
+    const json& u = a.value(key, json::array());
+    const json& v = b.value(key, json::array());
+    if (u.size() != 3 || v.size() != 3) return false;
+    for (size_t i = 0; i < 3; ++i)
+      if (!alike(u[i].get<double>(), v[i].get<double>())) return false;
+  }
+  return alike(a.value("scale", 0.0), b.value("scale", 0.0));
+}
 
 QStringList AgentBridge::activityLines() const { return m_raw; }
 QStringList AgentBridge::feedLines() const { return m_feed ? m_feed->lines() : QStringList(); }
@@ -380,6 +396,8 @@ void AgentBridge::failed(const std::string& code, const QString& message) {
       if (auto* r = row(running)) {
         r->second = tr("Retrying…");
         m_feed->post(*r);
+        dropRetrying();
+        m_retrying = running;  // until the next call's row, or Stop (it is no call that still runs)
       }
       m_running = 0;
     } else {
@@ -390,6 +408,7 @@ void AgentBridge::failed(const std::string& code, const QString& message) {
   const auto names = connectedName();
   const QString name = names.brief.isEmpty() ? tr("The AI assistant") : names.brief;
   QString doing = m_call.running;
+  if (const auto* r = row(running); r && r->kind == ActivityEvent::Running) doing = r->text;  // a refused call of another connection replaced m_call
   if (doing.isEmpty() && !m_call.name.empty() && m_doc->hasDocument) doing = agentsay::running(m_call.name, m_call.args, m_doc->scene, units::current());
   if (code == "read_only") {
     dropRunning();
@@ -427,7 +446,32 @@ void AgentBridge::rowAction(quint64 id, const QString& action) {
     std::vector<std::string> here;
     for (const auto& s : e.subjects)
       if (m_doc->scene.node(s)) here.push_back(s);
-    if (!here.empty()) m_viewport->fitNodes(here, true);
+    if (here.empty()) return;
+    // A change row's Show keeps the camera it left, and the row offers Back until the camera moves (a staged preview's Show
+    // does not: its row's other button is Discard). Show on another row while one offers Back keeps the first camera.
+    const bool change = e.kind == ActivityEvent::Change || (e.kind == ActivityEvent::Group && e.state == ActivityEvent::Applied) ||
+                        e.kind == ActivityEvent::Note || e.kind == ActivityEvent::Result;
+    if (change && !m_feed->showing()) m_backCamera = m_viewport->cameraJson();
+    m_viewport->fitNodes(here, true);
+    if (change && !m_backCamera.is_null()) {
+      m_shownCamera = nullptr;  // taken once the fit's glide rests
+      m_feed->setShowing(id);
+      if (!m_cameraWatch) {
+        m_cameraWatch = new QTimer(this);
+        m_cameraWatch->setInterval(250);
+        connect(m_cameraWatch, &QTimer::timeout, this, [this] {
+          if (!m_feed || !m_feed->showing()) return endShowing();
+          if (m_viewport->cameraMoving()) return;  // the fit still gliding, or a move that is not over yet
+          const json now = m_viewport->cameraJson();
+          if (m_shownCamera.is_null()) m_shownCamera = now;
+          else if (!sameCamera(now, m_shownCamera)) endShowing();  // the user moved it: Back would undo their move
+        });
+      }
+      m_cameraWatch->start();
+    }
+  } else if (action == QLatin1String("back")) {
+    if (m_feed->showing() == id && !m_backCamera.is_null()) m_viewport->setCameraJson(m_backCamera);
+    endShowing();
   } else if (action == QLatin1String("select")) {
     std::vector<opad::Ref> refs;
     for (const auto& s : e.subjects)
@@ -470,6 +514,57 @@ void AgentBridge::rowAction(quint64 id, const QString& action) {
       if (auto* save = m_services->action("file.save")) save->trigger();
     emit statusChanged();
   }
+}
+
+void AgentBridge::dropNeeds(const QString& action) {
+  const auto* e = row(m_needs);
+  if (!e || (!action.isEmpty() && e->action != action)) return;
+  m_feed->remove(m_needs);
+  m_needs = 0;
+  if (m_needsToast) m_needsToast->dismiss();
+  emit statusChanged();
+}
+
+void AgentBridge::dropRetrying() {
+  if (m_retrying && m_feed) m_feed->remove(m_retrying);
+  m_retrying = 0;
+}
+
+QString AgentBridge::replyLabel(bool undo, const QString& shown) const {
+  for (auto it = m_replyLabels.rbegin(); it != m_replyLabels.rend(); ++it)
+    if (undo ? m_doc->undoTopHas(it->first) : m_doc->redoTopHas(it->first)) return it->second;
+  return shown;
+}
+
+void AgentBridge::endShowing() {
+  if (m_cameraWatch) m_cameraWatch->stop();
+  m_backCamera = m_shownCamera = nullptr;
+  if (m_feed) m_feed->setShowing(0);
+}
+
+quint64 AgentBridge::rowForOp(const std::string& op) const {
+  if (!m_feed || op.empty()) return 0;
+  for (auto it = m_feed->events().rbegin(); it != m_feed->events().rend(); ++it)
+    if (!it->stale && (it->op == op || std::find(it->ops.begin(), it->ops.end(), op) != it->ops.end())) return it->id;
+  return 0;
+}
+
+void AgentBridge::revealRow(quint64 id) {
+  if (!row(id)) return;
+  showActivity();
+  m_feed->reveal(id);
+}
+
+AgentBridge::Staged AgentBridge::staged() const {
+  Staged out;
+  if (!m_prepared || !m_feed || !m_staged) return out;
+  for (const auto& e : m_feed->events())
+    if (e.id == m_staged && e.state == ActivityEvent::Staged) {
+      out.row = e.id;
+      out.client = e.client;
+      out.steps = e.children.isEmpty() && !m_prepared->transaction ? QStringList{e.text} : e.children;
+    }
+  return out;
 }
 
 void AgentBridge::hoverRow(quint64 id) {

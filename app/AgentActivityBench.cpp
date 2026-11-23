@@ -2,23 +2,38 @@
 // ("claude-code") through the live bridge's own socket, as opad-cli mcp --live talks to it, and what the user sees of it
 // (AgentActivity.hpp, AgentFeed.cpp). Step by step: no panel opens on connect, one toast says who connected; the chip's
 // words per state; live_state adds no row; lookups fold into one row with their count; a look keeps its picture; a task
-// (transaction) is one group row, "not applied yet", its steps under it, and Discard drops it (the chip leaves "preview");
-// errors the assistant retries make no row; look-only access gives one "needs you" row (and a question toast) whose Allow
-// changes grants edits; a change reads as what was done ("Added a 40 × 20 × 10 mm box"), Undo only on the newest step,
-// the undo step "Claude: …", the step marked by the AI in the timeline with its name saved (ai_client); Stop's divider and
-// toast. Pictures at <prefix>.chip.png, .panel.png and .settings.png. Text checks run in English; OPAD_LANG=ar checks the
-// same structure (kinds, states, counts) and that no row shows English sentences.
+// (transaction) is one group row, "not applied yet", its steps under it, with the viewport's preview chip ("Claude's
+// preview · not applied", the steps in its tooltip) whose Discard drops it (the chip leaves "preview", the preview chip
+// goes); errors the assistant retries make no row; look-only access gives one "needs you" row (and a question toast) whose
+// Allow changes grants edits; a change reads as what was done ("Added a 40 × 20 × 10 mm box"), Undo only on the newest
+// step, the undo step "Claude: …", the step marked by the AI in the timeline with its name saved (ai_client); Properties
+// says "Claude (AI) · hh:mm" for it; the marker's Show in AI activity opens the panel on its row; Show keeps the camera and
+// Back restores it until the camera moves; the assistant's note under "AI" in the Annotations author filter; Stop's divider
+// and toast, no row left running; undo / redo replies with their labels as before; a failure names its own call; Look and
+// edit chosen elsewhere ends the needs-you row; "Retrying…" goes with the next call; a failed commit's row says so.
+// Pictures at <prefix>.chip.png, .panel.png and .settings.png. Text checks run in English; OPAD_LANG=ar checks the same
+// structure (kinds, states, counts) and that no row shows English sentences.
+#include <QComboBox>
 #include <QCoreApplication>
 #include <QDialog>
+#include <QFrame>
+#include <QLabel>
+#include <QMenu>
+#include <QRegularExpression>
+#include <QToolButton>
 #include <QLocalSocket>
 #include <QTimer>
+#include <algorithm>
 #include <memory>
 
 #include "AgentBridge.hpp"
+#include "AnnotationsPanel.hpp"
 #include "AreaController.hpp"
 #include "BenchRegistry.hpp"
 #include "I18n.hpp"
 #include "MainWindow.hpp"
+#include "PropertiesPanel.hpp"
+#include "Viewport.hpp"
 #include "TimelineWidget.hpp"
 #include "Toast.hpp"
 #include "ToolPanel.hpp"
@@ -32,10 +47,25 @@ void require(bool ok, const QString& why) {
 
 OPAD_BENCH(OPAD_BENCH_AGENT_ACTIVITY, agentActivity) {
   auto* agent = w.findChild<AgentBridge*>();
-  return agent && agent->benchActivity(value);
+  MainWindow* win = &w;
+  // Properties pinned open, as a click on a timeline marker shows the step there: its author line.
+  auto propertiesLine = [win](const std::string& op) {
+    const auto pin = [win](bool on) {
+      for (QToolButton* b : win->m_propsPanel->findChildren<QToolButton*>())
+        if (b->isCheckable()) b->setChecked(on);  // pinned: it stays open for the op (a new selection closes it otherwise)
+    };
+    pin(true);
+    win->m_propsPanel->show();
+    win->selectOpTargets(op);
+    const QString line = win->m_props->subtitle();
+    pin(false);
+    win->m_propsPanel->hide();
+    return line;
+  };
+  return agent && agent->benchActivity(value, propertiesLine);
 }
 
-bool AgentBridge::benchActivity(const QString& prefix) {
+bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(const std::string&)> propertiesLine) {
   static bool started = false;
   if (std::exchange(started, true)) return true;
   struct State {
@@ -47,7 +77,9 @@ bool AgentBridge::benchActivity(const QString& prefix) {
     bool waiting = false;
     std::string transaction;
     unsigned long long base = 0;
-    quint64 group = 0, firstBox = 0;
+    quint64 group = 0, firstBox = 0, shown = 0;
+    json away;  // a camera far from the model: Show moves off it, Back returns to it
+    quint64 retry = 0;  // a row left saying "Retrying…"
     size_t rows = 0;
     QElapsedTimer clock;
   };
@@ -80,8 +112,18 @@ bool AgentBridge::benchActivity(const QString& prefix) {
       if (t->text().contains(text)) return true;
     return false;
   };
+  auto noRunning = [events] {
+    return std::none_of(events().begin(), events().end(), [](const ActivityEvent& e) { return e.kind == ActivityEvent::Running; });
+  };
   auto anyToast = [this] { return m_services && m_services->toasts() && !m_services->toasts()->toasts().isEmpty(); };
   auto chipText = [this] { return m_chip ? agentsay::plain(m_chip->text()) : QString(); };
+  // The viewport's preview chip (AgentArea.cpp): shown (not hidden: the bench window itself is), its words, its Discard.
+  auto preview = [this]() -> QFrame* { return m_window->findChild<QFrame*>(QStringLiteral("aiPreviewChip")); };
+  auto previewShown = [preview] { return preview() && !preview()->isHidden(); };
+  auto previewText = [preview] {
+    auto* label = preview() ? preview()->findChild<QLabel*>(QStringLiteral("aiPreviewText")) : nullptr;
+    return label ? label->text() : QString();
+  };
   auto box = [st](json extra = json::object()) {
     json args = {{"kind", "box"}, {"inputs", {{"length", "40 mm"}, {"width", "20 mm"}, {"height", "10 mm"}}}, {"expected_revision", st->base}};
     for (auto& [k, v] : extra.items()) args[k] = v;
@@ -150,6 +192,7 @@ bool AgentBridge::benchActivity(const QString& prefix) {
         const auto& e = last();
         require(e.kind == ActivityEvent::Look && !e.thumb.isNull() && e.thumb.width() <= 96 && e.thumb.height() <= 64, "a look row with a 96 x 64 thumbnail");
         if (english) require(agentsay::plain(e.text) == "Looked at the model from the front", "the look's sentence: " + agentsay::plain(e.text));
+        require(preview() && !previewShown(), "no preview chip while nothing is staged");
         pass("a look row with its picture");
         tool("transaction_begin", {{"label", "Mounting block"}, {"expected_revision", st->base}}, true);
         return true;
@@ -162,6 +205,11 @@ bool AgentBridge::benchActivity(const QString& prefix) {
         require(e.kind == ActivityEvent::Group && e.state == ActivityEvent::Staged, "a staged group row");
         if (english) require(agentsay::plain(e.text).contains("Mounting block") && agentsay::plain(e.second).startsWith("Preview, not applied yet"), "the group's words: " + agentsay::plain(e.text) + " / " + e.second);
         st->group = e.id;
+        require(previewShown(), "the viewport's preview chip while a task is staged");
+        if (english) {
+          require(previewText() == "Claude's preview · not applied", "the preview chip's words: " + previewText());
+          require(preview()->toolTip().contains("No steps yet."), "the preview chip's tooltip before a step: " + preview()->toolTip());
+        }
         tool("feature", box({{"transaction", st->transaction}}), true);
         return true;
       },
@@ -174,13 +222,18 @@ bool AgentBridge::benchActivity(const QString& prefix) {
           require(agentsay::plain(g->children[0]) == "Added a 40 × 20 × 10 mm box", "the step's sentence: " + agentsay::plain(g->children[0]));
           require(chipText() == "Claude · preview", "the chip while a preview waits: " + chipText());
         }
+        require(previewShown() && preview()->toolTip().contains(g->children[0]), "the preview chip's tooltip lists the step: " + preview()->toolTip());
         pass("a task is one group row, its steps under it, not applied yet");
-        emit m_feed->activated(st->group, QStringLiteral("discard"));  // the user's Discard
+        auto* discard = preview()->findChild<QToolButton*>(QStringLiteral("chipAction"));
+        require(discard, "the preview chip's Discard");
+        discard->click();  // the user's Discard, on the viewport's chip (the group row's discard)
         return true;
       },
       [=, this] {  // Discard drops it
         const auto* g = row(st->group);
         require(g && g->state == ActivityEvent::Dropped && !m_prepared, "Discard drops the task");
+        require(!previewShown(), "the preview chip goes with the preview");
+        pass("the viewport's preview chip: its words, the steps in its tooltip, Discard");
         if (english) {
           require(g->second == "Discarded by you. Nothing changed.", "the dropped line: " + g->second);
           require(chipText() == "Claude", "the chip after Discard: " + chipText());
@@ -245,6 +298,79 @@ bool AgentBridge::benchActivity(const QString& prefix) {
         const auto* first = row(st->firstBox);
         require(first && !first->canUndo && last().canUndo, "Undo only on the newest step");
         pass("a change reads as what was done; Undo only on the newest step; the step names its AI");
+        // Properties: who made the step and when.
+        const std::string firstOp = first->op;
+        const QString line = agentsay::plain(propertiesLine(firstOp));
+        if (english) {
+          static const QRegularExpression aiLine(QStringLiteral("^Claude \\(AI\\) · \\d\\d:\\d\\d$"));
+          require(aiLine.match(line).hasMatch(), "the Properties author line: " + line);
+        } else {
+          require(line.contains("Claude") && !line.contains("Agent"), "the Properties author line names Claude: " + line);
+        }
+        // The timeline marker's Show in AI activity: the panel opens on the step's row.
+        require(rowForOp(firstOp) == st->firstBox, "the first box's step finds its row");
+        QMenu menu;
+        m_services->timelineMenu(menu, firstOp);
+        QAction* reveal = nullptr;
+        for (QAction* a : menu.actions())
+          if (a->objectName() == QLatin1String("timelineAiActivity")) reveal = a;
+        require(reveal && reveal->isEnabled(), "Show in AI activity on an AI step's marker, enabled");
+        if (english) require(reveal->text() == "Show in AI activity", "the entry's words: " + reveal->text());
+        reveal->trigger();
+        require(m_panel->isVisible() && m_feed->revealed() == st->firstBox, "Show in AI activity opens the panel on the step's row");
+        pass("Properties says Claude (AI) and when; the timeline marker's Show in AI activity");
+        // Show on a change row: Back returns to the camera it left.
+        const json camera = m_viewport->cameraJson();
+        require(!camera.is_null(), "a camera");
+        json away = camera;
+        for (const char* key : {"eye", "target"}) away[key][0] = camera[key][0].get<double>() + 500.0;
+        away["scale"] = camera.value("scale", 1.0) * 4.0;
+        m_viewport->setCameraJson(away);
+        st->away = m_viewport->cameraJson();
+        st->shown = last().id;
+        rowAction(st->shown, QStringLiteral("show"));
+        require(m_feed->showing() == st->shown && !sameCamera(m_viewport->cameraJson(), st->away), "Show frames the change and offers Back");
+        if (english) require(m_feed->actionsOf(st->shown).startsWith("Back|"), "the row's buttons after Show: " + m_feed->actionsOf(st->shown));
+        return true;
+      },
+      [=, this] {  // Back: the camera Show left
+        if (m_shownCamera.is_null()) return false;  // the watch took the camera Show rested at
+        rowAction(st->shown, QStringLiteral("back"));
+        require(sameCamera(m_viewport->cameraJson(), st->away) && m_feed->showing() == 0, "Back puts the camera back");
+        if (english) require(m_feed->actionsOf(st->shown).startsWith("Show|"), "the row's buttons after Back: " + m_feed->actionsOf(st->shown));
+        rowAction(st->shown, QStringLiteral("show"));
+        require(m_feed->showing() == st->shown, "Show again offers Back again");
+        return true;
+      },
+      [=, this] {  // the user moves the camera: Back goes
+        if (m_shownCamera.is_null()) return false;
+        m_viewport->setCameraJson(st->away);
+        return true;
+      },
+      [=, this] {
+        if (m_feed->showing() != 0) return false;
+        if (english) require(m_feed->actionsOf(st->shown).startsWith("Show|"), "the row reads Show once the camera moved: " + m_feed->actionsOf(st->shown));
+        pass("Show keeps the camera, Back restores it, a camera move turns Back into Show");
+        // A note by the assistant: the Annotations panel's author filter has "AI".
+        const auto* shown = row(st->shown);
+        require(shown && !shown->subjects.empty(), "a body to pin a note to");
+        tool("annotate", {{"anchor", shown->subjects.front()}, {"text", "Check this wall"}, {"expected_revision", m_doc->revision}}, true);
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "a note: " + QString::fromStdString(st->reply.dump()));
+        auto* notes = m_window->findChild<AnnotationsPanel*>();
+        require(notes, "the Annotations panel");
+        notes->rebuild();
+        QComboBox* authors = notes->authorFilter();
+        const int ai = authors->findData(QStringLiteral("Agent"));
+        require(ai > 0, "an AI entry in the author filter");
+        if (english) require(authors->itemText(ai) == "AI", "the entry's words: " + authors->itemText(ai));
+        authors->setCurrentIndex(ai);
+        require(notes->shownCount() == 1, QStringLiteral("AI shows the assistant's note (%1)").arg(notes->shownCount()));
+        authors->setCurrentIndex(0);
+        pass("Annotations: an AI entry in the author filter");
         showActivity();
         require(m_panel->isVisible() && m_chip->state().count == 0, "Show clears the count");
         return true;
@@ -265,6 +391,9 @@ bool AgentBridge::benchActivity(const QString& prefix) {
         if (english) require(chipText() == "Claude · working", "the chip while it works: " + chipText());
         userStop();
         require(last().kind == ActivityEvent::Divider, "Stop's divider");
+        // Job::cancel runs the call's done callback at once: its row went with it, nothing says "working".
+        require(!m_running && noRunning() && !m_busy, "no row left running after Stop");
+        if (english) require(chipText() == "Claude", "the chip after Stop: " + chipText());
         if (english) {
           require(agentsay::plain(last().text).startsWith("You stopped Claude"), "the divider: " + last().text);
           require(toastWith("Stopped Claude. Changes it already made stay"), "Stop's toast");
@@ -275,7 +404,65 @@ bool AgentBridge::benchActivity(const QString& prefix) {
       [=, this] {
         if (!answered()) return false;
         require(st->reply.value("isError", false), "the stopped call did not commit");
-        pass("Stop: its divider and toast; the call did not commit");
+        require(!m_running && noRunning(), "still no row running once the stopped call replied");
+        pass("Stop: its divider and toast; the call did not commit; no row left running");
+        tool("undo", json::object(), true);
+        return true;
+      },
+      [=, this] {  // undo / redo replies name an AI step as they always did
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "undo: " + QString::fromStdString(st->reply.dump()));
+        const auto undone = QString::fromStdString(st->reply["structuredContent"]["result"].value("undone", ""));
+        if (english) require(undone == "Agent: annotate", "the undo reply's label, as before: " + undone);
+        else require(!undone.contains("Claude"), "the undo reply's label is not the window's: " + undone);
+        tool("redo", json::object(), true);
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "redo: " + QString::fromStdString(st->reply.dump()));
+        const auto redone = QString::fromStdString(st->reply["structuredContent"]["result"].value("redone", ""));
+        if (english) require(redone == "Agent: annotate", "the redo reply's label, as before: " + redone);
+        pass("undo / redo replies keep their labels");
+        // A failure names the call that failed, not another connection's call refused meanwhile.
+        ActivityEvent e;
+        e.kind = ActivityEvent::Running;
+        e.text = QStringLiteral("Filleting the test part…");
+        m_running = post(e);
+        m_call.running = QStringLiteral("Something else…");
+        failed("invalid_operation", QStringLiteral("boom"));
+        require(!m_running && last().kind == ActivityEvent::Quiet && last().text.contains("Filleting the test part") && !last().text.contains("Something else"),
+                "the failure row names its own call: " + last().text);
+        // Edits allowed from the menu: the needs-you row asking for them goes.
+        setAccess(true, false);
+        needsYou(QStringLiteral("Needs edits"), QString(), QStringLiteral("allowEdit"), QStringLiteral("Allow changes"), QString());
+        const quint64 asking = m_needs;
+        require(asking && row(asking), "a needs-you row");
+        setAccess(true, true);
+        require(!m_needs && !row(asking), "Look and edit chosen elsewhere ends the needs-you row");
+        // A third retryable failure of a running call in 20 s leaves "Retrying…" until the next call.
+        for (int i = 0; i < 3; ++i) {
+          ActivityEvent r;
+          r.kind = ActivityEvent::Running;
+          r.text = QStringLiteral("Adding a box…");
+          m_running = post(r);
+          st->retry = m_running;
+          failed("snapshot_failed", QStringLiteral("busy"));
+        }
+        require(st->retry && m_retrying == st->retry && row(st->retry), "a Retrying row");
+        // A commit that fails (a read-only document): its row says so, none stays running.
+        m_doc->readOnly = true;
+        st->base = m_doc->revision;
+        tool("feature", box({{"inputs", {{"x", "200 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}), true);
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        m_doc->readOnly = false;
+        require(failedWith("commit_failed"), "a read-only document's commit fails: " + QString::fromStdString(st->reply.dump()));
+        require(!row(st->retry) && !m_retrying, "the next call's row replaced the Retrying one");
+        require(!m_running && noRunning() && last().kind == ActivityEvent::Quiet, "the failed commit's row says so, none left running");
+        pass("failures name their own call; needs-you ends when edits are allowed; Retrying goes; a failed commit's row");
         settings(0);
         return true;
       },

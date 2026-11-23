@@ -26,14 +26,17 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
   your units: "Looked at the model from the front", "Added a 40 × 20 × 10 mm box", "Filleted 4 edges of Bracket, 2 mm".
   Lookups fold into one line, a picture the assistant took shows as a thumbnail, and a task it does in several steps is
   one entry with its steps under it. Hover an entry to light up its part, Show frames it, and Undo takes it back while it
-  is the latest step. The panel never opens by itself.
+  is the latest step, or Back returns the view to where it was until you move it. The panel never opens by itself.
+- **An AI preview shows in the view.** While the assistant shows a preview or works on a task, a chip at the top left
+  of the view says "Claude's preview · not applied", lists its steps when you point at it, and its *Discard* drops it.
 - **The AI chip** in the status bar carries a new AI mark and says what is going on in a word or two: *Connect AI*,
   *AI ready*, *Claude*, *Claude · working*, *Claude · preview*, *Claude needs you*, with a count of changes made while the
   panel was closed. Its menu stops the assistant, sets what it may do, pauses its changes for now, or disconnects it.
 - **When the assistant needs you**, one entry says so in amber with one button: for example, if it may only look and
   tries to change something, *Allow changes* lets it. Errors it fixes by itself no longer fill the panel.
-- **Steps an AI made** carry its mark in the timeline, their tooltip names the assistant, and Undo reads
-  "Undo Claude: Added …". The assistant's name is saved with the step.
+- **Steps an AI made** carry its mark in the timeline, their tooltip and Properties name the assistant and the time
+  ("Claude (AI) · 14:02"), and Undo reads "Undo Claude: Added …". The assistant's name is saved with the step. A step's
+  right-click menu has *Show in AI activity*, and the Annotations panel can show only the AI's notes (author *AI*).
 - **Settings > AI assistants** (was AI integration) sets up Claude Code, Claude Desktop or Codex with one click, shows
   whether each is ready, and gives a sentence to try. Setup for other apps moved to *Other AI apps*.
 - **Version control in a folder of its own.** Setting up version control for a document that shares its folder with

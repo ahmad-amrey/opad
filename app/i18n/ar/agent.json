@@ -462,5 +462,11 @@
  "Preview, not applied yet": "معاينة، لم تُطبَّق بعد",
  "Dropped: the design changed first. Nothing changed.": "أُلغي: تغيّر التصميم أولًا. لم يتغير شيء.",
  "An AI app on this computer (Claude Code, Claude Desktop, Codex…) can look at the open design and, if you allow it, change it.": "يستطيع تطبيق ذكاء اصطناعي على هذا الحاسوب (Claude Code أو Claude Desktop أو Codex…) النظر إلى التصميم المفتوح، وتغييره إن سمحتَ له.",
- "%1 (AI)": "%1 (ذكاء اصطناعي)"
+ "%1 (AI)": "%1 (ذكاء اصطناعي)",
+ "AI": "الذكاء الاصطناعي",
+ "Show in AI activity": "إظهار في نشاط الذكاء الاصطناعي",
+ "Drop the preview. Your design doesn't change.": "تجاهل المعاينة. لن يتغير تصميمك.",
+ "%1's preview · not applied": "معاينة %1 · لم تُطبَّق",
+ "No steps yet.": "لا خطوات بعد.",
+ "Replaced by a new task. Nothing changed.": "حلّت محلها مهمة جديدة. لم يتغير شيء."
 }

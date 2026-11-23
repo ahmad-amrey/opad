@@ -180,6 +180,8 @@ void PropertiesPanel::showEntity(const QString& title, const QString& subtitle, 
   fill();
 }
 
+QString PropertiesPanel::subtitle() const { return m_subtitle->text(); }
+
 // Vectors are laid out for the value column's width (one line, or a row per component): redo them when it changes.
 // The width is the table viewport's, which settles after the panel's own resize (and moves with the scroll bar).
 bool PropertiesPanel::eventFilter(QObject* o, QEvent* e) {

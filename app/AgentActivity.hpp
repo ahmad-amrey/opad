@@ -38,6 +38,7 @@ struct ActivityEvent {
   QStringList children;      // a fold's lookups, a group's steps
   std::vector<std::string> subjects;  // bodies: hover tint, Show, Select
   std::string op;            // the step it made (Undo, Show in timeline)
+  std::vector<std::string> ops;  // every step its commit made (a task's several): the timeline's Show in AI activity finds it
   QString client;            // the assistant's short name (a tag on the row while several are connected)
   QString action, actionText;  // a needs-you row's button: "allowEdit", "save"
   QString details;           // raw text (Details, Copy details)
@@ -80,13 +81,19 @@ class ActivityPanel : public QWidget {
   void setMultiple(bool on);   // several assistants: each row carries its name
   void refreshRows();          // canUndo / canShow / tags changed
   void scrollToEnd();
+  // Show on a change row saved the camera: that row's button reads Back until the camera moves (0: none).
+  void setShowing(quint64 id);
+  quint64 showing() const { return m_showing; }
+  void reveal(quint64 id);     // scrolled into view and focused (its actions show): the timeline's Show in AI activity
+  quint64 revealed() const { return m_revealed; }  // the row reveal() went to last (benches)
+  QString actionsOf(quint64 id) const;  // the row's action buttons' texts, "|"-joined (benches: "Show|Undo", "Back|Undo")
   QStringList lines() const;   // the rows as text, oldest first (benches, Copy activity as text)
   QPushButton* stopButton() const { return m_stop; }
   QCheckBox* followBox() const { return m_follow; }
   static constexpr int kMaxRows = 100;
  signals:
   void hovered(quint64 id);  // 0: off every row
-  void activated(quint64 id, const QString& action);  // show, undo, timeline, select, copy, dismiss, notNow, discard, or a needs-you action
+  void activated(quint64 id, const QString& action);  // show, back, undo, timeline, select, copy, dismiss, notNow, discard, or a needs-you action
   void stopRequested();
   void followToggled(bool on);
   void stripMenuRequested(const QPoint& global);
@@ -120,6 +127,7 @@ class ActivityPanel : public QWidget {
   QPushButton* m_stop;
   Strip m_stripState;
   bool m_multiple = false;
+  quint64 m_showing = 0, m_revealed = 0;
 };
 
 // The status bar's AI chip: the mark, a word or two, an optional glyph (look only: an eye; needs you: a warning) and a count

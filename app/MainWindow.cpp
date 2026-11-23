@@ -59,15 +59,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_agent,&AgentBridge::openRequested,this,[this](const QString& path){openPath(path);});  // open_document / new_document
   m_agent->setServices(&m_areaServices);
   m_agent->bench();
-  // The AI chip (AgentActivity.hpp): never set up, it opens Connect; otherwise its menu (stop, access, pause, activity).
-  statusBar()->addPermanentWidget(m_agent->chip());
-  // The selection is published only while agent access is on (UI-06): at once when it comes on, and the file goes with it.
-  connect(m_agent,&AgentBridge::statusChanged,this,[this]{
-    if(std::exchange(m_selPublishing,m_agent->publishesSelection())==m_selPublishing)return;
-    if(m_selPublishing)scheduleSelectionSync();
-    else unpublishSelection();
-  });
-  m_selPublishing=m_agent->publishesSelection();
+  // The AI chip, the viewport's preview chip and the selection published while AI access is on (UI-06): AgentArea.cpp.
   connect(m_recovery,&RecoveryManager::status,this,[this](const QString& text){statusBar()->showMessage(text,8000);});
 
   connect(m_doc, &AppDocument::aboutToReplace, this, [this] {

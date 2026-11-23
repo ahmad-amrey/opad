@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QDateTime>
 #include <QInputDialog>
 #include <QMenu>
 #include <QMessageBox>
@@ -13,6 +14,7 @@
 #include <functional>
 #include <set>
 
+#include "AgentSentences.hpp"
 #include "CommandHelp.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
@@ -349,6 +351,7 @@ void MainWindow::selectOpTargets(const std::string& opId) {
   if (!m_propsPanel->isVisible()) return;  // pinned open: show the operation itself
   m_propsPanel->setContext(QString::fromStdString(opId.substr(0, 8)));
   m_props->setSubject({{}, opId});
-  m_props->showEntity(m_timeline->describe(*op), QString::fromUtf8("%1 · %2").arg(QString::fromStdString(d.value("by", "")), i18n::localTime(d.value("ts", ""))),
+  // Who and when: "Claude (AI) · 14:02" for an AI assistant's step (its name saved as ai_client), a person's as saved.
+  m_props->showEntity(m_timeline->describe(*op), agentsay::authorLine(d, QDateTime::currentDateTime()),
                       QString::fromStdString(opId.substr(0, 8)), d);
 }
