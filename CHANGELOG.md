@@ -11,6 +11,13 @@ as a commit log.
 - **Ellipse dimensions.** An ellipse in a sketch takes a major and a minor radius dimension, with expressions like any
   other, so a parametric ellipse no longer needs an equation spline. The Dimension tool picks the radius nearer where
   you click the ellipse.
+- **Sharper edge and face rules.** A rule can take what reaches into a box (`bounds_mode` "intersects") or stays out of it
+  ("outside"), leave a side of the box open, pick edges and faces by length or area, and tell a ring's inner rim from its
+  outer one (`loop` "inner" / "outer").
+
+### Changed
+- **Rules follow parameters.** The lengths in an edge or face rule (a plane's height, the box, the radius and length
+  limits) may be expressions such as `height` or `w / 2`, and the rule matches again when a parameter changes.
 
 ## [0.10.1] - 2026-11-22
 

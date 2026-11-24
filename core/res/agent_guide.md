@@ -156,6 +156,12 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   matched. Example: the four top edges of a box of height 20: `{"curve": "line", "at_plane": {"axis": "z", "value":
   20}}` with `"expect": 4`. `query_entities` returns what it matched as such a `rule`, ready to pass as an input; a
   feature given face/edge indices answers with a warning that points to it.
+- Rule values that are lengths (`radius_min/max`, `length_min/max`, `at_plane`'s value, `bounds` coordinates) may be
+  expressions of the parameters: `{"at_plane": {"axis": "z", "value": "height"}}` follows `height` when it changes.
+  `bounds_mode` "intersects" takes what reaches into the box, "outside" what stays out of it (default "inside": wholly
+  in it); a `null` coordinate leaves that side open (`"min": [null, null, 100]`). `length_min/max` (edges) and
+  `area_min/max` (faces, mm²) tell the outer and inner rim of a ring apart by size; `"loop": "inner"` picks the edges on
+  a hole of a face (a ring face's inner rim, a pocket's rim), `"outer"` every other edge.
 - Recognised details as a rule (faces only): `"select": {"recognized": "hole", "diameter": 6, "through": true}` is
   every face of the body's holes of that size; also `fillet` (`radius`), `chamfer` (`distance`), `wall`
   (`thickness`), `boss`, `pocket`; hole `type` simple|counterbore|countersink, `depth`, `cb_diameter`,

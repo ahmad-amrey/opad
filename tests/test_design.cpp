@@ -1494,6 +1494,62 @@ TEST(rule_selectors_pick_the_same_edges_after_an_earlier_edit) {
   CHECK(s.unresolved.empty());
 }
 
+// A rule's values follow the parameters (at_plane "h"), and rules tell a ring's two rims apart: by loop, by length, by
+// a box an edge reaches into (bounds_mode).
+TEST(rule_selectors_take_expressions_loops_lengths_and_bounds_modes) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "h"}, {"expr", "10 mm"}}, &doc);
+  const std::string body = feature_cmd(doc, "cylinder", {{"diameter", "20 mm"}, {"height", "h"}})["body_ids"][0];
+  feature_cmd(doc, "cylinder", {{"plane", {{"origin", {0, 0, -1}}, {"normal", {0, 0, 1}}}}, {"diameter", "10 mm"}, {"height", "h + 2 mm"},
+                                {"operation", "cut"}, {"targets", json::array({body})}});
+  auto edges = [&](const json& select) {
+    const json found = agent::query_entities(doc, resolve(doc), {{"body", body}, {"kind", "edge"}, {"filters", select}});
+    return found["total"].get<int>();
+  };
+  const json top = {{"curve", "circle"}, {"at_plane", {{"axis", "z"}, {"value", "h"}}}};
+  CHECK_EQ(edges(top), 2);
+  json inner = top, outer = top, longer = top, reaching = top, away = top;
+  inner["loop"] = "inner";
+  outer["loop"] = "outer";
+  CHECK_EQ(edges(inner), 1);
+  CHECK_EQ(edges(outer), 1);
+  longer["length_min"] = "2 * pi * 7 mm";  // between the rims' 31.4 and 62.8 mm
+  CHECK_EQ(edges(longer), 1);
+  // The box x >= 8: only the outer rim (radius 10) reaches into it; the inner one (radius 5) stays out.
+  reaching["bounds"] = {{"min", {8, nullptr, nullptr}}, {"max", {nullptr, nullptr, nullptr}}};
+  reaching["bounds_mode"] = "intersects";
+  CHECK_EQ(edges(reaching), 1);
+  away["bounds"] = reaching["bounds"];
+  away["bounds_mode"] = "outside";
+  CHECK_EQ(edges(away), 1);
+  CHECK_THROWS(edges({{"loop", "middle"}}));
+  // A rule whose at_plane is an expression follows the parameter alone, the body unchanged: the fingerprint sees its value.
+  {
+    Document d = Document::create();
+    commands::run("param", {{"name", "lid"}, {"expr", "20 mm"}}, &d);
+    const std::string b = feature_cmd(d, "box", {{"length", "40 mm"}, {"width", "30 mm"}, {"height", "20 mm"}})["body_ids"][0];
+    const json rule = {{"body", b}, {"kind", "edge"}, {"select", {{"curve", "line"}, {"at_plane", {{"axis", "z"}, {"value", "lid"}}}}}, {"expect", 4}};
+    const std::string f = feature_cmd(d, "fillet", {{"edges", json::array({rule})}, {"radius", "2 mm"}})["feature_id"];
+    commands::run("param", {{"name", "lid"}, {"expr", "0 mm"}}, &d);  // now the bottom edges
+    Scene ds = resolve(d);
+    CHECK(ds.feature(f)->error.empty());
+    double low = 1e9;
+    for (const auto& h : ds.feature(f)->result["selected"][0]["hints"]) low = std::min(low, h["c"][2].get<double>());
+    CHECK_NEAR(low, 0, 1e-6);
+  }
+  // A chamfer on the inner top rim by rule; the height changes and the rule still finds it at the new top.
+  const json rim = {{"body", body}, {"kind", "edge"}, {"select", inner}, {"expect", 1}};
+  const std::string chamfer = feature_cmd(doc, "chamfer", {{"edges", json::array({rim})}, {"distance", "1 mm"}})["feature_id"];
+  CHECK(resolve(doc).feature(chamfer)->error.empty());
+  const double before = total_volume(doc);
+  commands::run("param", {{"name", "h"}, {"expr", "14 mm"}}, &doc);
+  Scene s = resolve(doc);
+  CHECK(s.feature(chamfer)->error.empty());
+  CHECK_EQ(s.feature(chamfer)->result["selected"][0]["ordinals"].size(), 1u);
+  CHECK_NEAR(total_volume(doc) - before, M_PI * (100 - 25) * 4, 1e-6);  // 4 mm more ring, the same chamfer
+  CHECK(plan_regenerate(doc).ops.empty());  // nothing left out of date
+}
+
 // TODO 10 B8: extrude up to a face (a plane: its whole plane, also tilted) or up to a body.
 TEST(extrude_up_to_a_face_or_a_body) {
   Document doc = Document::create();

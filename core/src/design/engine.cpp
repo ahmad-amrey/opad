@@ -198,6 +198,39 @@ Ref::Kind entity_kind(const json& j) {
 }
 }  // namespace
 
+json evaluate_rule_filters(const ParamTable& params, const json& filters) {
+  if (!filters.is_object()) return filters;
+  json out = filters;
+  auto length = [&](json& v, const std::string& what) {
+    if (!v.is_string()) return;
+    try {
+      v = params.length(v.get<std::string>());
+    } catch (const std::exception& e) {
+      throw Error("the rule's " + what + ": " + e.what());
+    }
+  };
+  for (const char* key : {"radius_min", "radius_max", "length_min", "length_max"})
+    if (out.contains(key)) length(out[key], key);
+  for (const char* key : {"area_min", "area_max"})
+    if (out.contains(key) && out[key].is_string()) {
+      const std::string text = out[key].get<std::string>();
+      Quantity q;
+      try {
+        q = params.eval(text);
+      } catch (const std::exception& e) {
+        throw Error(std::string("the rule's ") + key + ": " + e.what());
+      }
+      if (q.angle || (q.len != 0 && q.len != 2)) throw Error(std::string("the rule's ") + key + ": \"" + text + "\" is not an area");
+      out[key] = q.value;  // mm² (a plain number is taken as mm²)
+    }
+  if (out.contains("at_plane") && out["at_plane"].is_object() && out["at_plane"].contains("value")) length(out["at_plane"]["value"], "at_plane value");
+  if (out.contains("bounds") && out["bounds"].is_object())
+    for (const char* side : {"min", "max"})
+      if (out["bounds"].contains(side) && out["bounds"][side].is_array())
+        for (auto& v : out["bounds"][side]) length(v, std::string("bounds ") + side);
+  return out;
+}
+
 // A rule selector: every face, edge or vertex of the body (as it is just before the feature) that passes the
 // query_entities filters in "select". "expect" and "ambiguity": "unique" make a different count fail visibly.
 std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
@@ -210,7 +243,10 @@ std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
   const json& filters = j.at("select");
   const double tolerance = j.value("tolerance_mm", 1e-5);
   // TODO 11 UI-97: {"recognized":"hole","diameter":6}: the faces of the matching recognised groups, then the filters.
-  const auto [recognition, rest] = split_recognized(filters);
+  const auto [recognition, given] = split_recognized(filters);
+  const json rest = evaluate_rule_filters(ctx.params, given);  // expressions follow the parameters
+  if (rest.contains("loop") && kind != Ref::Kind::Edge) throw Error("a \"loop\" rule picks edges: give kind \"edge\"");
+  const auto describe = entity_describer(shape, rest);
   std::vector<int> candidates;
   if (!recognition.is_null()) {
     if (kind != Ref::Kind::Face) throw Error("a \"recognized\" rule picks faces: give kind \"face\"");
@@ -221,7 +257,7 @@ std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
   std::vector<ResolvedRef> out;
   for (int i : candidates) {
     ctx.check_cancel();
-    if (entity_matches(describe_entity(map(i + 1)), rest, tolerance)) out.push_back({body, map(i + 1), i});
+    if (entity_matches(describe(map(i + 1)), rest, tolerance)) out.push_back({body, map(i + 1), i});
   }
   const std::string what = std::string(Ref::kind_name(kind)) + (out.size() == 1 ? "" : "s");
   if (out.empty()) throw Error("the rule " + filters.dump() + " matches no " + Ref::kind_name(kind) + " of the body");
@@ -595,6 +631,21 @@ struct Walk {
           s += in.name + "!" + e.what() + ";";
         }
       }
+    // Rule selectors whose values are expressions (at_plane "height", bounds ["w / 2", ...]): what they come to, so a
+    // parameter change matches again. Rules with plain numbers add nothing, keeping the fingerprints they had.
+    std::function<void(const json&)> rules = [&](const json& v) {
+      if (v.is_array())
+        for (const auto& x : v) rules(x);
+      else if (v.is_object() && v.contains("select") && v["select"].is_object()) {
+        const json given = split_recognized(v["select"]).second;
+        try {
+          if (const json value = evaluate_rule_filters(params, given); value != given) s += "rule=" + value.dump() + ";";
+        } catch (const std::exception& e) {
+          s += std::string("rule!") + e.what() + ";";
+        }
+      }
+    };
+    for (const auto& [name, value] : inputs.items()) rules(value);
     std::set<std::string> nodes, sketches, features;
     feature_refs(scene, kind, inputs, nodes, sketches, features);
     for (const auto& n : nodes) s += node_state(scene, n);
