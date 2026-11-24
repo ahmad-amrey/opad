@@ -258,6 +258,8 @@ QString SketchEditor::constraintTip(int id) const {
     case CT::Offset:
       name = tr("Offset distance"), does = tr("Keeps the offset copy at this distance from its chain, as one rigid piece");
       break;
+    case CT::MajorRadius: name = tr("Major radius dimension"), does = tr("Holds the ellipse's major radius"); break;
+    case CT::MinorRadius: name = tr("Minor radius dimension"), does = tr("Holds the ellipse's minor radius"); break;
   }
   if (c->is_dimension()) {
     name = tr("%1: %2").arg(name, dimensionText(*c));

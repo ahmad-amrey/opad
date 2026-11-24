@@ -5,6 +5,13 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
+## [Unreleased]
+
+### Added
+- **Ellipse dimensions.** An ellipse in a sketch takes a major and a minor radius dimension, with expressions like any
+  other, so a parametric ellipse no longer needs an equation spline. The Dimension tool picks the radius nearer where
+  you click the ellipse.
+
 ## [0.10.1] - 2026-11-22
 
 Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,

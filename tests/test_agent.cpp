@@ -122,8 +122,10 @@ int main(){try {
   // Offset relationship (measured 158654 live, 89500 headless): sketch_tool's offset holds its copy by an editable offset
   // dimension (inputs.relation).
   // git_init's own_folder (measured 158967 live): a shared folder refused unless it says move or stay.
-  CHECK(live<159100);  // 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
-  CHECK(headless<89950);  // 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
+  // Rules, mirror names and ellipse dimensions (measured 159596 live, 90277 headless): query_entities' length/area/loop/bounds_mode filters and
+  // expressions, the mirror's name_map, the major_radius/minor_radius ellipse dimensions.
+  CHECK(live<159750);  // 159100 before rules, mirror names and ellipse radii; 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  CHECK(headless<90450);  // 89950 before rules, mirror names and ellipse radii; 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});

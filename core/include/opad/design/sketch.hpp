@@ -76,9 +76,11 @@ struct SkConstraint {
     Diameter,       // [circle|arc]
     Angle,          // [line, line], between their directions p0->p1, 0..pi
     ArcLength,      // [arc], counter-clockwise length
-    Offset          // [source curve, ..., offset curve, ...] (an offset relationship): the first `sources` refs offset by
+    Offset,         // [source curve, ..., offset curve, ...] (an offset relationship): the first `sources` refs offset by
                     // `value` (negative: the other side) gave the rest. Held like Rigid (the curves keep their shape and move
                     // and turn together); a new value rebuilds the offset curves from the sources (refresh_offsets)
+    MajorRadius,    // [ellipse]: its centre to the end of its major axis (p[0] to p[1])
+    MinorRadius     // [ellipse]: its minor half-axis (r)
   };
   int id = 0;
   Type type = Type::Coincident;

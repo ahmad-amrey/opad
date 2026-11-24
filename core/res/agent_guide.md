@@ -81,7 +81,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - Curves share points by id: two lines meeting at point 3 are joined; no coincident constraint is needed.
 - Constraints, `refs` lists ids: `coincident horizontal vertical parallel perpendicular collinear tangent equal
   concentric midpoint symmetric fix smooth curvature`; dimensions `distance hdistance vdistance radius diameter angle
-  arc_length` take `value` (mm, or radians for angles) and optionally `expr` (`"width / 2"`), which then drives it.
+  arc_length major_radius minor_radius` take `value` (mm, or radians for angles) and optionally `expr` (`"width / 2"`),
+  which then drives it. An ellipse is dimensioned by `major_radius` and `minor_radius` (`[ellipse]`), not `radius`.
 - `smooth` (G2) and `curvature` join a spline's end to another spline, a line, a circle or an arc: smooth puts the end on
   it, along it and bending as it does, curvature only bends it so (straight by a line); `tangent` takes a spline too.
   These take open control-point splines of degree 2 or more (`degree` given), not fit splines. Both curves move as

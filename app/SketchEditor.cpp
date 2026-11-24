@@ -1650,7 +1650,7 @@ void SketchEditor::rebuild() {
       bool held = false;
       for (const auto& c : m_sk.constraints)
         if (!c.reference && std::find(c.refs.begin(), c.refs.end(), e.id) != c.refs.end() &&
-            (c.type == SkConstraint::Type::Radius || c.type == SkConstraint::Type::Diameter || c.type == SkConstraint::Type::Equal || c.type == SkConstraint::Type::Tangent || c.type == SkConstraint::Type::Coincident || c.type == SkConstraint::Type::Fix || c.type == SkConstraint::Type::Rigid))
+            (c.type == SkConstraint::Type::Radius || c.type == SkConstraint::Type::Diameter || c.type == SkConstraint::Type::MinorRadius || c.type == SkConstraint::Type::Equal || c.type == SkConstraint::Type::Tangent || c.type == SkConstraint::Type::Coincident || c.type == SkConstraint::Type::Fix || c.type == SkConstraint::Type::Rigid))
           held = true;
       free = free || !held;
     }
@@ -1912,6 +1912,20 @@ void SketchEditor::rebuild() {
           d.thin.push_back({W(ex, ey), W(ex - s * (tx * 9 - nx * 3) * px, ey - s * (ty * 9 - ny * 3) * px), col});
           d.thin.push_back({W(ex, ey), W(ex - s * (tx * 9 + nx * 3) * px, ey - s * (ty * 9 + ny * 3) * px), col});
         }
+      }
+    } else if ((c.type == T::MajorRadius || c.type == T::MinorRadius) && !c.refs.empty()) {
+      // The half-axis it holds, from the centre to the curve (the minor one on the label's side), then on to the label.
+      const SkEntity* e = m_sk.entity(c.refs[0]);
+      if (e && e->p.size() > 1 && P(e->p[0], ax, ay) && P(e->p[1], bx, by)) {
+        const double mx = bx - ax, my = by - ay, major = std::max(1e-12, std::hypot(mx, my));
+        double ex = bx, ey = by;
+        if (c.type == T::MinorRadius) {
+          const double side = (lv - ay) * mx - (lu - ax) * my < 0 ? -1 : 1;
+          ex = ax - my / major * e->r * side;
+          ey = ay + mx / major * e->r * side;
+        }
+        d.thin.push_back({W(ax, ay), W(ex, ey), col});
+        d.thin.push_back({W(ex, ey), W(lu, lv), col});
       }
     } else if ((c.type == T::Radius || c.type == T::Diameter) && !c.refs.empty()) {
       const SkEntity* e = m_sk.entity(c.refs[0]);

@@ -694,7 +694,7 @@ QString SketchEditor::option(const QString& key, const QString& fallback) const 
 QString SketchEditor::dimensionText(const SkConstraint& c) const {
   // An offset's sign only says which side the kernel went: its label shows the distance.
   QString value = c.type == CT::Angle ? units::compact(units::Kind::Angle, c.value * 180.0 / M_PI) : units::compact(units::Kind::Length, c.type == CT::Offset ? std::fabs(c.value) : c.value);
-  if (c.type == CT::Radius) value = "R" + value;
+  if (c.type == CT::Radius || c.type == CT::MajorRadius || c.type == CT::MinorRadius) value = "R" + value;
   if (c.type == CT::Diameter) value = QString::fromUtf8("Ø") + value;
   const bool plain = plainValue(QString::fromStdString(c.expr));
   if (!c.expr.empty() && !plain) value = QStringLiteral("fx: ") + value;
@@ -780,7 +780,14 @@ void SketchEditor::dimensionClick(const Hit& h, double u, double v) {
       else if (kindOf(id) == ET::Line) { c.type = CT::Distance; c.refs = {id}; }
       else if (kindOf(id) == ET::Circle) { c.type = CT::Diameter; c.refs = {id}; }
       else if (kindOf(id) == ET::Arc) { c.type = CT::Radius; c.refs = {id}; }
-      else { m_picked.clear(); ready = false; emit status(tr("Dimension: that curve cannot be dimensioned; use its points")); }
+      else if (kindOf(id) == ET::Ellipse) {  // the half-axis nearer the click: its major or its minor radius
+        const SkEntity* e = m_sk.entity(id);
+        const SkPoint *o = m_sk.point(e->p[0]), *a = m_sk.point(e->p[1]);
+        const double ax = a->x - o->x, ay = a->y - o->y, major = std::max(1e-12, std::hypot(ax, ay));
+        const double du = u - o->x, dv = v - o->y, along = (du * ax + dv * ay) / major, across = (dv * ax - du * ay) / major;
+        c.type = std::fabs(along) / major >= std::fabs(across) / std::max(1e-12, e->r) ? CT::MajorRadius : CT::MinorRadius;
+        c.refs = {id};
+      } else { m_picked.clear(); ready = false; emit status(tr("Dimension: that curve cannot be dimensioned; use its points")); }
     } else {
       const int a = m_picked[0], b = m_picked[1];
       const bool pa = m_sk.point(a) != nullptr, pb = m_sk.point(b) != nullptr;
@@ -796,7 +803,7 @@ void SketchEditor::dimensionClick(const Hit& h, double u, double v) {
       } else {
         m_picked.clear();
         ready = false;
-        emit status(tr("Dimension: pick a line, a circle, an arc, two points, a point and a line, or two lines"));
+        emit status(tr("Dimension: pick a line, a circle, an arc, an ellipse, two points, a point and a line, or two lines"));
       }
     }
     if (ready) {

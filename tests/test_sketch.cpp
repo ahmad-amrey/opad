@@ -813,6 +813,42 @@ TEST(sketch_reference_and_arc_length_dimensions) {
   CHECK(Sketch::from_json(sk.to_json()).constraint(radial)->reference);
 }
 
+TEST(sketch_ellipse_major_and_minor_radius_dimensions) {
+  Sketch sk;
+  const int o = sk.add_point(0, 0, true), a = sk.add_point(20, 0);
+  SkEntity el;
+  el.type = SkEntity::Type::Ellipse;
+  el.p = {o, a};
+  el.r = 8;
+  el.id = sk.next_id();
+  sk.entities.push_back(el);
+  sk.add_constraint(CT::Horizontal, {o, a});
+  // A radius on an ellipse names which one it means.
+  CHECK_THROWS(sk.add_constraint(CT::Radius, {el.id}, 5));
+  const int major = sk.add_constraint(CT::MajorRadius, {el.id}, 20, "width / 2");
+  const int minor = sk.add_constraint(CT::MinorRadius, {el.id}, 8, "depth / 2");
+  ParamTable params({{"width", "width", "50 mm", ""}, {"depth", "depth", "18 mm", ""}});
+  evaluate_dimensions(sk, params);
+  auto r = solve(sk);
+  CHECK(r.converged);
+  CHECK_NEAR(dist(sk, o, a), 25, 1e-7);
+  CHECK_NEAR(sk.entity(el.id)->r, 9, 1e-7);
+  CHECK_NEAR(dimension_value(sk, *sk.constraint(major)), 25, 1e-7);
+  CHECK_NEAR(dimension_value(sk, *sk.constraint(minor)), 9, 1e-7);
+  CHECK_EQ(r.dof, 0);
+  // Saved apart for older builds (a type they do not know), read back with their expressions.
+  const opad::json j = sk.to_json();
+  CHECK(j.contains("more_constraints") && j["more_constraints"].size() == 2);
+  Sketch back = Sketch::from_json(j);
+  CHECK(back.constraint(major) && back.constraint(major)->expr == "width / 2");
+  CHECK(back.constraint(minor) && back.constraint(minor)->type == CT::MinorRadius);
+  CHECK(SkConstraint::type_from_name("minor_radius") == CT::MinorRadius);
+  // A major radius on a circle does not fit.
+  Sketch round;
+  const int c = round.add_circle(round.add_point(0, 0), 3);
+  CHECK_THROWS(round.add_constraint(CT::MajorRadius, {c}, 3));
+}
+
 TEST(sketch_dimension_expression_dependencies) {
   Sketch sk;
   int o=sk.add_point(0,0,true), a=sk.add_point(5,0), b=sk.add_point(0,10);

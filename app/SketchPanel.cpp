@@ -337,7 +337,7 @@ void SketchPanel::buildFields() {
     field("weight",tr("Node weight"),"1");field("incoming",tr("Incoming handle weight"),"1");field("outgoing",tr("Outgoing handle weight"),"1");
   }
   if(m_shown=="dimension") {
-    if(!m_editor->m_dimEditing)choice("dimensionType",tr("Dimension type"),{{"auto",tr("Automatic")},{"distance",tr("Aligned distance")},{"hdistance",tr("Horizontal distance")},{"vdistance",tr("Vertical distance")},{"angle",tr("Angle")},{"radius",tr("Radius")},{"diameter",tr("Diameter")},{"arc_length",tr("Arc length")}});
+    if(!m_editor->m_dimEditing)choice("dimensionType",tr("Dimension type"),{{"auto",tr("Automatic")},{"distance",tr("Aligned distance")},{"hdistance",tr("Horizontal distance")},{"vdistance",tr("Vertical distance")},{"angle",tr("Angle")},{"radius",tr("Radius")},{"diameter",tr("Diameter")},{"arc_length",tr("Arc length")},{"major_radius",tr("Major radius")},{"minor_radius",tr("Minor radius")}});
     else field("expression",tr("Expression"),m_editor->m_dimEdit?m_editor->m_dimEdit->text():"10 mm");
     auto* reference=new QCheckBox(tr("Reference dimension"),this);m_fields->addRow(reference);
     reference->setChecked(m_editor->option("reference","0")=="1");
