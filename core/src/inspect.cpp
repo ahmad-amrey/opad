@@ -47,6 +47,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <queue>
 #include <memory>
 #include <set>
 
@@ -1153,6 +1154,134 @@ json shape_distance(const TopoDS_Shape& s1, const TopoDS_Shape& s2, const std::f
     j["tolerance_mm"] = 2 * deflection;
   }
   return j;
+}
+
+struct MeshSet {
+  Handle(BRepExtrema_TriangleSet) set;
+};
+
+std::shared_ptr<const MeshSet> mesh_set(const TopoDS_Shape& shape) {
+  // The faces that have a mesh: one the mesher left bare (a sliver on a big casting) is left out rather than the whole
+  // body falling back to exact distances, which took minutes per pair on the Engine's cylinder head.
+  BRepExtrema_ShapeList faces;
+  for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
+    TopLoc_Location loc;
+    const Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(TopoDS::Face(ex.Current()), loc);
+    if (tri.IsNull() || tri->NbTriangles() == 0) continue;
+    faces.Append(ex.Current());
+  }
+  if (faces.Size() == 0) return nullptr;
+  auto out = std::make_shared<MeshSet>();
+  out->set = new BRepExtrema_TriangleSet(faces);
+  if (out->set->Size() == 0 || out->set->BVH().IsNull()) return nullptr;  // the tree built now: read-only from here on
+  return out;
+}
+
+// Both trees walked together, nearest pair of boxes first (a heap), b's boxes and triangles moved into a's frame as
+// they are met; it ends when no pair of boxes left is nearer than the best so far.
+MeshGap mesh_distance(const MeshSet& a, const MeshSet& b, const Mat4& b_to_a, double relative, double exact_below, double stop_above,
+                      double enough) {
+  const double enough_sq = enough * enough;  // as near as that is near enough: faces lying on each other tie everywhere
+  const auto& ta = a.set->BVH();
+  const auto& tb = b.set->BVH();
+  auto map = [&](const BVH_Vec3d& p) {
+    const Vec3 q = b_to_a.apply({p.x(), p.y(), p.z()});
+    return BVH_Vec3d(q[0], q[1], q[2]);
+  };
+  auto box_b = [&](int node, BVH_Vec3d& lo, BVH_Vec3d& hi) {
+    const BVH_Vec3d& mn = tb->MinPoint(node);
+    const BVH_Vec3d& mx = tb->MaxPoint(node);
+    const double inf = std::numeric_limits<double>::infinity();
+    lo = BVH_Vec3d(inf, inf, inf), hi = BVH_Vec3d(-inf, -inf, -inf);
+    for (int c = 0; c < 8; ++c) {
+      const BVH_Vec3d p = map(BVH_Vec3d(c & 1 ? mx.x() : mn.x(), c & 2 ? mx.y() : mn.y(), c & 4 ? mx.z() : mn.z()));
+      lo = lo.cwiseMin(p), hi = hi.cwiseMax(p);
+    }
+  };
+  auto gap = [&](int na, const BVH_Vec3d& lo, const BVH_Vec3d& hi) {
+    const BVH_Vec3d& mn = ta->MinPoint(na);
+    const BVH_Vec3d& mx = ta->MaxPoint(na);
+    double s = 0;
+    for (int k = 0; k < 3; ++k) {
+      const double g = std::max({0.0, mn[k] - hi[k], lo[k] - mx[k]});
+      s += g * g;
+    }
+    return s;
+  };
+  double best = std::numeric_limits<double>::max();
+  // What a pair of boxes must come under to be opened: the best so far less what may be given away, `enough` (the meshes
+  // are no truer than that) and, above exact_below, the relative part.
+  const double stop_sq = stop_above * stop_above;
+  auto bar = [&] {
+    const double d = std::sqrt(best);
+    const double give = std::max(enough, d > exact_below ? d * relative / (1 + relative) : 0.0);
+    const double open = std::max(0.0, d - give);
+    return std::min(stop_sq, open * open);
+  };
+  BVH_Vec3d pa, pb;
+  struct Visit {
+    double sq;
+    int na, nb;
+  };
+  auto further = [](const Visit& x, const Visit& y) { return x.sq > y.sq; };
+  std::priority_queue<Visit, std::vector<Visit>, decltype(further)> stack(further);  // nearest boxes first
+  {
+    BVH_Vec3d lo, hi;
+    box_b(0, lo, hi);
+    stack.push({gap(0, lo, hi), 0, 0});
+  }
+  std::vector<BVH_Vec3d> moved;
+  while (!stack.empty() && best > enough_sq) {
+    const Visit v = stack.top();
+    stack.pop();
+    if (v.sq >= bar()) break;  // nothing near enough is left
+    const bool leaf_a = ta->IsOuter(v.na), leaf_b = tb->IsOuter(v.nb);
+    if (leaf_a && leaf_b) {
+      moved.clear();
+      for (int j = tb->BegPrimitive(v.nb); j <= tb->EndPrimitive(v.nb); ++j) {
+        BVH_Vec3d p[3];
+        b.set->GetVertices(j, p[0], p[1], p[2]);
+        for (const auto& q : p) moved.push_back(map(q));
+      }
+      for (int i = ta->BegPrimitive(v.na); i <= ta->EndPrimitive(v.na) && best > enough_sq; ++i) {
+        BVH_Vec3d p[3];
+        a.set->GetVertices(i, p[0], p[1], p[2]);
+        for (size_t j = 0; j + 2 < moved.size() && best > enough_sq; j += 3) {
+          BVH_Vec3d x, y;
+          const double d = triTri(p, &moved[j], x, y);
+          if (d < best) best = d, pa = x, pb = y;
+        }
+      }
+      continue;
+    }
+    // Split the side that is not a leaf (the larger box when neither is).
+    auto extent = [](const BVH_Vec3d& lo, const BVH_Vec3d& hi) { return (hi - lo).SquareModulus(); };
+    BVH_Vec3d lo, hi;
+    box_b(v.nb, lo, hi);
+    const bool split_a = leaf_b || (!leaf_a && extent(ta->MinPoint(v.na), ta->MaxPoint(v.na)) >= extent(lo, hi));
+    Visit c[2];
+    if (split_a) {
+      for (int k = 0; k < 2; ++k) {
+        const int child = k ? ta->Child<1>(v.na) : ta->Child<0>(v.na);
+        c[k] = {gap(child, lo, hi), child, v.nb};
+      }
+    } else {
+      for (int k = 0; k < 2; ++k) {
+        const int child = k ? tb->Child<1>(v.nb) : tb->Child<0>(v.nb);
+        BVH_Vec3d clo, chi;
+        box_b(child, clo, chi);
+        c[k] = {gap(v.na, clo, chi), v.na, child};
+      }
+    }
+    for (const auto& x : c)
+      if (x.sq < bar()) stack.push(x);
+  }
+  MeshGap out;
+  out.value = std::sqrt(best);
+  if (best > stop_sq) out.value = stop_above, out.above = true;  // no nearer than that: not looked for further
+  out.a = {pa.x(), pa.y(), pa.z()};
+  out.b = {pb.x(), pb.y(), pb.z()};
+  return out;
 }
 
 json measure_edge_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b,

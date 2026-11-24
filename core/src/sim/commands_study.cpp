@@ -66,7 +66,7 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
        {"kind", "motion|dynamic|static|modal|thermal|sweep"},
        {"name", "string"},
        {"settings", {{"type", "object"}, {"description", "see the agent guide, Motion and simulation"}}},
-       {"id", "string - an existing study: run it again (with settings: changed first)"},
+       {"id", "string - an existing study: run it again (settings: merged by key first)"},
        {"run", "bool - run it now (default true)"},
        {"series", {{"anyOf", {{{"type", "boolean"}}, {{"type", "array"}, {"items", {{"type", "string"}}}}}}, {"description", "also return sampled series: true, or names / groups"}}},
        {"samples", "int - points per series (default 21)"},
@@ -97,8 +97,19 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           id = st->id;
           def = st->def;
           json set = json::object();
-          for (const char* k : {"name", "settings"})
-            if (a.contains(k)) set[k] = a[k];
+          if (a.contains("name")) set["name"] = a["name"];
+          // Settings merge key by key (an array such as drivers is replaced whole; null drops a key): sending only traces
+          // keeps the drivers (MCP stress test #20).
+          if (a.contains("settings")) {
+            if (!a["settings"].is_object()) throw Error("study: settings is an object");
+            const json before = def.value("settings", json::object());
+            json merged = before.is_object() ? before : json::object();
+            for (const auto& [k, v] : a["settings"].items()) {
+              if (v.is_null()) merged.erase(k);
+              else merged[k] = v;
+            }
+            if (merged != before) set["settings"] = merged;
+          }
           if (!set.empty()) {
             for (const auto& [k, v] : set.items()) def[k] = v;
             Document::validate_op(def);

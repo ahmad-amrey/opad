@@ -357,7 +357,14 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   - `motion` (kinematic): `duration` s, `frames`, `drivers: [{"joint", "coordinate"?, "to": 360 (from its value now;
     `profile`: linear | smooth | cycloidal) | "speed": deg/s or mm/s | "expr": "360 deg * t" | "table": [[t, v], ...]}]`,
     `traces: [{"part", "point": [x, y, z] now, "name"}]`. Without drivers, joints with a position or speed `drive` run.
-    Returns each coordinate's range, speed and acceleration, and the traced paths.
+    Returns each coordinate's range, speed and acceleration, and the traced paths. `clearance: true` (or `{"a", "b",
+    "ignore", "clearance_mm"}`: bodies or components; a alone: against the mechanism's other bodies) checks every frame:
+    `clearance.status` collision | too_close | clear, `first_collision` (t, pair, kind intersecting | touching | inside),
+    `min_distance_mm` and `closest` (exact), `too_close` pairs, and the series "Minimum distance" (meshes: within
+    `mesh_tolerance_mm`, over 1 mm up to 5% high). Pairs already touching at the start (a pin in its bore)
+    are listed in `in_contact_at_start` and not followed; collisions between frames are not seen (raise `frames` for
+    fast motion).
+  - `id` with `settings` merges them key by key (an array, such as drivers, is replaced whole; null removes a key).
   - `dynamic` (Project Chrono): masses and inertias from the solids and their materials (steel when none, said in
     warnings), `gravity` (true: 9.81 m/s2 down -Z; false; or [x, y, z] mm/s2), joints with their `drive` (`mode`
     position deg|mm, speed deg/s|mm/s, torque N.mm, force N; `value`, `expr` of t, or `to`), `spring` (stiffness N/mm or

@@ -294,6 +294,81 @@ TEST(motion_study_traces_the_piston) {
   CHECK_NEAR(e["joints"]["Crank pin"]["rotation"]["max_speed"].get<double>(), 360, 1e-6);
 }
 
+// MCP stress test #20: a study changed with id and part of its settings keeps the rest (sending only traces lost the
+// drivers); null drops a key.
+TEST(study_settings_merge_by_key) {
+  SliderCrank m;
+  const json made = commands::run("study", {{"kind", "motion"}, {"settings", {{"duration", 1}, {"frames", 11}, {"drivers", {{{"joint", m.j1}, {"to", 90}}}}}}}, &m.doc);
+  const std::string id = made["id"];
+  const json traced = commands::run("study", {{"id", id}, {"settings", {{"traces", {{{"part", m.piston}, {"point", {160, 0, 0}}, {"name", "Pin"}}}}}}}, &m.doc);
+  CHECK(traced.contains("traces"));
+  CHECK_NEAR(traced["joints"]["Crank pin"]["rotation"]["max"].get<double>(), 90, 1e-6);
+  json settings = resolve(m.doc).study(id)->def["settings"];
+  CHECK(settings.contains("drivers") && settings.contains("traces"));
+  CHECK_EQ(settings["frames"].get<int>(), 11);
+  // An array is replaced whole; null removes a key.
+  commands::run("study", {{"id", id}, {"settings", {{"drivers", {{{"joint", m.j1}, {"to", 45}}}}, {"traces", nullptr}}}}, &m.doc);
+  settings = resolve(m.doc).study(id)->def["settings"];
+  CHECK(!settings.contains("traces"));
+  CHECK_EQ(settings["drivers"].size(), 1u);
+  CHECK_EQ(settings["drivers"][0]["to"].get<int>(), 45);
+  CHECK_EQ(settings["duration"].get<int>(), 1);
+}
+
+// MCP stress test #21: a kinematic study checks interference along its path. An arm (x 0..100, 10 wide) swings about Z
+// over a ground plate it rests on, towards a block at x, y 50..70: its leading side meets the block's corner (70, 50)
+// when 50 cos(a) - 70 sin(a) = 5, at a = 32.2 deg, so frame 33 of a 1-degree sweep is the first collision; a 20 degree
+// sweep stays 50 cos 20 - 70 sin 20 - 5 = 18.04 mm away. The plate touches the arm from the start: listed, not followed.
+TEST(motion_study_checks_clearance_along_its_path) {
+  Document doc = Document::create();
+  const std::string arm = box(doc, {50, 0, 0}, 100, 10, 10, "Arm");
+  const std::string block = box(doc, {60, 60, 0}, 20, 20, 10, "Block");
+  const std::string plate = box(doc, {0, 0, -5}, 30, 30, 5, "Plate");
+  const std::string hinge = joint(doc, {{"kind", "revolute"}, {"name", "Hinge"}, {"part", arm}, {"at", axis_z({0, 0, 0})}})["id"];
+  joint(doc, {{"kind", "ground"}, {"part", block}, {"at", axis_z({60, 60, 0})}});
+  joint(doc, {{"kind", "ground"}, {"part", plate}, {"at", axis_z({0, 0, -5})}});
+  auto sweep = [&](double to, const json& clearance) {
+    return commands::run("study", {{"kind", "motion"}, {"run", true},
+                                   {"settings", {{"duration", 1}, {"frames", int(to) + 1}, {"drivers", {{{"joint", hinge}, {"to", to}}}}, {"clearance", clearance}}},
+                                   {"series", {"Minimum distance"}}, {"samples", int(to) + 1}},
+                         &doc);
+  };
+  const json hit = sweep(90, true);
+  const json& c = hit["clearance"];
+  CHECK_EQ(c["status"].get<std::string>(), std::string("collision"));
+  CHECK_EQ(c["first_collision"]["frame"].get<int>(), 33);
+  CHECK_NEAR(c["first_collision"]["t"].get<double>(), 33.0 / 90, 1e-6);
+  CHECK(c["first_collision"]["kind"] == "intersecting");
+  CHECK((c["first_collision"]["a"] == arm && c["first_collision"]["b"] == block) || (c["first_collision"]["a"] == block && c["first_collision"]["b"] == arm));
+  CHECK_EQ(c["in_contact_at_start_pairs"].get<int>(), 1);
+  // The series: the distance per frame, falling to the block and 0 once they cross.
+  const json* series = nullptr;
+  for (const auto& s : hit["series"])
+    if (s["name"] == "Minimum distance") series = &s["v"];
+  CHECK(series && series->size() == 91);
+  const double at32 = 50 * std::cos(rad(32)) - 70 * std::sin(rad(32)) - 5;
+  CHECK_NEAR((*series)[32].get<double>(), at32, 0.05);
+  CHECK_NEAR((*series)[40].get<double>(), 0, 1e-9);
+  // Clear: the closest approach at the end of the sweep, exact.
+  const json clear = sweep(20, json{{"clearance_mm", 20}})["clearance"];
+  CHECK_EQ(clear["status"].get<std::string>(), std::string("too_close"));
+  CHECK(clear["first_collision"].is_null());
+  const double gap20 = 50 * std::cos(rad(20)) - 70 * std::sin(rad(20)) - 5;
+  CHECK_NEAR(clear["min_distance_mm"].get<double>(), gap20, 1e-4);
+  CHECK_EQ(clear["closest"]["frame"].get<int>(), 20);
+  CHECK_EQ(clear["too_close_pairs"].get<int>(), 1);
+  const json far = sweep(20, true)["clearance"];
+  CHECK_EQ(far["status"].get<std::string>(), std::string("clear"));
+  // Named sides: only the pairs across, the plate's contact at the start listed apart as before; the block still hit.
+  const json named = sweep(20, json{{"a", {arm}}, {"b", {block, plate}}})["clearance"];
+  CHECK_EQ(named["pairs"].get<int>(), 1);
+  CHECK_EQ(named["in_contact_at_start_pairs"].get<int>(), 1);
+  CHECK(named["status"] == "clear");
+  const json named_hit = sweep(90, json{{"a", {arm}}, {"b", {block}}})["clearance"];
+  CHECK_EQ(named_hit["first_collision"]["frame"].get<int>(), 33);
+  CHECK(error_of([&] { sweep(20, "yes"); }).find("clearance") != std::string::npos);
+}
+
 TEST(errors_say_what_to_do) {
   SliderCrank m;
   CHECK(error_of([&] { joint(m.doc, {{"kind", "hinge"}, {"part", m.crank}, {"at", axis_z({0, 0, 0})}}); }).find("unknown kind") != std::string::npos);

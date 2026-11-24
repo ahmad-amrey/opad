@@ -62,6 +62,9 @@ json engines();
 // ---- internal, one per engine (sim/dynamics.cpp, sim/fea.cpp)
 struct AirFace;
 StudyRun run_motion(const Document& doc, const Scene& scene, const json& settings, const Progress& progress);
+// A motion's path clearance (settings.clearance: true or {a, b, ignore, clearance_mm}): the bodies' smallest distance per
+// frame (series "Minimum distance"), the first collision and the closest approach (sim/path_clearance.cpp).
+json path_clearance(const Document& doc, const Scene& scene, StudyRun& run, const json& spec, const Progress& progress);
 StudyRun run_dynamic(const Document& doc, const Scene& scene, const json& settings, const Progress& progress);
 // sweep: another study run again over values of the design's parameters, the best found (sim/sweep.cpp).
 StudyRun run_sweep(const Document& doc, const Scene& scene, const json& settings, const Progress& progress);
