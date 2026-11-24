@@ -1,7 +1,9 @@
 # OPAD agent guide
 
 What an agent needs to model in OPAD and cannot read from the tool schemas. The same text is served by both MCP
-servers as the resource `opad://guide/agent` and by `live_diagnostics` with `include_guide: true`.
+servers as the resource `opad://guide/agent`, each `##` section as `opad://guide/agent#<id>` (the heading in lower case,
+words joined by `-`: `opad://guide/agent#units-and-expressions`). `live_diagnostics` with `include_guide: true` lists the
+sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
 
 ## Units and expressions
 

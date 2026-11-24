@@ -161,7 +161,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
           require(chipText() == "Claude", "the chip while connected: " + chipText());
         }
         require(events().size() == 1 && events()[0].kind == ActivityEvent::Divider, "one divider row");
-        st->base = m_doc->revision;
+        st->base = m_doc->contentRevision;
         st->rows = events().size();
         pass("connect: a toast and the chip, no panel");
         tool("live_state");
@@ -288,7 +288,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
           if (auto* tl = m_services ? m_services->timeline() : nullptr) require(tl->tooltip(e.op).contains("Claude (AI)"), "the timeline names Claude");
         }
         st->firstBox = e.id;
-        st->base = m_doc->revision;
+        st->base = m_doc->contentRevision;
         tool("feature", box({{"inputs", {{"x", "60 mm"}, {"length", "40 mm"}, {"width", "20 mm"}, {"height", "10 mm"}}}}), true);
         return true;
       },
@@ -354,7 +354,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         // A note by the assistant: the Annotations panel's author filter has "AI".
         const auto* shown = row(st->shown);
         require(shown && !shown->subjects.empty(), "a body to pin a note to");
-        tool("annotate", {{"anchor", shown->subjects.front()}, {"text", "Check this wall"}, {"expected_revision", m_doc->revision}}, true);
+        tool("annotate", {{"anchor", shown->subjects.front()}, {"text", "Check this wall"}, {"expected_revision", m_doc->contentRevision}}, true);
         return true;
       },
       [=, this] {
@@ -380,7 +380,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         m_chip->grab().save(prefix + ".chip.png");
         m_panel->grab().save(prefix + ".panel.png");
         m_benchDelay = 1500;  // a long tail, so Stop finds it running
-        st->base = m_doc->revision;
+        st->base = m_doc->contentRevision;
         tool("feature", box({{"inputs", {{"x", "120 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}), true);
         st->clock.start();
         return true;
@@ -406,7 +406,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         require(st->reply.value("isError", false), "the stopped call did not commit");
         require(!m_running && noRunning(), "still no row running once the stopped call replied");
         pass("Stop: its divider and toast; the call did not commit; no row left running");
-        tool("undo", {{"expected_revision", m_doc->revision}}, true);
+        tool("undo", {{"expected_revision", m_doc->contentRevision}}, true);
         return true;
       },
       [=, this] {  // undo / redo replies name an AI step as they always did
@@ -415,7 +415,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         const auto undone = QString::fromStdString(st->reply["structuredContent"]["result"].value("undone", ""));
         if (english) require(undone == "Agent: annotate", "the undo reply's label, as before: " + undone);
         else require(!undone.contains("Claude"), "the undo reply's label is not the window's: " + undone);
-        tool("redo", {{"expected_revision", m_doc->revision}}, true);
+        tool("redo", {{"expected_revision", m_doc->contentRevision}}, true);
         return true;
       },
       [=, this] {
@@ -424,6 +424,47 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         const auto redone = QString::fromStdString(st->reply["structuredContent"]["result"].value("redone", ""));
         if (english) require(redone == "Agent: annotate", "the redo reply's label, as before: " + redone);
         pass("undo / redo replies keep their labels");
+        // The user rolls the timeline back and forward, an editor rolls it back and ends, the icons are redrawn: the scene
+        // re-resolves each time, the document does not change, so an agent's expected_revision stays good (live-MCP
+        // stress test: 5 -> 6 -> 7 with no op, every write then failed with stale_revision).
+        const auto* first = row(st->firstBox);
+        require(first && m_doc->doc.find_op(first->op), "the first box's step");
+        const std::string op = first->op;
+        st->base = m_doc->contentRevision;
+        const auto scene = m_doc->revision;
+        m_doc->rollBackTo(op);
+        require(m_doc->rolledBack() && m_doc->revision > scene, "rolled back: the scene re-resolved");
+        m_doc->rollBackTo({});
+        m_doc->setRollback(op);
+        m_doc->setRollback({});
+        m_doc->refreshView("icons");
+        require(!m_doc->rolledBack() && m_doc->rollback().empty(), "rolled forward again");
+        require(m_doc->revision >= scene + 4 && m_doc->contentRevision == st->base,
+                QStringLiteral("view-only re-resolves leave the content revision: scene %1 -> %2, content %3 -> %4")
+                    .arg(scene).arg(m_doc->revision).arg(st->base).arg(m_doc->contentRevision));
+        tool("live_state");
+        return true;
+      },
+      [=, this] {  // live_state says what moved the revision last, and the view-only refreshes since
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "live_state: " + QString::fromStdString(st->reply.dump()));
+        const json& out = st->reply["structuredContent"];
+        const json change = out["result"].value("revision_change", json::object());
+        require(out.value("revision", 0ull) == st->base && change.value("revision", 0ull) == st->base && change.value("cause", "") == "redo",
+                "live_state's revision and revision_change: " + QString::fromStdString(out.dump()).left(600));
+        const json views = change.value("view_refreshes", json::object());
+        require(views.value("timeline_rollback", 0) == 2 && views.value("editor_rollback", 0) == 2 && views.value("icons", 0) == 1,
+                "the view-only refreshes since: " + QString::fromStdString(change.dump()));
+        tool("feature", box({{"inputs", {{"x", "120 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}), true);
+        return true;
+      },
+      [=, this] {  // the write with the revision read before the roll-backs
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "a write after roll-backs: " + QString::fromStdString(st->reply.dump()));
+        require(m_doc->contentRevision == st->base + 1, "the commit moved the content revision by one");
+        const json change = m_doc->revisionChange();
+        require(change.value("cause", "") == "agent" && !change.contains("view_refreshes"), "revision_change after the commit: " + QString::fromStdString(change.dump()));
+        pass("a timeline roll-back and forward keeps expected_revision; live_state says what moved it");
         // A failure names the call that failed, not another connection's call refused meanwhile.
         ActivityEvent e;
         e.kind = ActivityEvent::Running;
@@ -452,7 +493,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         require(st->retry && m_retrying == st->retry && row(st->retry), "a Retrying row");
         // A commit that fails (a read-only document): its row says so, none stays running.
         m_doc->readOnly = true;
-        st->base = m_doc->revision;
+        st->base = m_doc->contentRevision;
         tool("feature", box({{"inputs", {{"x", "200 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}), true);
         return true;
       },

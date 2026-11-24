@@ -461,6 +461,10 @@ QProcess, no shell, 15 s. Claude Desktop: its claude_desktop_config.json rewritt
 mcpServers.opad, key order kept, <file>.bak first, QSaveFile, nothing written when unchanged). `ctest -R agent-clients`,
 gui case agent-connect (APPDATA / HOME / XDG_CONFIG_HOME / CLAUDE_CONFIG_DIR pointed at the case's folders),
 tools/test_mcp_feedback.py with a real Codex.
+Agents' `expected_revision` is `AppDocument::contentRevision` (ops or the document changed: `refresh(cause, label)`,
+`commitSnapshot`, `recover`), never `revision`, which every scene re-resolve moves (`refreshView`: timeline and editor
+roll-backs, the icons, detach); `live_state.revision_change` says what moved it last. The agent guide is served by `##`
+section (`guide_index`, `guide_section`, `opad://guide/agent#<id>`); `include_guide` returns the index.
 
 ## Builds and the update channels (`core/CMakeLists.txt` build_info, `app/UpdateCheck.*`, `app/UpdatesArea.cpp`)
 

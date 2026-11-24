@@ -76,7 +76,7 @@ AgentBridge::~AgentBridge(){
   if(m_cache)dispose(std::move(m_cache));
 }
 // A window with no document (its start page) is a target too, "start:<generation>": an agent binds to it and opens or makes
-// one there (open_document, new_document); every other tool says no_document.
+// one there (open_document, new_document); feature_kinds and feature_schema answer too; every other tool says no_document.
 // A document is its uuid and its identity (m_identity: the same document reloaded from its file keeps it, followReplace).
 QString AgentBridge::target()const{return m_doc->hasDocument?QString::fromStdString(m_doc->doc.header.uuid)+":"+QString::number(m_identity):"start:"+QString::number(m_doc->generation);}
 void AgentBridge::followReplace(){
@@ -134,7 +134,7 @@ json AgentBridge::editingState()const {
   const auto socket=m_busy?m_owner:(m_prepared?m_prepared->owner:QPointer<QLocalSocket>());
   for(const auto& s:m_sessions)if(s->socket && s->socket==socket)owner={{"kind","agent"},{"client_id",s->clientId},{"name",s->agent.toStdString()}};
   if(edit!="none")owner={{"kind","human"}};
-  return {{"revision",m_doc->revision},{"edit_session",edit},{"human_edit",edit!="none"},
+  return {{"revision",m_doc->contentRevision},{"edit_session",edit},{"human_edit",edit!="none"},
     {"loading",m_doc->loading},{"snapshot_busy",m_doc->snapshotBusy()},{"design_busy",m_doc->designBusy},
     {"agent_busy",m_busy},{"owner",owner},{"active_operation_id",m_busy?json(m_activeOperation):json(nullptr)},
     {"prepared_id",m_prepared?json(m_prepared->id):json(nullptr)}};
@@ -146,7 +146,7 @@ void AgentBridge::waitForIdle(const std::shared_ptr<Session>& s,int timeout,unsi
   const bool idle=!m_busy && !editorBusy() && (!m_prepared || m_prepared->owner==s->socket);
   const bool human=m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane();
   if(idle || human || timer->elapsed()>=timeout){
-    reply(s,live_result({{"state","read"},{"revision",m_doc->revision},{"result",{{"idle",idle},{"timed_out",!idle && !human && timer->elapsed()>=timeout},{"editing",editingState()}}},{"elapsed_ms",timer->elapsed()}}));return;
+    reply(s,live_result({{"state","read"},{"revision",m_doc->contentRevision},{"result",{{"idle",idle},{"timed_out",!idle && !human && timer->elapsed()>=timeout},{"editing",editingState()}}},{"elapsed_ms",timer->elapsed()}}));return;
   }
   QTimer::singleShot(20,this,[this,s,timeout,epoch,timer]{waitForIdle(s,timeout,epoch,timer);});
 }
@@ -171,7 +171,10 @@ json AgentBridge::linkedFiles()const{
     {"ask_user","Ask the user to answer OPAD's Linked files question (or to click the file's \"not read\" badge in the browser) with Read them or Always trust. Agents cannot grant this trust. Then read live_state again: linked_files is gone once the files are read."}};
 }
 json AgentBridge::liveState()const{
-  auto out=descriptor();out["editing"]=editingState();out["revision"]=m_doc->revision;out["dirty"]=m_doc->isDirty();out["busy"]=m_busy;
+  auto out=descriptor();out["editing"]=editingState();out["revision"]=m_doc->contentRevision;out["dirty"]=m_doc->isDirty();out["busy"]=m_busy;
+  // What moved the revision last (an edit, undo, open, an agent's commit, ...) and the view-only re-resolves since, which
+  // leave it alone (a timeline roll-back, an editor's roll-back, the icons).
+  out["revision_change"]=m_doc->revisionChange();
   out["edit_session"]=out["editing"]["edit_session"];
   out["camera"]=m_viewport->cameraJson();out["selection"]=json::array();
   auto refs=m_viewport->selection();for(size_t i=0;i<std::min(size_t(100),refs.size());++i)out["selection"].push_back(refs[i].to_json());
@@ -224,7 +227,7 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
 void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,const std::string& receipt){
   if(session->reloaded && result.contains("structuredContent")){  // once, in the first reply after the reload
     session->reloaded=false;
-    result["structuredContent"]["notice"]={{"document_reloaded",true},{"target",target().toStdString()},{"revision",m_doc->revision},
+    result["structuredContent"]["notice"]={{"document_reloaded",true},{"target",target().toStdString()},{"revision",m_doc->contentRevision},
       {"message","The bound document was reloaded from its file (a git switch, merge or pull, or a change on disk); this connection still follows it under the same target. Staged previews and transactions were discarded. Read live_state or context again before editing."}};
   }
   if(!result["structuredContent"].contains("elapsed_ms") && session->requestTimer.isValid())result["structuredContent"]["elapsed_ms"]=session->requestTimer.elapsed();
@@ -317,7 +320,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     if(!s->bound || s->target!=target()) {
       json out={{"connection","target_changed"},{"target",s->target.toStdString()},{"permissions",{{"confirmed",false}}},{"units",nullptr},
         {"transaction_state",{{"state","none"},{"scope","connection"}}},{"next_calls",{"live_instances","live_bind"}}};
-      if(args.value("include_example",false))out["guide"]=live_guide();if(args.value("include_guide",false))out["agent_guide"]=guide();reply(s,live_result(out));return;
+      add_guide(out,args);reply(s,live_result(out));return;
     }
     json transaction={{"state","none"},{"scope","connection"}};
     if(m_prepared) {
@@ -329,10 +332,10 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
       m_prepared?(m_prepared->owner!=s->socket?json{"live_state"}:m_prepared->transaction?json{"validate","transaction_commit","transaction_cancel"}:json{"viewport_image","preview_commit","preview_cancel"}):
       canEdit()?json{"context","feature_schema","transaction_begin"}:json{"context","entity_details","viewport_image"};
     json out={{"connection","bound"},{"instance",m_instance.toStdString()},{"target",target().toStdString()},
-      {"permissions",{{"enabled",m_enabled},{"edit",canEdit()}}},{"revision",m_doc->revision},{"units",m_doc->scene.units},
+      {"permissions",{{"enabled",m_enabled},{"edit",canEdit()}}},{"revision",m_doc->contentRevision},{"units",m_doc->scene.units},
       {"geometry_units","mm"},{"busy",m_busy},{"editor_busy",editorBusy()},{"transaction_state",transaction},{"next_calls",next}};
     if(auto linked=linkedFiles();!linked.is_null())out["linked_files"]=std::move(linked);
-    if(args.value("include_example",false))out["guide"]=live_guide();if(args.value("include_guide",false))out["agent_guide"]=guide();reply(s,live_result(out));return;
+    add_guide(out,args);reply(s,live_result(out));return;
   }
   if(!s->bound || s->target!=target()){
     if(s->target.isEmpty())fail(s,"not_bound",tr("This connection is not bound to a document yet. Call live_instances, choose the window and document, then live_bind."));
@@ -341,6 +344,12 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
   }
   const auto key=(s->target+"/").toStdString()+args.value("request_id","");
   if(name=="open_document" || name=="new_document"){openDocument(s,name,args,key,hash);return;}  // AgentOpen.cpp
+  // The feature catalogue needs no document (live-MCP stress test, 2026-11-24: both said no_document on the start page).
+  if(!m_doc->hasDocument && (name=="feature_kinds" || name=="feature_schema")){
+    json result;
+    try{result=opad::commands::run(name,args,nullptr);}catch(const std::exception& e){fail(s,"invalid_arguments",QString::fromUtf8(e.what()));return;}
+    reply(s,live_result({{"state","read"},{"revision",m_doc->contentRevision},{"result",std::move(result)}}));return;
+  }
   if(!m_doc->hasDocument && name!="wait_for_idle" && name!="stop" && name!="live_state" && name!="request_status"){
     fail(s,"no_document",tr("No document is open in this window: open_document opens a file, new_document makes an empty .opad."));return;
   }
@@ -353,11 +362,11 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     return;
   }
   if(name=="live_state"){
-    if(m_busy || !m_doc->hasDocument)reply(s,live_result({{"state","read"},{"revision",m_doc->revision},{"result",liveState()}}));
+    if(m_busy || !m_doc->hasDocument)reply(s,live_result({{"state","read"},{"revision",m_doc->contentRevision},{"result",liveState()}}));
     else execute(s,name,args,{});
     return;
   }
-  if(name=="live_select" && (editorBusy() || args.at("expected_revision").get<unsigned long long>()!=m_doc->revision)){fail(s,"selection_busy_or_stale",tr("Finish the active sketch or feature operation before agent edits."));return;}
+  if(name=="live_select" && (editorBusy() || args.at("expected_revision").get<unsigned long long>()!=m_doc->contentRevision)){fail(s,"selection_busy_or_stale",tr("Finish the active sketch or feature operation before agent edits."));return;}
   if(name=="request_status"){
     auto it=m_receipts.find(key);if(it==m_receipts.end())reply(s,live_result({{"state","unknown"},{"request_id",args["request_id"]}}));
     else replyReceipt(s,it->second);return;
@@ -383,7 +392,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
       });return;
     }
     if(editorBusy()){fail(s,"edit_session_busy",tr("Finish the active sketch or feature operation before agent edits."));return;}
-    if(args.at("expected_revision").get<unsigned long long>()!=m_doc->revision){fail(s,"stale_revision",tr("The document changed. Read its current context and replan the edit."));return;}
+    if(args.at("expected_revision").get<unsigned long long>()!=m_doc->contentRevision){fail(s,"stale_revision",tr("The document changed. Read its current context and replan the edit."));return;}
     if(m_receipts.size()>=10000){fail(s,"session_limit",tr("This application session has reached its request limit. Save and restart OPAD."));return;}
   }
   if(name=="transaction_cancel" || name=="preview_cancel"){
@@ -400,8 +409,8 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     if(back?!m_doc->canUndo():!m_doc->canRedo()){m_receipts.erase(key);fail(s,back?"nothing_to_undo":"nothing_to_redo",back?tr("There is nothing to undo."):tr("There is nothing to redo."));return;}
     const QString label=replyLabel(back,back?m_doc->undoLabel():m_doc->redoLabel());
     if(back)m_doc->undo();else m_doc->redo();
-    m_receipts[key].state="committed";m_receipts[key].revision=m_doc->revision;
-    reply(s,live_result({{"state","committed"},{"revision",m_doc->revision},{"result",{{back?"undone":"redone",label.toStdString()}}}}),key);
+    m_receipts[key].state="committed";m_receipts[key].revision=m_doc->contentRevision;
+    reply(s,live_result({{"state","committed"},{"revision",m_doc->contentRevision},{"result",{{back?"undone":"redone",label.toStdString()}}}}),key);
     activity(back?tr("Agent: undo %1").arg(label):tr("Agent: redo %1").arg(label));
     ActivityEvent e;e.kind=ActivityEvent::Change;e.icon=back?QStringLiteral("rollLeft"):QStringLiteral("rollRight");e.client=who(s).brief;
     e.text=back?tr("Undid %1").arg(agentsay::quote(label)):tr("Redid %1").arg(agentsay::quote(label));e.canShow=false;post(e);

@@ -412,7 +412,7 @@ class ClipboardArea : public AreaController {
         opad::json result;
       };
       auto out = std::make_shared<Out>();
-      const auto revision = doc->revision;
+      const auto revision = doc->contentRevision;
       doc->designBusy = true;  // nothing changes the document meanwhile: the copy replaces it
       emit doc->undoChanged();
       services().jobs()->async(tr("Pasting %1 bodies").arg(entries), [copy, clip, author, out](Progress progress) {

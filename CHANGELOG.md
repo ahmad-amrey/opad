@@ -5,6 +5,18 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
+## [Unreleased]
+
+### Fixed
+- **AI assistants' changes no longer fail because you looked back in the timeline.** Rolling the timeline back and
+  forward, opening a feature or sketch to edit it and leaving it, or switching between light and dark no longer count as
+  changes to the design, so an assistant's next change is not refused as "the document changed". The assistant can also
+  see what changed the design last.
+- AI assistants can read the list of feature kinds and their inputs while OPAD shows its start page, before a design is
+  open.
+- AI assistants read OPAD's agent guide one section at a time instead of all 50 KB at once, which some of them could not
+  take in; the whole guide is still there for those that want it.
+
 ## [0.10.1] - 2026-11-22
 
 Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,

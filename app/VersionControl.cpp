@@ -1308,7 +1308,7 @@ void VersionControl::restore(const git::Commit& c) {
       {{"restore", tr("Restore"), [this, doc, commit] {
           if (DesignController* d = m_services.design(); d && (d->sketchActive() || d->featureActive()))
             return m_services.showMessage(tr("Finish the sketch or the feature first."));
-          const auto generation = doc->generation, revision = doc->revision;
+          const auto generation = doc->generation, revision = doc->contentRevision;
           const git::Context ctx = m_git->context();
           const QString rel = documentPath(), file = doc->path();
           const std::string by = QSettings().value("user/name").toString().trimmed().toStdString();
@@ -1347,9 +1347,9 @@ void VersionControl::restore(const git::Commit& c) {
             }, [=, this](bool ok, const QString& error) {
               if (!self) return;
               if (!ok) return fail(error);
-              if (doc->generation != generation || doc->revision != revision) return fail(tr("The document changed meanwhile: try again."));
+              if (doc->generation != generation || doc->contentRevision != revision) return fail(tr("The document changed meanwhile: try again."));
               try {
-                doc->commitSnapshot(out->document, out->scene, revision, tr("restore %1").arg(commit.shortHash));
+                doc->commitSnapshot(out->document, out->scene, revision, tr("restore %1").arg(commit.shortHash), "restore");
               } catch (const std::exception& e) {
                 return fail(QString::fromUtf8(e.what()));
               }

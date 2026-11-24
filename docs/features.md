@@ -25,7 +25,8 @@ AI agents through a headless CLI, a Python module and a stdio MCP server. The de
 navigation presets familiar to users of other CAD tools (Fusion-style, SOLIDWORKS-style, Onshape-style, Blender-style).
 
 Both MCP servers ship an agent guide (source: `core/res/agent_guide.md`, compiled into the binaries) as the
-resource `opad://guide/agent`; live `live_diagnostics` returns it with `include_guide: true`. It covers units and
+resource `opad://guide/agent`, each section also as `opad://guide/agent#<id>`; live `live_diagnostics` lists the
+sections with `include_guide: true` and returns one with `guide_section: "<id>"` (`"all"`: the whole guide). It covers units and
 expressions, base-plane frames, sketch geometry, profiles, references, feature conventions, what `body_ids`
 holds per feature kind and batch references.
 
