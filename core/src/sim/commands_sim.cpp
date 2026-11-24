@@ -49,6 +49,16 @@ void refuse_moving_locked(const Scene& s, const std::vector<std::string>& nodes)
     if (const Node* holder = s.lock_holder(id)) throw LockedError(node_name(s, id), holder->name, "moving");
 }
 
+// A part and its base must be two nodes, neither inside the other (it would already move with it).
+void check_pair(const Scene& s, const std::string& part, const std::string& base) {
+  if (base == part) throw Error("joint: the base and the part are the same node");
+  if (base.empty()) return;
+  for (const auto& p : s.path_to(part))
+    if (p == base) throw Error("joint: \"" + node_name(s, part) + "\" is inside \"" + node_name(s, base) + "\": it already moves with it");
+  for (const auto& p : s.path_to(base))
+    if (p == part) throw Error("joint: \"" + node_name(s, base) + "\" is inside \"" + node_name(s, part) + "\"");
+}
+
 // Rotation about z by a and translation along z by d of a frame (in its own axes).
 Frame frame_moved(const Frame& f, double angle_rad, double along_x, double along_y, double along_z) {
   const Vec3 z = f.normal();
@@ -171,7 +181,7 @@ json joint_args() {
           {"drive", drive},
           {"spring", spring},
           {"friction", "number - N.mm or N"},
-          {"id", "string - a joint to change"},
+          {"id", "string - a joint to change; at/part/base re-anchor it"},
           {"by", "string"}};
 }
 
@@ -194,15 +204,76 @@ void register_sim_commands(const std::function<void(const CommandInfo&, Handler)
           json set = json::object();
           for (const char* k : {"name", "limits", "locked", "pitch", "drive", "spring", "friction", "ratio", "radius", "lead", "reverse"})
             if (a.contains(k)) set[k] = a[k];
-          if (set.empty()) throw Error("joint: nothing to change (name, limits, locked, pitch, drive, spring, friction, ratio, radius, lead, reverse)");
+          // Re-anchoring: a new frame (at), part or base. The parts stay where they are and so do the joint's values, so its
+          // poses, limits and drives still read the same: the part's frame is put on at (or kept where it is in the world)
+          // and the base's frame where the joint's present offset (D: its values, a ball's turn) puts it at zero.
+          if (a.contains("at_part")) throw Error("joint: at_part snaps a part when a joint is made; to re-anchor give at");
+          const bool reanchor = a.contains("at") || a.contains("part") || a.contains("base");
+          if (reanchor) {
+            if (sim::is_relation(j->kind)) throw Error("joint: a " + j->kind + " couples two joints and has no at, part or base");
+            if (a.contains("part") && a["part"].is_null()) throw Error("joint: a joint needs the part it moves");
+            const std::string part = a.contains("part") ? node_of(s, a["part"], "joint part") : j->part;
+            std::string base = j->base;
+            if (a.contains("base")) base = a["base"].is_null() ? std::string() : node_of(s, a["base"], "joint base");
+            if (j->kind == "ground" && !base.empty()) throw Error("joint: a ground joint holds its part to the world: it has no base");
+            check_pair(s, part, base);
+            const Mat4 old_base = j->base.empty() ? Mat4() : s.world(j->base);
+            const Frame fb = j->at_base.transformed(old_base), fp = j->at_part.transformed(s.world(j->part));
+            Frame new_fb = fb, new_fp = fp;
+            if (a.contains("at")) {
+              const Mat4 d = mat_of_frame(fb).inverse() * mat_of_frame(fp);
+              new_fp = sim::joint_frame(doc, s, a["at"]);
+              new_fb = Frame().transformed(mat_of_frame(new_fp) * d.inverse());
+              json refs = j->def.value("refs", json::object());
+              if (!refs.is_object()) refs = json::object();
+              refs.erase("at_part");
+              refs["at"] = a["at"];
+              set["refs"] = refs;
+            }
+            const Mat4 base_world = base.empty() ? Mat4() : s.world(base);
+            set["frames"] = {new_fb.transformed(base_world.inverse()).to_json(), new_fp.transformed(s.world(part).inverse()).to_json()};
+            if (part != j->part) set["part"] = part;
+            if (base != j->base) set["base"] = base.empty() ? json(nullptr) : json(base);
+          }
+          if (set.empty())
+            throw Error("joint: nothing to change (name, limits, locked, pitch, drive, spring, friction, ratio, radius, lead, reverse; at, part, base)");
           json effective = j->def;
           for (const auto& [k, v] : set.items()) {
-            if (v.is_null()) effective.erase(k);
+            if (v.is_null() && k != "base") effective.erase(k);
             else effective[k] = v;
           }
           Document::validate_op(effective);
+          const size_t mark = doc.ops.size();
           const std::string id = doc.append({{"op", "edit"}, {"target", j->id}, {"set", set}}, by).id;
-          return json{{"id", j->id}, {"edit", id}, {"changed", set}};
+          json changed = set;
+          changed.erase("frames");
+          json out = {{"id", j->id}, {"edit", id}, {"changed", changed}};
+          if (reanchor) {
+            const Scene after = resolve(doc);
+            sim::Mechanism mech(after);
+            const sim::Mechanism::Result r = mech.settle(after.joint(j->id)->base);
+            if (!r.ok) {
+              doc.truncate_ops(mark);
+              throw Error("joint: " + r.error);
+            }
+            if (json pose = sim::pose_op(after, mech, "Pose after " + j->name); !pose.is_null()) {
+              std::vector<std::string> ids;
+              for (const auto& p : pose["placements"]) ids.push_back(p["target"].get<std::string>());
+              try {
+                refuse_moving_locked(after, ids);
+              } catch (...) {
+                doc.truncate_ops(mark);
+                throw;
+              }
+              doc.append(pose, by);
+              out["moved"] = moved_json(after, pose);
+            }
+            out["values"] = values_json(mech.values()[j->id]);
+            out["frame"] = design::frame_result(mech.joint_frames(j->id).first);
+            out["dof"] = mech.analysis()["dof"];
+            if (!r.notes.empty()) out["notes"] = r.notes;
+          }
+          return out;
         }
         const std::string kind = a.at("kind").get<std::string>();
         const sim::JointKind* k = sim::joint_kind(kind);
@@ -293,15 +364,14 @@ void register_sim_commands(const std::function<void(const CommandInfo&, Handler)
             if (!on.empty() && on != part && s.node(on)) base = on;
           }
         }
-        if (base == part) throw Error("joint: the base and the part are the same node");
-        if (!base.empty()) {
-          for (const auto& p : s.path_to(part))
-            if (p == base) throw Error("joint: \"" + node_name(s, part) + "\" is inside \"" + node_name(s, base) + "\": it already moves with it");
-          for (const auto& p : s.path_to(base))
-            if (p == part) throw Error("joint: \"" + node_name(s, base) + "\" is inside \"" + node_name(s, part) + "\"");
-        }
-        const Frame on_base = a.contains("at") ? sim::joint_frame(doc, s, a["at"]) : snap ? sim::joint_frame(doc, s, a["at_part"]) : Frame();
-        if (!a.contains("at") && !snap) throw Error("joint: where is it? give at (a face, an edge, a vertex or an axis)");
+        check_pair(s, part, base);
+        // Ground and rigid have no coordinates, so where their frame lies does not matter: without at it is the part's own
+        // frame (the world's origin and axes for a part placed at none), and the part stays where it is.
+        const bool frameless = kind == "ground" || kind == "rigid";
+        if (!a.contains("at") && !snap && !frameless) throw Error("joint: where is it? give at (a face, an edge, a vertex or an axis)");
+        const Frame on_base = a.contains("at") ? sim::joint_frame(doc, s, a["at"])
+                              : snap           ? sim::joint_frame(doc, s, a["at_part"])
+                                               : Frame().transformed(s.world(part));
         Frame on_part = snap ? sim::joint_frame(doc, s, a["at_part"]) : on_base;
         // Snapping mates: the part's frame is turned about its x so its z runs against the base's (faces meet).
         if (snap && a.value("mate", true)) {

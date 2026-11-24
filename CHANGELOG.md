@@ -113,6 +113,18 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - **Shell after a pocket near a fillet.** A body whose pocket comes close to a rim fillet, closer than the shell's
   thickness, now shells, where it used to say it "cannot be shelled by that thickness". When it still cannot, the
   message names the two faces that come too close and how far apart they are.
+- **Joints made by an AI assistant or a script:**
+  - A ground or rigid joint no longer asks where it is: it holds the part where it stands.
+  - A joint can be moved onto another axis (the cylinder face of a pin, say), another part or another base and stays
+    the same joint, with its name, limits, drive and poses; the parts stay where they are. Before, it had to be deleted
+    and made again.
+  - Driving a joint past a limit says which coordinate stopped (rotation or translation), at what value, and what was
+    asked: "Slide rotation held at its upper limit 30 deg (asked 45 deg)".
+  - The mechanism no longer counts the ground's equations as redundant (a clean mechanism read "6 redundant"), and
+    names the joints whose equations repeat others, such as the one closing a loop. Dynamic studies of a grounded
+    mechanism no longer warn about redundant equations either.
+  - A dynamic study in a build without its dynamics engine (Project Chrono) says so, and what still works, instead of
+    a bare "not available"; static, modal and thermal studies say what they are missing the same way.
 
 ## [0.10.0] - 2026-11-21
 
