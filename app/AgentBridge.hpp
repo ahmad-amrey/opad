@@ -1,5 +1,6 @@
 #pragma once
 #include <QObject>
+#include "opad/model_batch.hpp"
 #include <QPointer>
 #include <QLocalServer>
 #include <QLockFile>
@@ -79,9 +80,9 @@ class AgentBridge : public QObject {
  public:
   // The sub-shape references a connection was given (entity_details, query_entities, selection, change lists), by
   // normalised ref, with the body key and placement they were given for (TODO 10 B6). Transport only.
-  struct Known {std::string geometry,placement;};
-  using KnownRefs=std::map<std::string,Known>;
-  using BatchSteps=std::map<std::string,opad::json>;  // step id -> its result, from this connection's earlier batches
+  using Known=opad::agent::KnownRef;
+  using KnownRefs=opad::agent::KnownRefs;
+  using BatchSteps=opad::agent::BatchSteps;  // step id -> its result, from this connection's earlier batches
  private:
   using json=opad::json;
   struct Snapshot {std::shared_ptr<opad::Document> doc;opad::Scene scene;unsigned long long revision=0;};

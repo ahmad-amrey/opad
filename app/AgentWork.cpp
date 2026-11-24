@@ -4,6 +4,7 @@
 #include "DesignController.hpp"
 #include "Viewport.hpp"
 #include "opad/live.hpp"
+#include "opad/model_batch.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
 #include "opad/render.hpp"
@@ -26,166 +27,6 @@ using namespace opad::agent;
 namespace {
 std::string newId(){return QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();}
 void release(std::shared_ptr<void> value){auto* thread=QThread::create([value=std::move(value)]{});QObject::connect(thread,&QThread::finished,thread,&QObject::deleteLater);thread->start();}
-// Every face/edge/vertex input needs a current token in `references`, or (TODO 10 B6) to be a reference this connection
-// was given earlier whose body still has the key and placement it had then.
-void checkReferences(const opad::Document& doc,const opad::Scene& scene,const json& args,const AgentBridge::KnownRefs* known=nullptr){
-  std::set<std::string> checked;
-  for(const auto& token:args.value("references",json::array())){
-    if(resolve_reference(doc,scene,token).value("status","")!="resolved")throw opad::Error("stale_reference: request a fresh selection or resolve_reference before editing");
-    checked.insert(opad::Ref::from_json(token.at("ref")).to_json().dump());
-  }
-  std::function<void(const json&)> walk=[&](const json& value){
-    bool isRef=false;
-    if(value.is_string()){const auto& text=value.get_ref<const std::string&>();isRef=text.find("/face/")!=text.npos || text.find("/edge/")!=text.npos || text.find("/vertex/")!=text.npos || text.find("/center/")!=text.npos;}
-    if(value.is_object() && value.contains("body")){const auto kind=value.value("kind","body");isRef=kind!="body" && kind!="point" && !value.contains("select");}  // a rule (B7) names no entity: it is resolved when computed
-    if(isRef){
-      auto ref=opad::Ref::from_json(value);const auto key=ref.to_json().dump();if(checked.count(key))return;
-      if(known)if(auto it=known->find(key);it!=known->end()){
-        const auto* node=scene.node(ref.body);
-        if(node && node->body_key==it->second.geometry && scene.world(ref.body).to_json().dump()==it->second.placement)return;
-        throw opad::Error("stale_reference: "+key+" was given for an earlier state of its body; request it again (entity_details or query_entities)");
-      }
-      throw opad::Error("unchecked_reference: supply entity_details.reference in references for every subshape input, or use a reference this connection was given by entity_details, query_entities or the selection");
-    }
-    if(value.is_object()){for(const auto& [key,child]:value.items())if(key!="references")walk(child);}
-    else if(value.is_array())for(const auto& child:value)walk(child);
-  };walk(args);
-}
-// A small declarative language over existing typed commands, never executable code.
-void modelBatch(opad::Document& doc,const json& args,Progress progress,json& output,const AgentBridge::KnownRefs* known,const AgentBridge::BatchSteps* before,
-                const units::Display& display,QStringList* said){
-  static const std::set<std::string> allowed={"component","param","sketch","sketch_edit","align_sketch","feature","feature_edit","rename","reparent","appearance","transform","joint"};
-  std::map<std::string,json> schemas,results;std::set<std::string> earlier,defined;
-  for(const auto& step:args.at("steps"))if(step.contains("id") && step["id"].is_string())defined.insert(step["id"].get<std::string>());
-  // An id this batch defines is this batch's step (a later one is a forward reference); only others may name a step
-  // of an earlier batch on this connection.
-  auto older=[&](const std::string& id){return !defined.count(id) && before && before->count(id);};
-  for(const auto& command:opad::commands::list())if(allowed.count(command.name))schemas[command.name]=command_schema(command,true);
-  static const std::string syntax="Write @{<step id>#/<path in that step's result>}, for example @{cabin#/body_ids/0} (the first body made by the step with id \"cabin\"); @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids, sketch steps sketch_id, component steps component_id.";
-  // Step ids are [A-Za-z0-9_], so the first '#' or '/' ends the id; '#' may be followed by the pointer's '/' or not.
-  auto symbol=[](const std::string& text)->std::pair<std::string,std::string>{
-    if(!text.starts_with("@{") || !text.ends_with("}"))return {};
-    const auto body=text.substr(2,text.size()-3);const auto end=body.find_first_of("#/");
-    std::string id=body.substr(0,end),path=end==std::string::npos?std::string():body.substr(end+(body[end]=='#'?1:0));
-    if(!path.empty() && path[0]!='/')path="/"+path;
-    if(id.empty() || path.size()<2)throw opad::Error("Batch reference "+text+" needs a step id and a path. "+syntax);
-    return {id,path};
-  };
-  auto keysOf=[](const json& value){std::string keys;for(const auto& [key,item]:value.items())keys+=(keys.empty()?"":", ")+key;return keys.empty()?std::string("none"):keys;};
-  // Walks the pointer itself so a wrong path names the step and what it does have, not a raw JSON exception.
-  auto lookup=[&](const std::string& text,const std::string& id,const std::string& path)->const json&{
-    // This batch's steps first, then this connection's earlier batches (gap log #14).
-    const json* at=results.count(id)?&results.at(id):&before->at(id);std::string where="step '"+id+"' result";
-    for(size_t start=1;start<=path.size();){
-      const auto end=std::min(path.find('/',start),path.size());std::string token=path.substr(start,end-start);start=end+1;
-      for(size_t i=0;(i=token.find('~',i))!=std::string::npos;++i)token.replace(i,2,token.compare(i,2,"~1")==0?"/":"~");
-      if(at->is_object()){
-        if(!at->contains(token)){
-          std::string example=at->contains("body_ids")?"@{"+id+"#/body_ids/0}":at->contains("sketch_id")?"@{"+id+"#/sketch_id}":at->contains("component_id")?"@{"+id+"#/component_id}":"";
-          throw opad::Error("Batch reference "+text+": "+where+" has no '"+token+"'; its keys are "+keysOf(*at)+"."+(example.empty()?"":" For example "+example+".")+(token=="result"?" Paths start at the step's result, without /result/.":""));
-        }
-        at=&(*at)[token];
-      }else if(at->is_array()){
-        const bool digits=!token.empty() && token.size()<10 && std::all_of(token.begin(),token.end(),[](unsigned char c){return std::isdigit(c);});
-        if(!digits || std::stoull(token)>=at->size())throw opad::Error("Batch reference "+text+": "+where+" is a list of "+std::to_string(at->size())+" item(s); '"+token+"' is not an index from 0 to "+std::to_string(at->size()?at->size()-1:0)+".");
-        at=&(*at)[std::stoull(token)];
-      }else throw opad::Error("Batch reference "+text+": "+where+" is "+at->dump()+", which has no '"+token+"'.");
-      where+="/"+token;
-    }
-    return *at;
-  };
-  // @{pat#/body_ids/*} is the whole list: spliced in as an element of an array, or the array itself as a value.
-  auto wholeList=[](const json& value){if(!value.is_string())return false;const auto& text=value.get_ref<const std::string&>();return text.starts_with("@{") && text.ends_with("/*}");};
-  auto lookupList=[&](const std::string& text)->json{
-    const auto one=text.substr(0,text.size()-3)+"}";const auto [id,path]=symbol(one);const json& list=lookup(text,id,path);
-    if(!list.is_array())throw opad::Error("Batch reference "+text+": step '"+id+"' "+path.substr(1)+" is "+std::string(list.type_name())+" "+list.dump()+", not a list; /* takes every item of a list such as body_ids.");
-    for(const auto& item:list)if(!item.is_string())throw opad::Error("Batch reference "+text+" holds "+item.dump()+", not identifier strings.");
-    return list;
-  };
-  // Before anything runs, a whole-list reference standing for an array is checked as a list of one.
-  std::function<void(json&)> listShaped=[&](json& value){
-    if(value.is_object()){for(auto& [key,child]:value.items()){
-      if(wholeList(child)){
-        if(key=="target")throw opad::Error("Batch reference "+child.get<std::string>()+" is a whole list; use targets (an array) instead of target, or pick one item such as /0.");
-        child=json::array({child});
-      }else listShaped(child);
-    }}else if(value.is_array())for(auto& child:value)if(!wholeList(child))listShaped(child);
-  };
-  std::function<void(const json&)> preflightRefs=[&](const json& value){
-    if(value.is_string()){
-      const auto text=value.get<std::string>();const auto [id,path]=symbol(text);
-      if(!id.empty() && !earlier.count(id) && !older(id)){
-        std::string steps;for(const auto& step:earlier)steps+=(steps.empty()?"":", ")+step;
-        std::string older;if(before)for(const auto& [step,result]:*before)older+=(older.empty()?"":", ")+step;
-        throw opad::Error("Batch reference "+text+" must name an earlier step of this batch or of an earlier batch on this connection; earlier steps are "+(steps.empty()?std::string("none"):steps)+(older.empty()?std::string():"; earlier batches' are "+older)+". "+syntax);
-      }
-    }else if(value.is_array() || value.is_object())for(const auto& child:value)preflightRefs(child);
-  };
-  // A batch-level parent is where every body its feature steps make goes, unless a step names its own (TODO 10 B14).
-  const json batchParent=args.contains("parent")?args["parent"]:json(),batchComponent=args.contains("component")?args["component"]:json();
-  // Validate every command and dependency before computing any geometry.
-  for(const auto& step:args.at("steps")){
-    const auto id=step.at("id").get<std::string>(),command=step.at("command").get<std::string>();
-    if(id.empty() || id.size()>64 || !std::all_of(id.begin(),id.end(),[](unsigned char c){return std::isalnum(c) || c=='_';}) || earlier.count(id))throw opad::Error("Batch step IDs must be unique letters, digits or underscores");
-    if(!allowed.count(command))throw opad::Error("Unsupported batch command: "+command);
-    auto input=step.at("arguments");listShaped(input);validate_input(schemas.at(command),input);
-    if(command=="feature")validate_input(feature_schema(input.at("kind").get<std::string>()),input.value("inputs",json::object()));
-    preflightRefs(input);preflightRefs(step.value("references",json::array()));
-    if(command=="feature" && !input.contains("parent") && batchParent.is_string()){
-      const auto [ref,path]=symbol(batchParent.get<std::string>());
-      if(!ref.empty() && !earlier.count(ref) && !older(ref))throw opad::Error("The batch parent "+batchParent.get<std::string>()+" names step '"+ref+"', which does not come before feature step '"+id+"'; put that component step first.");
-    }
-    if((command=="feature" || command=="sketch") && !input.contains("component") && batchComponent.is_string()){
-      const auto [ref,path]=symbol(batchComponent.get<std::string>());
-      if(!ref.empty() && !earlier.count(ref) && !older(ref))throw opad::Error("The batch component "+batchComponent.get<std::string>()+" names step '"+ref+"', which does not come before "+command+" step '"+id+"'; put that component step first.");
-    }
-    earlier.insert(id);
-  }
-  output={{"steps",json::array()},{"atomic",true},{"persistence","not_saved"}};
-  std::function<void(json&)> expand=[&](json& value){
-    if(wholeList(value)){value=lookupList(value.get<std::string>());return;}
-    if(value.is_string()){
-      const auto text=value.get<std::string>();const auto [id,path]=symbol(text);
-      if(!id.empty()){
-        value=lookup(text,id,path);
-        if(!value.is_string())throw opad::Error("Batch reference "+text+" is "+std::string(value.type_name())+" "+value.dump()+", not an identifier string."+(value.is_array()?" Add an index, for example "+text.substr(0,text.size()-1)+"/0}, or /* for the whole list where a list is accepted.":""));
-      }
-    }else if(value.is_array()){
-      json spliced=json::array();
-      for(auto& child:value){
-        if(wholeList(child)){for(const auto& item:lookupList(child.get<std::string>()))spliced.push_back(item);continue;}
-        expand(child);spliced.push_back(std::move(child));
-      }
-      value=std::move(spliced);
-    }else if(value.is_object())for(auto& child:value)expand(child);
-  };
-  for(const auto& step:args.at("steps")){
-    const auto id=step.at("id").get<std::string>(),command=step.at("command").get<std::string>();
-    output["failed_step"]=id;
-    if(progress.cancelled())throw opad::Error("cancelled");
-    auto input=step.at("arguments");
-    if(command=="feature" && !input.contains("parent") && !batchParent.is_null())input["parent"]=batchParent;
-    if((command=="feature" || command=="sketch") && !input.contains("component") && !batchComponent.is_null())input["component"]=batchComponent;
-    expand(input);validate_input(schemas.at(command),input);
-    auto checked=input;checked["references"]=step.value("references",json::array());expand(checked["references"]);
-    const auto prior=opad::resolve(doc);
-    checkReferences(doc,prior,checked,known);
-    input["by"]="Agent";QElapsedTimer timer;timer.start();const auto begin=doc.ops.size();
-    auto value=opad::commands::run(command,input,&doc);const auto scene=opad::resolve(doc);
-    if(command=="feature" || command=="sketch")for(size_t i=begin;i<doc.ops.size();++i){
-      const auto& op=doc.ops[i];
-      if(command=="sketch" && op.type=="sketch")value["sketch_id"]=op.id;
-      if(command=="feature" && op.type=="feature"){
-        value["feature_id"]=op.id;value["body_ids"]=json::array();
-        if(const auto* feature=scene.feature(op.id))for(const auto& body:feature->result.value("bodies",json::array()))value["body_ids"].push_back(body.at("id"));
-      }
-    }
-    if(command=="component")value["component_id"]=value.at("id");
-    if(said)said->push_back(agentsay::done(command,input,value,prior,scene,display).text);  // the step in the user's words (its group row)
-    results[id]=value;output["steps"].push_back({{"id",id},{"command",command},{"state","computed"},{"result",value},{"elapsed_ms",timer.elapsed()}});
-  }
-  output.erase("failed_step");
-}
 json changes(const opad::Scene& before,const opad::Scene& after){
   json out={{"created",json::array()},{"modified",json::array()},{"deleted",json::array()},{"geometry",json::array()},{"total",0}};
   auto add=[&](const char* key,const std::string& id){out["total"]=out["total"].get<int>()+1;if(out[key].size()<100)out[key].push_back(id);};
@@ -362,11 +203,12 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     m_jobs->backgroundNext();
     auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,linked,known,steps,delay=m_benchDelay,display,client,kind](Progress p)mutable{
       p.setPhase(tr("Inspecting inputs"));
-      if(write && name!="model_batch")checkReferences(*source->doc,source->scene,args,known.get());
+      if(write && name!="model_batch")opad::agent::check_references(*source->doc,source->scene,args,known.get());
       const bool compact=args.value("verbosity","full")=="compact";  // TODO 10 B11
       for(const char* key:{"expected_revision","request_id","transaction","preview","references","verbosity"})args.erase(key);
       if(write){result->snapshot=std::make_shared<Snapshot>();result->snapshot->doc=std::make_shared<opad::Document>(*source->doc);result->snapshot->revision=source->revision;args["by"]="Agent";}
       auto working=write?result->snapshot:source;
+      std::set<std::string> batchValid;  // body keys model_batch's steps already found valid
       if(p.cancelled())throw opad::Error("cancelled");
       p.setPhase(tr("Computing geometry and context"));
       if(name=="live_state"){
@@ -434,7 +276,13 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           {"rendering","software geometry view; visible_count counts submitted visible bodies (including occluded ones), visible_ids=true lists them; UI overlays are not included"}};
         if(args.value("visible_ids",false))result->output["visible_ids"]=visible;  // opt-in: 140 ids on a board
         if(metadata.contains("views"))result->output["views"]=metadata["views"];
-      }else if(name=="model_batch")modelBatch(*working->doc,args,p,result->output,known.get(),steps.get(),display,&result->stepSentences);
+      }else if(name=="model_batch"){
+        opad::agent::BatchOptions options{known.get(),steps.get(),[p]{return p.cancelled();},&batchValid};
+        options.step_done=[&](const std::string& command,const json& input,const json& value,const opad::Scene& prior,const opad::Scene& scene){
+          result->stepSentences.push_back(agentsay::done(command,input,value,prior,scene,display).text);  // the step in the user's words (its group row)
+        };
+        opad::agent::model_batch(*working->doc,args,result->output,options);
+      }
       else result->output=opad::commands::run(name,args,working->doc.get());
       if(p.cancelled())throw opad::Error("cancelled");
       if(write && name!="export"){
@@ -476,7 +324,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           const auto* prior=baseline->scene.node(id);if(prior && prior->body_key==node.body_key && baseline->scene.world(id).to_json()==working->scene.world(id).to_json())continue;
           auto shape=opad::node_world_shape(*working->doc,working->scene,id);
           if(node.representation=="solid"){
-            if(!BRepCheck_Analyzer(shape).IsValid())throw opad::Error("Generated body failed solid validation; document unchanged.");++checkedSolids;checked.insert(id);
+            if(!batchValid.count(node.body_key) && !BRepCheck_Analyzer(shape).IsValid())throw opad::Error("Generated body failed solid validation; document unchanged.");++checkedSolids;checked.insert(id);
           }
           if(result->delta["references"].size()<100)result->delta["references"].push_back(reference_token(*working->doc,working->scene,opad::Ref::from_json(json{{"body",id},{"kind","body"}})));
           if(preview || !transaction.empty()){
@@ -534,7 +382,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       m_busy=false;m_job.clear();
       if(!ok){
         if(name=="model_batch" && error!="cancelled" && result->output.is_object()){
-          for(auto& step:result->output["steps"])step["state"]="discarded";
+          for(auto& step:result->output["steps"])if(step.value("state","")!="failed")step["state"]="discarded";  // the failed step keeps its error
           m_receipts[receipt].state=error=="cancelled"?"cancelled":"failed";
           auto failure=live_error("batch_failed",error.toStdString());failure["structuredContent"]["state"]=m_receipts[receipt].state;
           failure["structuredContent"]["revision"]=revision;failure["structuredContent"]["result"]=result->output;

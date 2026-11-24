@@ -79,6 +79,12 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - Zoomed in close, curved faces stay smooth in two more places: the faces a timeline step made, highlighted while you
   point at it, and Compare's coloured bodies (the other version's, and the changed faces of a modified body). Both
   showed the coarse steps of the whole-model mesh instead of the smooth surface around them.
+- **An AI assistant's multi-step change checks every step.** A step that makes a broken solid (a sweep along a path
+  too tight for its profile, say) now stops the whole change at that step and says which one, as a single step already
+  did. Before, a later step could swallow the broken body and the change went through with part of the model missing.
+  A component chosen for the whole change no longer adds a "not used" warning to every fillet, cut or join in it.
+- **Sweep paths join ends that nearly meet**, such as curves whose end points were typed to a few decimals. A path
+  that really is open now names the curves whose ends don't meet and how far apart they are.
 
 ## [0.10.0] - 2026-11-21
 
