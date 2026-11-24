@@ -242,9 +242,12 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
 - A reference may name a step of an earlier batch on the same connection, when this batch has no step with that id
   (an id this batch defines is always its own step, so a reference to a later one is an error).
 - The batch's `parent` is the default component for every body its feature steps make; its `component` the default
-  component its feature and sketch steps are made in.
-- A failing step discards the whole batch and names the step; inputs and backward references are checked before
-  anything runs.
+  component its feature and sketch steps are made in. A step that makes no body (a fillet, a join) ignores the default
+  without a warning; it warns only when the step set body_name, color or parent itself.
+- A failing step discards the whole batch and names the step (`failed_step`; its receipt in `steps` has state `failed`
+  and the error); inputs and backward references are checked before anything runs. Every step's new and changed solids
+  must pass solid validation, as a single `feature` call's do, so an invalid body fails the step that made it even when
+  a later step would have used it up.
 
 ## History and files
 

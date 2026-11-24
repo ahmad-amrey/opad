@@ -159,6 +159,32 @@ def main():
         again = client.write("feature", kind="extrude", component=lid, inputs={"profiles": [{"sketch": outline, "at": [5, 85]}], "distance": 2, "operation": "new"})
         assert abs(low(again["result"]["body_ids"][0]) - now["frame"]["origin"][2]) < 1e-6, low(again["result"]["body_ids"][0])
         print("Sketches follow their component: PASS", flush=True)
+        # Each step is validated as a single feature call is: a sweep that makes an invalid solid fails at its own step,
+        # though the intersect after it would leave a valid body (only the end state used to be checked).
+        revision = client.state()["revision"]
+        bodies = client.call("context")["result"]["bodies"]
+        square = [(-2, -2), (2, -2), (2, 2), (-2, 2)]
+        swept = [
+            {"id": "path", "command": "sketch", "arguments": {"plane": {"base": "xy"}, "geometry": {
+                "points": [{"id": i + 1, "x": x, "y": y} for i, (x, y) in enumerate([(0, 0), (10, 5), (20, -5), (30, 5), (40, -5)])],
+                "entities": [{"id": 100, "type": "spline", "p": [1, 2, 3, 4, 5], "start_tangent": [1, 0]}]}}},
+            {"id": "profile", "command": "sketch", "arguments": {"plane": {"base": "yz"}, "geometry": {
+                "points": [{"id": i + 1, "x": x, "y": y} for i, (x, y) in enumerate(square)],
+                "entities": [{"id": 100 + i, "type": "line", "p": [i + 1, (i + 1) % 4 + 1]} for i in range(4)]}}},
+            {"id": "arm", "command": "feature", "arguments": {"kind": "sweep", "inputs": {"profiles": [{"sketch": "@{profile#/sketch_id}", "all": True}], "path": {"sketch": "@{path#/sketch_id}"}}}},
+            {"id": "trim", "command": "feature", "arguments": {"kind": "box", "inputs": {"x": -1, "y": -3, "length": 4, "width": 6, "height": 30, "operation": "intersect"}}},
+        ]
+        broken = client.raw("model_batch", steps=swept, expected_revision=revision, request_id="invalid-sweep")
+        result = broken["structuredContent"]["result"]
+        assert broken["isError"] and result["failed_step"] == "arm", broken
+        assert [s["state"] for s in result["steps"]] == ["discarded", "discarded", "failed"] and "solid validation" in result["steps"][2]["error"], result["steps"]
+        assert client.call("context")["result"]["bodies"] == bodies and client.state()["revision"] == revision
+        # The batch's parent is no step's own choice: a join under it carries no "not used" warning.
+        joined = client.call("model_batch", parent=lid, expected_revision=revision, request_id="parent-join", steps=[
+            {"id": "slab", "command": "feature", "arguments": {"kind": "box", "inputs": {"x": 120, "length": 10, "width": 10, "height": 2}}},
+            {"id": "rib", "command": "feature", "arguments": {"kind": "box", "inputs": {"x": 125, "length": 10, "width": 2, "height": 2, "operation": "join"}}}])
+        assert not joined["result"]["steps"][1]["result"].get("warnings"), joined["result"]["steps"][1]
+        print("Every batch step validated; batch defaults raise no warnings: PASS", flush=True)
     finally:
         for connection in (client, observer):
             if connection:

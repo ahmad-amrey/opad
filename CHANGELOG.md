@@ -93,6 +93,12 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
   open.
 - AI assistants read OPAD's agent guide one section at a time instead of all 50 KB at once, which some of them could not
   take in; the whole guide is still there for those that want it.
+- **An AI assistant's multi-step change checks every step.** A step that makes a broken solid (a sweep along a path
+  too tight for its profile, say) now stops the whole change at that step and says which one, as a single step already
+  did. Before, a later step could swallow the broken body and the change went through with part of the model missing.
+  A component chosen for the whole change no longer adds a "not used" warning to every fillet, cut or join in it.
+- **Sweep paths join ends that nearly meet**, such as curves whose end points were typed to a few decimals. A path
+  that really is open now names the curves whose ends don't meet and how far apart they are.
 
 ## [0.10.0] - 2026-11-21
 

@@ -21,6 +21,9 @@
 #include <TColStd_Array1OfReal.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
+#include <ShapeFix_Wire.hxx>
+#include <TopExp.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <Standard_Failure.hxx>
 #include <TColStd_HArray1OfBoolean.hxx>
 #include <TColgp_Array1OfVec.hxx>
@@ -34,6 +37,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <set>
 
 namespace opad::design {
 
@@ -367,18 +372,94 @@ int region_at(const std::vector<Region>& regions, const Frame& frame, double u, 
   return best;
 }
 
+double path_snap_tolerance(double size) { return std::clamp(size * 1e-5, 1e-6, 1e-2); }
+
 TopoDS_Wire sketch_wire(const Sketch& sk, const Frame& frame, const std::vector<int>& entities) {
+  struct Made { int id; TopoDS_Edge edge; };
+  std::vector<Made> made;
+  Bnd_Box box;
   Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape();
   for (const auto& e : sk.entities) {
     if (entities.empty() ? e.construction : std::find(entities.begin(), entities.end(), e.id) == entities.end()) continue;
     TopoDS_Edge edge = entity_edge(sk, e, frame);
-    if (!edge.IsNull()) edges->Append(edge);
+    if (edge.IsNull()) continue;
+    made.push_back({e.id, edge});
+    BRepBndLib::Add(edge, box);
+    edges->Append(edge);
   }
   if (edges->IsEmpty()) throw Error("the sketch has no curves to follow");
+  // Ends closer than a small fraction of the path's size are one joint: points given to a few decimals (tangent points
+  // rounded to 1e-6, an arc whose end lies a hair off its start's radius) leave gaps of that order between curves meant
+  // to meet, and 1e-6 flat refused them.
+  const double tol = path_snap_tolerance(std::sqrt(box.SquareExtent()));
   Handle(TopTools_HSequenceOfShape) wires;
-  ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edges, 1e-6, Standard_False, wires);
-  if (wires.IsNull() || wires->Length() != 1) throw Error("the path must be one connected chain of curves");
-  return TopoDS::Wire(wires->Value(1));
+  ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edges, tol, Standard_False, wires);
+  if (wires.IsNull() || wires->Length() != 1) {
+    // Name the ends that meet no other curve, nearest gap first, so the sketch can be mended where it is open.
+    struct End { int id; const char* side; gp_Pnt at; };
+    std::vector<End> ends;
+    for (const auto& m : made) {
+      TopoDS_Vertex v0, v1;
+      TopExp::Vertices(m.edge, v0, v1, Standard_True);
+      if (!v0.IsNull()) ends.push_back({m.id, "start", BRep_Tool::Pnt(v0)});
+      if (!v1.IsNull()) ends.push_back({m.id, "end", BRep_Tool::Pnt(v1)});
+    }
+    struct Gap { size_t end, nearest; double distance; };
+    std::vector<Gap> open;
+    std::vector<int> branched;
+    for (size_t i = 0; i < ends.size(); ++i) {
+      size_t meets = 0, nearest = ends.size();
+      double best = 1e300;
+      for (size_t j = 0; j < ends.size(); ++j) {
+        if (ends[j].id == ends[i].id) continue;  // a curve's own other end (a closed curve) is no joint to another
+        const double d = ends[i].at.Distance(ends[j].at);
+        if (d <= tol) ++meets;
+        else if (d < best) { best = d; nearest = j; }
+      }
+      if (meets == 0 && nearest < ends.size()) open.push_back({i, nearest, best});
+      if (meets > 1 && std::find(branched.begin(), branched.end(), ends[i].id) == branched.end()) branched.push_back(ends[i].id);
+    }
+    auto fmt = [](double v) {
+      char text[32];
+      std::snprintf(text, sizeof text, "%.6g", v);
+      return std::string(text);
+    };
+    std::string detail;
+    if (!branched.empty()) {
+      detail = "; it branches at entity";
+      for (size_t i = 0; i < branched.size() && i < 6; ++i) detail += (i ? ", " : " ") + std::to_string(branched[i]);
+      detail += " (more than two curves meet at one point)";
+    }
+    // An open chain has two free ends of its own; more than two means a gap. n pieces have n - 1 gaps between them, each
+    // the nearest pair of free ends not used by a nearer gap.
+    const int pieces = wires.IsNull() ? 0 : wires->Length();
+    if (open.size() > 2) {
+      std::sort(open.begin(), open.end(), [](const Gap& a, const Gap& b) { return a.distance < b.distance; });
+      detail += "; the ends that do not meet (within " + fmt(tol) + " mm):";
+      std::set<size_t> used;
+      int listed = 0;
+      const int gaps = std::max(1, pieces - 1);
+      for (const Gap& g : open) {
+        if (used.count(g.end) || used.count(g.nearest)) continue;
+        used.insert(g.end);
+        used.insert(g.nearest);
+        if (listed++ == std::min(gaps, 4)) { if (gaps > 4) detail += " ..."; break; }
+        detail += std::string(listed > 1 ? ";" : "") + " entity " + std::to_string(ends[g.end].id) + "'s " + ends[g.end].side + " is " + fmt(g.distance) +
+                  " mm from entity " + std::to_string(ends[g.nearest].id) + "'s " + ends[g.nearest].side;
+      }
+    }
+    throw Error("the path must be one connected chain of curves (it falls into " + std::to_string(pieces) + " pieces" + detail +
+                "); join the ends with a coincident constraint or select fewer curves");
+  }
+  TopoDS_Wire wire = TopoDS::Wire(wires->Value(1));
+  // Close what remains of the gaps: neighbouring edges share one vertex, its tolerance covering the snap.
+  ShapeFix_Wire fix;
+  fix.Load(wire);
+  fix.SetPrecision(tol);
+  fix.SetMaxTolerance(tol);
+  fix.ClosedWireMode() = BRep_Tool::IsClosed(wire);
+  fix.FixConnected(tol);
+  return fix.Wire();
 }
 
 bool sketch_bounds(const Sketch& sk, double& u0, double& v0, double& u1, double& v1) {

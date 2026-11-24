@@ -562,6 +562,40 @@ TEST(construction_sweep_loft_pipe) {
   CHECK(resolve(doc).unresolved.empty());
 }
 
+// A path's curves whose ends were given to a few decimals (tangent points rounded to 1e-6) meet within a hair, not
+// exactly: ends within path_snap_tolerance (1e-5 of the path's size) are snapped; a real gap is refused naming the ends.
+TEST(sweep_path_snaps_near_ends_and_names_gaps) {
+  CHECK_NEAR(design::path_snap_tolerance(30), 3e-4, 1e-12);
+  CHECK_NEAR(design::path_snap_tolerance(1e-3), 1e-6, 1e-15);
+  CHECK_NEAR(design::path_snap_tolerance(1e6), 1e-2, 1e-12);
+  Sketch disc;
+  disc.add_circle(disc.add_point(0, 0), 2);
+  // A line along x, then a quarter arc turning up from its end; the arc starts `gap` mm above the line's end.
+  auto path = [](double gap, int& line, int& arc) {
+    Sketch sk;
+    const int a = sk.add_point(0, 0), b = sk.add_point(20, 0), c = sk.add_point(20, 10), s = sk.add_point(20, gap), e = sk.add_point(30 - gap, 10);
+    line = sk.add_line(a, b);
+    arc = sk.add_arc(c, s, e);
+    return sk;
+  };
+  Document doc = Document::create();
+  const std::string profile = run_id(sketch_cmd(doc, disc, {{"base", "yz"}}));
+  int line = 0, arc = 0;
+  const std::string joined = run_id(sketch_cmd(doc, path(4e-6, line, arc)));
+  feature_cmd(doc, "sweep", {{"profiles", json::array({json{{"sketch", profile}, {"all", true}}})}, {"path", {{"sketch", joined}}}});
+  const double length = 20 + M_PI / 2 * 10;
+  CHECK_NEAR(total_volume(doc), M_PI * 4 * length, M_PI * 4 * length * 0.01);
+  const std::string open = run_id(sketch_cmd(doc, path(0.5, line, arc)));
+  std::string error;
+  try {
+    feature_cmd(doc, "sweep", {{"profiles", json::array({json{{"sketch", profile}, {"all", true}}})}, {"path", {{"sketch", open}}}});
+  } catch (const std::exception& e) {
+    error = e.what();
+  }
+  CHECK(error.find("one connected chain") != std::string::npos);
+  CHECK(error.find("entity " + std::to_string(line) + "'s end is 0.5 mm from entity " + std::to_string(arc) + "'s start") != std::string::npos);
+}
+
 TEST(coil_and_thicken) {
   Document doc = Document::create();
   feature_cmd(doc, "coil", {{"diameter", "20 mm"}, {"pitch", "5 mm"}, {"turns", "4"}, {"size", "2 mm"}});
