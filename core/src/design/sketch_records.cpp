@@ -160,6 +160,8 @@ double dimension_value(const Sketch& sk, const SkConstraint& c) {
   }
   if (c.type == T::Offset) return c.value;  // what its curves were made at (refresh_offsets keeps them so)
   const auto* e = sk.entity(c.refs.at(0));
+  if (c.type == T::MajorRadius) return dist(point(e->p[0]), point(e->p[1]));
+  if (c.type == T::MinorRadius) return e->r;
   if (c.type == T::Radius || c.type == T::Diameter || c.type == T::ArcLength) {
     const double r = e->type == SkEntity::Type::Arc ? dist(point(e->p[0]),point(e->p[1])) : e->r;
     if (c.type == T::Radius) return r;

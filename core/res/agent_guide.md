@@ -83,7 +83,8 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
 - Curves share points by id: two lines meeting at point 3 are joined; no coincident constraint is needed.
 - Constraints, `refs` lists ids: `coincident horizontal vertical parallel perpendicular collinear tangent equal
   concentric midpoint symmetric fix smooth curvature`; dimensions `distance hdistance vdistance radius diameter angle
-  arc_length` take `value` (mm, or radians for angles) and optionally `expr` (`"width / 2"`), which then drives it.
+  arc_length major_radius minor_radius` take `value` (mm, or radians for angles) and optionally `expr` (`"width / 2"`),
+  which then drives it. An ellipse is dimensioned by `major_radius` and `minor_radius` (`[ellipse]`), not `radius`.
 - `smooth` (G2) and `curvature` join a spline's end to another spline, a line, a circle or an arc: smooth puts the end on
   it, along it and bending as it does, curvature only bends it so (straight by a line); `tangent` takes a spline too.
   These take open control-point splines of degree 2 or more (`degree` given), not fit splines. Both curves move as
@@ -157,6 +158,12 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   matched. Example: the four top edges of a box of height 20: `{"curve": "line", "at_plane": {"axis": "z", "value":
   20}}` with `"expect": 4`. `query_entities` returns what it matched as such a `rule`, ready to pass as an input; a
   feature given face/edge indices answers with a warning that points to it.
+- Rule values that are lengths (`radius_min/max`, `length_min/max`, `at_plane`'s value, `bounds` coordinates) may be
+  expressions of the parameters: `{"at_plane": {"axis": "z", "value": "height"}}` follows `height` when it changes.
+  `bounds_mode` "intersects" takes what reaches into the box, "outside" what stays out of it (default "inside": wholly
+  in it); a `null` coordinate leaves that side open (`"min": [null, null, 100]`). `length_min/max` (edges) and
+  `area_min/max` (faces, mm²) tell the outer and inner rim of a ring apart by size; `"loop": "inner"` picks the edges on
+  a hole of a face (a ring face's inner rim, a pocket's rim), `"outer"` every other edge.
 - Recognised details as a rule (faces only): `"select": {"recognized": "hole", "diameter": 6, "through": true}` is
   every face of the body's holes of that size; also `fillet` (`radius`), `chamfer` (`distance`), `wall`
   (`thickness`), `boss`, `pocket`; hole `type` simple|counterbore|countersink, `depth`, `cb_diameter`,

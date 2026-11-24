@@ -47,6 +47,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 
 #include "opad/assets.hpp"
@@ -356,10 +357,48 @@ json describe_entity(const TopoDS_Shape& sub) {
   return j;
 }
 
+json describe_entity(const TopoDS_Shape& sub, const json& filters) {
+  json j = describe_entity(sub);
+  auto asks = [&](const char* lo, const char* hi) { return filters.is_object() && (filters.contains(lo) || filters.contains(hi)); };
+  if (sub.ShapeType() == TopAbs_EDGE && asks("length_min", "length_max")) j["length"] = GCPnts_AbscissaPoint::Length(BRepAdaptor_Curve(TopoDS::Edge(sub)));
+  if (sub.ShapeType() == TopAbs_FACE && asks("area_min", "area_max")) j["area"] = area_properties(sub).mass;
+  return j;
+}
+
+std::function<json(const TopoDS_Shape&)> entity_describer(const TopoDS_Shape& body, const json& filters) {
+  // The edges on a hole of some face: every wire of a face but its outer one.
+  auto inner = std::make_shared<TopTools_IndexedMapOfShape>();
+  const bool loops = filters.is_object() && filters.contains("loop");
+  if (loops)
+    for (TopExp_Explorer f(body, TopAbs_FACE); f.More(); f.Next()) {
+      const TopoDS_Face& face = TopoDS::Face(f.Current());
+      const TopoDS_Wire outer = BRepTools::OuterWire(face);
+      for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next())
+        if (!w.Current().IsSame(outer)) TopExp::MapShapes(w.Current(), TopAbs_EDGE, *inner);
+    }
+  return [inner, loops, filters](const TopoDS_Shape& sub) {
+    json j = describe_entity(sub, filters);
+    if (loops && sub.ShapeType() == TopAbs_EDGE) j["loop"] = inner->Contains(sub) ? "inner" : "outer";
+    return j;
+  };
+}
+
 bool entity_matches(const json& detail, const json& filters, double tolerance) {
-  static const std::set<std::string> known = {"curve", "surface", "radius_min", "radius_max", "parallel_to", "normal", "at_plane", "bounds"};
+  static const std::set<std::string> known = {"curve", "surface", "radius_min", "radius_max", "length_min", "length_max", "area_min", "area_max",
+                                              "parallel_to", "normal", "at_plane", "bounds", "bounds_mode", "loop"};
   for (const auto& [key, value] : filters.items())
-    if (!known.count(key)) throw Error("unknown filter \"" + key + "\" (curve, surface, radius_min, radius_max, parallel_to, normal, at_plane, bounds)");
+    if (!known.count(key))
+      throw Error("unknown filter \"" + key + "\" (curve, surface, radius_min, radius_max, length_min, length_max, area_min, area_max, parallel_to, normal, "
+                  "at_plane, bounds, bounds_mode, loop)");
+  for (const auto& [key, value] : filters.items())  // an expression a rule selector did not evaluate (query_entities does)
+    if (value.is_string() && key != "curve" && key != "surface" && key != "parallel_to" && key != "normal" && key != "bounds_mode" && key != "loop")
+      throw Error("filter \"" + key + "\" takes a number here, not \"" + value.get<std::string>() + "\"");
+  const std::string bounds_mode = filters.value("bounds_mode", "inside");
+  if (bounds_mode != "inside" && bounds_mode != "intersects" && bounds_mode != "outside")
+    throw Error("bounds_mode is \"inside\" (the whole entity in the box, the default), \"intersects\" (any part of it) or \"outside\" (none of it)");
+  if (filters.contains("bounds_mode") && !filters.contains("bounds")) throw Error("bounds_mode needs bounds {min, max}");
+  if (filters.contains("loop") && filters["loop"] != "inner" && filters["loop"] != "outer")
+    throw Error("loop is \"inner\" (edges on a hole of one of the body's faces) or \"outer\" (every other edge)");
   auto axis = [](const std::string& a) { return a == "x" ? 0 : a == "y" ? 1 : 2; };
   // A direction filter as a unit vector: "x" / "+x" / "-z" or [x, y, z].
   auto direction = [&](const json& v, bool signed_axis) {
@@ -384,6 +423,16 @@ bool entity_matches(const json& detail, const json& filters, double tolerance) {
   if (filters.contains("surface") && detail.value("surface", "") != filters["surface"].get<std::string>()) return false;
   if (filters.contains("radius_min") && (!detail.contains("radius") || detail["radius"].get<double>() < filters["radius_min"].get<double>() - tolerance)) return false;
   if (filters.contains("radius_max") && (!detail.contains("radius") || detail["radius"].get<double>() > filters["radius_max"].get<double>() + tolerance)) return false;
+  // Edge lengths and face areas (measured by describe_entity when these are asked): the longer or the shorter of two loops.
+  auto in_range = [&](const char* field, const char* lo, const char* hi, double slack) {
+    if (!filters.contains(lo) && !filters.contains(hi)) return true;
+    if (!detail.contains(field) || !detail[field].is_number()) return false;
+    const double v = detail[field].get<double>();
+    return !(filters.contains(lo) && v < filters[lo].get<double>() - slack) && !(filters.contains(hi) && v > filters[hi].get<double>() + slack);
+  };
+  if (!in_range("length", "length_min", "length_max", tolerance)) return false;
+  if (!in_range("area", "area_min", "area_max", tolerance * tolerance)) return false;
+  if (filters.contains("loop") && detail.value("loop", "") != filters["loop"].get<std::string>()) return false;
   if (filters.contains("parallel_to")) {
     if (!detail.contains("direction")) return false;
     if (std::fabs(vec_of(detail["direction"]).Dot(direction(filters["parallel_to"], false))) < 1 - 1e-8) return false;
@@ -401,11 +450,19 @@ bool entity_matches(const json& detail, const json& filters, double tolerance) {
       const double at = plane["value"].get<double>();
       if (std::fabs(box["min"][k].get<double>() - at) > tolerance || std::fabs(box["max"][k].get<double>() - at) > tolerance) return false;
     }
-    if (filters.contains("bounds"))
-      for (int k = 0; k < 3; ++k)
-        if (box["min"][k].get<double>() < filters["bounds"]["min"][k].get<double>() - tolerance ||
-            box["max"][k].get<double>() > filters["bounds"]["max"][k].get<double>() + tolerance)
-          return false;
+    if (filters.contains("bounds")) {
+      // A null bound leaves that side open ([null, null, 100] as min: everything from z = 100 up).
+      const auto& region = filters["bounds"];
+      auto bound = [&](const char* side, int k, double open) { const json& v = region[side][k]; return v.is_null() ? open : v.get<double>(); };
+      bool inside = true, touches = true;
+      for (int k = 0; k < 3; ++k) {
+        const double lo = bound("min", k, -1e300), hi = bound("max", k, 1e300);
+        const double b0 = box["min"][k].get<double>(), b1 = box["max"][k].get<double>();
+        if (b0 < lo - tolerance || b1 > hi + tolerance) inside = false;
+        if (b1 < lo - tolerance || b0 > hi + tolerance) touches = false;
+      }
+      if (bounds_mode == "inside" ? !inside : bounds_mode == "intersects" ? !touches : touches) return false;
+    }
   }
   return true;
 }

@@ -85,6 +85,8 @@ def main():
             ("extrude-handle", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_EXTRUDE_HANDLE": "1", "OPAD_BENCH_HANDLESHOT": "{prefix}"}),
             ("sketch-handles", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_HANDLES": "{prefix}"}),
             ("sketch-primitives", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_PRIMITIVES": "{prefix}"}),
+            # The guided sketch workflow, ending with an ellipse's major and minor radius dimensions from the Dimension tool.
+            ("sketch-workflow", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_WORKFLOW": "{prefix}"}),
             ("leave", box, {"OPAD_BENCH_LEAVE": "1"}),
             ("two-d", box, {"OPAD_BENCH_TWOD": "{prefix}.png"}),
             ("instances", box, {"OPAD_BENCH_INSTANCES": "1"}),

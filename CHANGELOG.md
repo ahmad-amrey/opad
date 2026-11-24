@@ -23,6 +23,15 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - **Development builds, if you want them.** *Help > Offer development builds* makes OPAD offer the builds of the
   development branch and the release candidates too, not only releases, so you can try fixes and features before they
   ship. *About* now shows the build number.
+- **Ellipse dimensions.** An ellipse in a sketch takes a major and a minor radius dimension, with expressions like any
+  other, so a parametric ellipse no longer needs an equation spline. The Dimension tool picks the radius nearer where
+  you click the ellipse.
+- **Mirror names its copies.** *Swap in names* (e.g. `R=L, Right=Left`) names each mirrored copy after its source with
+  those words swapped ("Bracket R" becomes "Bracket L") and puts it in the component beside its source's whose name swaps
+  the same way ("Right side" to "Left side"), so a mirrored assembly needs no renaming or moving afterwards.
+- **Sharper edge and face rules.** A rule can take what reaches into a box (`bounds_mode` "intersects") or stays out of it
+  ("outside"), leave a side of the box open, pick edges and faces by length or area, and tell a ring's inner rim from its
+  outer one (`loop` "inner" / "outer").
 
 ### Changed
 - **AI activity in plain words.** The panel now reads like a log of what was done, with your part and step names and
@@ -66,6 +75,8 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - **Search commands puts the tools of where you work first:** in a sketch, *Sketch fillet* comes before *Fillet* (and
   so on for Mirror, Offset, Move and the patterns; "measure" finds Measure in a sketch, Distance outside it).
   Everything is still listed.
+- **Rules follow parameters.** The lengths in an edge or face rule (a plane's height, the box, the radius and length
+  limits) may be expressions such as `height` or `w / 2`, and the rule matches again when a parameter changes.
 
 ### Fixed
 - **Sketch fillet says why a corner can't be rounded:** two ends that only touch (common in DXF drawings: merge the
@@ -99,6 +110,9 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
   A component chosen for the whole change no longer adds a "not used" warning to every fillet, cut or join in it.
 - **Sweep paths join ends that nearly meet**, such as curves whose end points were typed to a few decimals. A path
   that really is open now names the curves whose ends don't meet and how far apart they are.
+- **Shell after a pocket near a fillet.** A body whose pocket comes close to a rim fillet, closer than the shell's
+  thickness, now shells, where it used to say it "cannot be shelled by that thickness". When it still cannot, the
+  message names the two faces that come too close and how far apart they are.
 
 ## [0.10.0] - 2026-11-21
 
