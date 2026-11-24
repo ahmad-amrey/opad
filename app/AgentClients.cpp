@@ -50,21 +50,38 @@ AgentClientRow::AgentClientRow(Client client, QString executable, QString discov
   m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
   m_status->hide();
   if (usesProgram()) {
+    // Shown only when OPAD did not find the program by itself (or the user chose one): a line that says so, the path, Browse.
     m_pathRow = new QWidget;
-    auto* row = new QHBoxLayout(m_pathRow);
+    auto* box = new QVBoxLayout(m_pathRow);
+    box->setContentsMargins(0, 0, 0, 0);
+    box->setSpacing(4);
+    m_pathLabel = new QLabel;
+    m_pathLabel->setObjectName("secondary");
+    m_pathLabel->setWordWrap(true);
+    box->addWidget(m_pathLabel);
+    auto* row = new QHBoxLayout;
     row->setContentsMargins(0, 0, 0, 0);
+    box->addLayout(row);
     layout->addWidget(m_pathRow);
     const char* key = client == Client::ClaudeCode ? "agent/claudeExecutable" : "agent/codexExecutable";
-    m_path = new QLineEdit(QSettings().value(key).toString());
+    QString saved = QSettings().value(key).toString();
+    if (isOpadProgram(saved)) {  // OPAD's own opad-cli chosen by mistake (the box once read like it asked for it)
+      QSettings().remove(key);
+      saved.clear();
+    }
+    m_path = new QLineEdit(saved);
     m_path->setObjectName(client == Client::ClaudeCode ? "claudeExecutable" : "codexExecutable");
-    m_path->setPlaceholderText(client == Client::ClaudeCode ? tr("Found by itself; or the path of claude") : tr("Found by itself; or the path of codex"));
+    m_path->setPlaceholderText(tr("Path to %1").arg(programName()));
     row->addWidget(m_path, 1);
     m_browse = new QPushButton(tr("Browse..."));
     row->addWidget(m_browse);
     connect(m_browse, &QPushButton::clicked, this, [this] {
       if (m_running) return;
-      const QString path = QFileDialog::getOpenFileName(this, tr("Select the %1 program").arg(name()));
-      if (!path.isEmpty()) setProgram(path);
+      const QString path = QFileDialog::getOpenFileName(this, tr("Select the %1 program (%2)").arg(name(), programName()));
+      if (path.isEmpty()) return;
+      if (isOpadProgram(path)) return message(tr("That is OPAD's own program. Choose %1's program (%2).").arg(name(), programName()));
+      message({});
+      setProgram(path);
     });
     connect(m_path, &QLineEdit::editingFinished, this, &AgentClientRow::refresh);
   }
@@ -128,12 +145,20 @@ void AgentClientRow::setProgram(const QString& path) {
 QString AgentClientRow::program() const {
   if (!m_path) return {};
   QString path = m_path->text().trimmed();
-  if (path.isEmpty()) {
+  if (path.isEmpty() || isOpadProgram(path)) {
     const QStringList found = m_client == Client::ClaudeCode ? claudeCandidates() : codexCandidates();
     return found.value(0);
   }
   if (!QFileInfo(path).isAbsolute()) path = QStandardPaths::findExecutable(path);
   return QFileInfo(path).isFile() ? path : QString();
+}
+
+QString AgentClientRow::programName() const {
+#ifdef Q_OS_WIN
+  return m_client == Client::ClaudeCode ? QStringLiteral("claude.exe") : QStringLiteral("codex.exe");
+#else
+  return m_client == Client::ClaudeCode ? QStringLiteral("claude") : QStringLiteral("codex");
+#endif
 }
 
 QString AgentClientRow::restartHint() const {
@@ -160,6 +185,12 @@ void AgentClientRow::show(State state, const QString& detail) {
     case State::Stale: text = tr("Registered for another OPAD or an old data folder: %1").arg(detail); colour = t.amber; break;
     case State::Failed: text = tr("Could not read its settings: %1").arg(detail); colour = t.red; break;
   }
+  // Details also names the files OPAD uses: the program it found (or was given), Claude Desktop's settings file.
+  if (usesProgram()) {
+    if (const QString p = program(); !p.isEmpty()) text += "\n" + tr("Program: %1").arg(QDir::toNativeSeparators(p));
+  } else if (state != State::NotFound) {
+    text += "\n" + tr("Settings file: %1").arg(QDir::toNativeSeparators(desktopConfigPath()));
+  }
   m_status->setText(text);
   m_status->setStyleSheet(QString("color: %1; font-size: 12px;").arg(theme::css(t.fg2)));
   // The state in a word or two, with its glyph (a state is never told by colour alone).
@@ -177,7 +208,12 @@ void AgentClientRow::show(State state, const QString& detail) {
   m_pill->setText(pill);
   m_pill->setToolTip(text);
   m_pill->setStyleSheet(QString("color: %1; font-size: 12px;").arg(theme::css(colour)));
-  if (m_pathRow) m_pathRow->setVisible(state == State::NotFound || (m_path && !m_path->text().trimmed().isEmpty()));
+  if (m_pathRow) {
+    const bool chosen = m_path && !m_path->text().trimmed().isEmpty();
+    m_pathRow->setVisible(state == State::NotFound || chosen);
+    m_pathLabel->setText(state == State::NotFound ? tr("OPAD looked for %1 and didn't find it. If it is installed, choose its program (%2).").arg(name(), programName())
+                                                  : tr("%1's program, chosen by you (empty it to let OPAD find it):").arg(name()));
+  }
   const bool program = !usesProgram() || !this->program().isEmpty();
   m_connect->setVisible(state == State::NotRegistered);
   m_connect->setEnabled(program && !m_running);

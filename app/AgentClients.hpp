@@ -43,13 +43,15 @@ class AgentClientRow : public QWidget {
   void show(agentclients::State state, const QString& detail = {});
   void message(const QString& text);
   QString restartHint() const;
+  QString programName() const;  // claude.exe / codex.exe (claude / codex elsewhere)
   Client m_client;
   QString m_executable, m_discovery;
   agentclients::State m_state = agentclients::State::Unchecked;
   std::optional<agentclients::Entry> m_entry;
   QLabel *m_title, *m_status, *m_note, *m_pill;
   QToolButton* m_details;  // shows m_status (the technical state line, report())
-  QWidget* m_pathRow = nullptr;
+  QWidget* m_pathRow = nullptr;  // the line, the path and Browse
+  QLabel* m_pathLabel = nullptr;
   QLineEdit* m_path = nullptr;
   QPushButton *m_browse = nullptr, *m_connect, *m_point, *m_remove, *m_check;
   bool m_running = false;

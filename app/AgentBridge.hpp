@@ -180,6 +180,12 @@ class AgentBridge : public QObject {
   QElapsedTimer m_working;              // since the running call started: "working" shows after 400 ms
   QElapsedTimer m_waiting;              // since an edit was refused because the user is editing: "waiting for you"
   QDateTime m_leftAt;QString m_leftName;  // who left and when: "Claude left" for 60 s
+  // The phase an assistant says it is in (set_phase): the chip and the strip show it while its connection lasts; cleared by
+  // an empty title, its disconnect, the user's Stop or another document.
+  QString m_phase;QPointer<QLocalSocket> m_phaseOwner;
+  QString phase() const;  // out of line: QPointer<QLocalSocket> needs the complete type (Qt 6.4)
+  void setPhase(const std::shared_ptr<Session>&,const std::string& title);
+  static QString shortPhase(const QString&);
   std::map<std::string,std::vector<qint64>> m_retries;  // a retryable code's times (three in 20 s: "Retrying…")
   QPointer<Toast> m_needsToast;
   // Show on a change row: the camera before it (Back), the camera it rested at (a move away from it ends Back), and the

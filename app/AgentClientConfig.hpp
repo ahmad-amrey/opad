@@ -42,9 +42,12 @@ bool samePath(const QString& a, const QString& b);
 std::optional<Entry> readServer(const QString& file, QString* error = nullptr);
 bool writeServer(const QString& file, const std::optional<Entry>& entry, QString* error = nullptr, bool* changed = nullptr);
 
-QString desktopConfigPath();   // Claude Desktop: %APPDATA%\Claude, ~/Library/Application Support/Claude, ~/.config/Claude
+// Claude Desktop's configuration file: on Windows the MSIX app's data folder %LOCALAPPDATA%\Claude-Data\claude_<publisher>
+// when there is one, else %APPDATA%\Claude; ~/Library/Application Support/Claude; ~/.config/Claude.
+QString desktopConfigPath();
 QString claudeCodeConfigPath();  // Claude Code's user settings: $CLAUDE_CONFIG_DIR/.claude.json, else ~/.claude.json
 QStringList claudeCandidates();  // where the claude program is usually installed (PATH first)
-QStringList codexCandidates();
+QStringList codexCandidates();  // also the Codex app's own codex program (Windows: from its package's install folder)
+bool isOpadProgram(const QString& path);  // opad-cli / opad itself: never a client's program (a Browse that picked it)
 
 }  // namespace agentclients

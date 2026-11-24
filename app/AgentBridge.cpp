@@ -85,11 +85,13 @@ void AgentBridge::followReplace(){
     !m_replacing.path.isEmpty() && QFileInfo(m_doc->path())==QFileInfo(m_replacing.path);
   if(!same){
     ++m_identity;for(auto& s:m_sessions)s->bound=false;
+    m_phase.clear();m_phaseOwner.clear();  // a phase of the document that went
     // Rows of the document that went no longer show or undo anything: they say where they were.
     if(m_feed && !m_feed->events().empty()){
       const QString from=QFileInfo(m_replacing.path).fileName();
       for(auto e:m_feed->events()){
         if(e.kind==ActivityEvent::Divider)continue;
+        if(e.kind==ActivityEvent::Phase){e.stale=true;m_feed->post(e);continue;}
         e.canShow=false;e.canUndo=false;e.subjects.clear();e.stale=true;
         if(!from.isEmpty())e.second=tr("From %1").arg(from);
         m_feed->post(e);
@@ -197,6 +199,7 @@ void AgentBridge::accept(){while(m_server.hasPendingConnections()){
       if(m_services)m_services->toast(label.isEmpty()?tr("%1 disconnected; its preview was removed. Nothing changed.").arg(name.brief)
                                                      :tr("%1 disconnected; its preview %2 was removed. Nothing changed.").arg(name.brief,agentsay::plain(agentsay::quote(label,48))),QString(),{},6000);
     }
+    if(m_phaseOwner==session->socket){m_phase.clear();m_phaseOwner.clear();}
     if(wasBound){
       m_leftAt=QDateTime::currentDateTime();m_leftName=name.brief;
       divider(tr("%1 disconnected · %2").arg(name.brief,QTime::currentTime().toString("HH:mm")));
@@ -341,6 +344,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
   }
   const auto key=(s->target+"/").toStdString()+args.value("request_id","");
   if(name=="open_document" || name=="new_document"){openDocument(s,name,args,key,hash);return;}  // AgentOpen.cpp
+  if(name=="set_phase"){setPhase(s,args.value("title",std::string()));return;}  // also on the start page ("Opening the file")
   if(!m_doc->hasDocument && name!="wait_for_idle" && name!="stop" && name!="live_state" && name!="request_status"){
     fail(s,"no_document",tr("No document is open in this window: open_document opens a file, new_document makes an empty .opad."));return;
   }

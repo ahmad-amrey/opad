@@ -94,6 +94,10 @@ const json& live_tools() {
   add("live_select","Select up to 25 bodies or subshapes of the same kind in the viewport. Selection is applied asynchronously; inspect live_state afterwards. Does not edit geometry.",object({{"refs",{{"type","array"},{"items",{{"type",{"string","object"}}}},{"minItems",1},{"maxItems",25}}},{"expected_revision",revision()}},{"refs","expected_revision"}));
   add("request_status","Find an earlier request's committed, failed, cancelled or pending receipt after reconnecting.",object({{"request_id",str()}},{"request_id"}));
   add("stop","Cancel unfinished agent work and remove temporary previews. Completed edits remain undoable.",object());
+  // What the assistant is working on, in its own few words: OPAD's AI chip and a heading in the AI activity panel (the
+  // panel's rows give the details). Changes nothing in the document.
+  add("set_phase","Tell the user in a few words what you are working on, e.g. \"Designing the mounting bracket\". Shown in OPAD's AI chip and as a heading in its activity panel until the next call. Call it at each new stage, not each step; empty clears. Changes nothing.",
+      object({{"title",{{"type","string"},{"maxLength",80},{"description","At most about 6 words, in the user's language."}}}},{"title"}));
   // Gap log #14: the document's own undo and redo, one step each (an agent's commit, a batch or a person's edit).
   for(const auto name:{"undo","redo"})
     add(name,std::string(name)=="undo"?"Undo the document's last step (whoever made it), as Edit > Undo does; not during a transaction. The reply names the step.":"Redo the step undo took back, as Edit > Redo does.",
