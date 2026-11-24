@@ -262,6 +262,11 @@ StudyRun run_motion(const Document& doc, const Scene& scene, const json& st, con
   run.summary["completed"] = !stopped;
   run.summary["joints"] = joints;
   if (!tsum.empty()) run.summary["traces"] = tsum;
+  // How close the parts come along the way (MCP stress test #21): every frame, not only the poses one would pick by hand.
+  if (const json c = st.value("clearance", json(false)); !c.is_null() && c != false) {
+    if (!c.is_boolean() && !c.is_object()) throw Error("a motion study's clearance is true or {\"a\", \"b\", \"ignore\", \"clearance_mm\"}");
+    run.summary["clearance"] = path_clearance(doc, scene, run, c, progress);
+  }
   if (!run.warnings.empty()) run.summary["warnings"] = run.warnings;
   return run;
 }
@@ -312,7 +317,7 @@ json study_report(const StudyRun& run, const json& options) {
   }
   auto picked = [&](const Series& s) {
     if (want == true)
-      return s.group == "value" || s.group == "trace" || s.group == "motor" || s.group == "energy" || s.group == "reaction" || s.group == "temperature";
+      return s.group == "value" || s.group == "trace" || s.group == "motor" || s.group == "energy" || s.group == "reaction" || s.group == "temperature" || s.group == "clearance";
     for (const auto& w : want)
       if (w.is_string() && (w.get<std::string>() == s.name || w.get<std::string>() == s.group || w.get<std::string>() == s.id)) return true;
     return false;

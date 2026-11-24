@@ -2554,6 +2554,36 @@ TEST(an_equation_curve_follows_its_parameters_within_its_tolerance) {
   CHECK_THROWS(commands::run("sketch", {{"geometry", mixed}}, &doc));
 }
 
+// MCP stress test #23: parameters that only an equation curve names (an ellipse's half axes) were listed with used_by
+// [] and could be deleted; a rename left the equation naming the old name.
+TEST(params_used_by_sees_equation_curves) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "cup_a"}, {"expr", "30 mm"}}, &doc);
+  commands::run("param", {{"name", "cup_b"}, {"expr", "18 mm"}}, &doc);
+  commands::run("param", {{"name", "spare"}, {"expr", "1 mm"}}, &doc);
+  const json ellipse = {{"id", 10}, {"type", "spline"},
+                        {"equation", {{"x", "cup_a * cos(t)"}, {"y", "cup_b * sin(t)"}, {"t0", "0 deg"}, {"t1", "360 deg"}, {"tolerance", 0.01}}}};
+  const json made = commands::run("sketch", {{"name", "Cup outline"}, {"geometry", {{"entities", json::array({ellipse})}}}}, &doc);
+  const std::string sk = made["sketch_id"];
+  feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", sk}}})}, {"distance", "4 mm"}});
+  auto users = [&](const std::string& name) {
+    for (const auto& p : commands::run("params", json::object(), &doc))
+      if (p["name"] == name) return p["used_by"];
+    return json();
+  };
+  CHECK(users("cup_a") == json::array({"Cup outline"}));
+  CHECK(users("cup_b") == json::array({"Cup outline"}));
+  CHECK(users("spare") == json::array());
+  CHECK_THROWS(commands::run("param_delete", {{"name", "cup_a"}}, &doc));
+  // A rename follows into the equation, and the outline still regenerates from it.
+  commands::run("param", {{"name", "cup_a"}, {"rename", "cup_width"}}, &doc);
+  CHECK(users("cup_width") == json::array({"Cup outline"}));
+  commands::run("param", {{"name", "cup_width"}, {"expr", "32 mm"}}, &doc);
+  const Scene s = resolve(doc);
+  CHECK(s.unresolved.empty());
+  CHECK_EQ(s.sketch(sk)->geometry["entities"][0]["equation"]["x"].get<std::string>(), std::string("cup_width * cos(t)"));
+}
+
 // Gap log #14: an axis through two free points; combine with several targets; a sketch pattern given only its seeds
 // and inputs.
 TEST(axis_through_free_points_combine_with_several_targets_and_sketch_patterns) {

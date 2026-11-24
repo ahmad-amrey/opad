@@ -32,6 +32,10 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - **Sharper edge and face rules.** A rule can take what reaches into a box (`bounds_mode` "intersects") or stays out of it
   ("outside"), leave a side of the box open, pick edges and faces by length or area, and tell a ring's inner rim from its
   outer one (`loop` "inner" / "outer").
+- **Motion studies check clearance along the way.** Turn on *clearance* in a motion study's settings and it measures
+  how close the moving parts come at every frame: the first collision (when, which two parts, and whether they cross or
+  only touch), the closest approach, the pairs closer than a gap you set, and a minimum-distance curve over time. Parts
+  that already touch at the start, like a pin in its bore, are listed apart. No more posing the worst frames one by one.
 
 ### Changed
 - **AI activity in plain words.** The panel now reads like a log of what was done, with your part and step names and
@@ -113,6 +117,10 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - **Shell after a pocket near a fillet.** A body whose pocket comes close to a rim fillet, closer than the shell's
   thickness, now shells, where it used to say it "cannot be shelled by that thickness". When it still cannot, the
   message names the two faces that come too close and how far apart they are.
+- Changing part of a study's settings (an AI assistant adding traces, say) keeps the rest: the drivers are no longer
+  lost. The settings given are merged in, and an empty value removes one.
+- A parameter used only in a sketch's equation curve (an ellipse's half axes, for example) is now listed as used by
+  that sketch, can't be deleted while the sketch needs it, and renaming it updates the equation.
 
 ## [0.10.0] - 2026-11-21
 
