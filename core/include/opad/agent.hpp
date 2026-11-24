@@ -21,8 +21,13 @@ json resolve_reference(const Document&, const Scene&, const json& token, bool re
 json query_entities(const Document&, const Scene&, const json& args, const std::function<bool()>& cancelled = {});
 json validate_design(const Document&, const Scene&, const json& args, const std::function<bool()>& cancelled = {});
 // The agent guide (core/res/agent_guide.md, compiled in, TODO 10 B2): the conventions schemas cannot carry. Both MCP
-// servers list it as a resource; live_diagnostics returns it with include_guide.
+// servers list it as a resource (opad://guide/agent, and each section as opad://guide/agent#<id>); live_diagnostics returns
+// its index with include_guide and one section with guide_section. The whole guide (~50 KB) is too long for many agents'
+// tool results (live-MCP stress test, 2026-11-24), so it is offered by `##` section.
 const std::string& guide();
+json guide_index();  // {"sections": [{"id", "title", "bytes"}], "overview": the text before the first section, "read": how}
+// {"id", "title", "text"} of one section ("all": the whole guide); an unknown id throws, naming the ids.
+json guide_section(const std::string& id);
 json resources();                                // resources/list result
 json read_resource(const std::string& uri);      // resources/read result; throws for an unknown uri
 }

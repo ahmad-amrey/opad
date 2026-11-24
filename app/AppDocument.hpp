@@ -40,7 +40,16 @@ class AppDocument : public QObject {
   bool viewOnly() const { return browse || readOnly; }
   bool hasDocument = false;
   unsigned long long generation = 0;
+  // The scene's revision: every re-resolve moves it, also those that change nothing in the document (a timeline roll-back,
+  // an editor's roll-back while a feature or sketch is edited, a theme change redrawing the icons, detach()).
   unsigned long long revision = 0;
+  // The committed content's revision (ops appended, undone, redone or removed, the document opened, replaced, merged or
+  // reloaded): what an agent's expected_revision is checked against. A live-MCP stress test saw `revision` go 5 -> 6 -> 7
+  // with no op while the user only rolled the timeline (2026-11-24): every agent write then failed with stale_revision.
+  unsigned long long contentRevision = 0;
+  // What moved contentRevision last ({"revision", "cause", "label"}), plus `view_refreshes`: the re-resolves since that
+  // left the content alone, by cause. live_state reports it as `revision_change`.
+  opad::json revisionChange() const;
   bool loading = false;      // a worker thread owns the document content until loadFinished
   opad::json lastLoad;       // what the reader of the last finished open or import said (ImportResult::to_json + "file")
   // Linked files (opad/assets.hpp) of the open document as the last load found them: AssetState::to_json per asset.
@@ -144,7 +153,11 @@ class AppDocument : public QObject {
   // Where the display of the bodies starts in the load's overall progress, in per cent (the document's own part comes
   // before: an .opad file is mostly display work, a translated one mostly translation).
   int displayStart() const { return m_displayStart; }
-  void refresh();
+  // The content changed: re-resolve the scene, move both revisions. `cause` (edit, undo, open, ...) and `label` are
+  // what revisionChange() reports.
+  void refresh(const char* cause = "edit", const QString& label = {});
+  // Only the view changed (a roll-back, the icons): re-resolve the scene, move `revision` only.
+  void refreshView(const char* cause);
   // KiCad boards: the reader's options from the settings (kicad/*).
   static opad::KicadOptions kicadOptions();
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
@@ -162,7 +175,7 @@ class AppDocument : public QObject {
   void recover(opad::Document&& document, opad::Scene&& resolved);  // an unsaved copy, no path (see Recovered)
   // Prepared on a worker. Swaps the old values back into the caller for worker disposal.
   void commitSnapshot(opad::Document& document, opad::Scene& resolved,
-                      unsigned long long expectedRevision, const QString& label);
+                      unsigned long long expectedRevision, const QString& label, const char* cause = "edit");  // contentRevision
 
   QString title() const;
   QString path() const;
@@ -295,6 +308,9 @@ class AppDocument : public QObject {
   void checkActive();  // the active component still a component of the (whole) scene, else the root
   // Adds the targets of ops[from..] to `nodes`; false when one of them is not an appearance, transform, rename or reparent.
   static bool touches(const std::vector<opad::Op>& ops, size_t from, std::vector<std::string>& nodes);
+  void resolveScene();  // refresh() and refreshView(): the scene re-resolved, `revision` moved, `changed` emitted
+  void contentChanged(const char* cause, const QString& label);  // contentRevision moved, with what moved it
+  opad::json m_contentChange = opad::json::object(), m_viewSince = opad::json::object();
   Change m_change, m_next;  // the last refresh's, and what the next one reports (anything unless the caller says)
   std::string m_rollback, m_active;
   std::string m_resolvedRollback;  // what the scene was resolved up to: another point is a change of everything

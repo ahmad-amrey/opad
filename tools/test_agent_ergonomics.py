@@ -12,7 +12,7 @@ sizes: replies stay small on a linked board of many parts: import and model_batc
 import's root and one line per linked file (a Move of the board), viewport_image counts the visible bodies unless asked
 for their ids, tree pages.
 open: from a window's start page an agent makes a new document (new_document) and opens others (open_document, a STEP in
-viewer mode), bound to each in turn; unsaved changes refuse both (nothing discarded), an existing path refuses new_document.
+viewer mode), bound to each in turn; feature_kinds and feature_schema answer there; unsaved changes refuse both (nothing discarded), an existing path refuses new_document.
 """
 import json
 import argparse
@@ -178,6 +178,13 @@ def check_open(app, cli, root):
         client = desktop.bind(cli)  # a window with no document is a target too
         none = client.raw("context")
         assert none["isError"] and none["structuredContent"]["error"]["code"] == "no_document", none
+        # The feature catalogue needs no document (live-MCP stress test, 2026-11-24).
+        kinds = client.call("feature_kinds")
+        assert "box" in json.dumps(kinds["result"]), kinds
+        schema = client.call("feature_schema", kind="box")
+        assert "length" in json.dumps(schema["result"]), schema
+        unknown = client.raw("feature_schema", kind="nothing")
+        assert unknown["isError"] and unknown["structuredContent"]["error"]["code"] == "invalid_arguments", unknown
         made = root / "made" / "new.opad"
         created = client.call("new_document", path=str(made), request_id=rid())
         assert created["state"] == "committed" and created["result"]["created"] and made.exists(), created

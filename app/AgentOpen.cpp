@@ -76,13 +76,13 @@ void AgentBridge::openDocument(const std::shared_ptr<Session>& s, const std::str
       s->bound = true;  // the document this connection asked for: bound to it, as live_bind would
       s->target = target();
       m_receipts[receipt].state = "committed";
-      m_receipts[receipt].revision = m_doc->revision;
+      m_receipts[receipt].revision = m_doc->contentRevision;
       const std::string again = (target() + "/").toStdString() + receipt.substr(receipt.find('/') + 1);  // request_status, bound to it
       json result = {{"path", m_doc->path().toStdString()}, {"target", target().toStdString()}, {"document", m_doc->doc.header.uuid},
                      {"title", m_doc->title().toStdString()}, {"created", create}, {"viewer", m_doc->browse}, {"read_only", m_doc->readOnly},
                      {"bodies", m_doc->scene.all_bodies().size()}, {"units", m_doc->scene.units}};
       if (m_doc->browse) result["next"] = "Viewer mode: the file is shown read-only; save it as an .opad (save with a path) to edit it.";
-      reply(s, live_result({{"state", "committed"}, {"revision", m_doc->revision}, {"result", result}}), receipt);
+      reply(s, live_result({{"state", "committed"}, {"revision", m_doc->contentRevision}, {"result", result}}), receipt);
       m_receipts[again] = m_receipts[receipt];
       const QString shown = QFileInfo(path).fileName();
       activity(create ? tr("Agent made and opened %1").arg(shown) : tr("Agent opened %1").arg(shown));

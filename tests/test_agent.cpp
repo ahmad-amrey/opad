@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <set>
 #include "opad/agent.hpp"
 #include "opad/live.hpp"
 #include "opad/core.hpp"
@@ -122,9 +123,11 @@ int main(){try {
   // Offset relationship (measured 158654 live, 89500 headless): sketch_tool's offset holds its copy by an editable offset
   // dimension (inputs.relation).
   // git_init's own_folder (measured 158967 live): a shared folder refused unless it says move or stay.
-  // set_phase (+0.9 KB live, measured 159873; live only): the assistant's few words for what it is working on, shown in the
-  // AI chip and as a heading in the activity panel.
-  CHECK(live<160000);  // 159100 before set_phase; 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  // 2026-11-24, the agent guide by section (live-MCP stress test: include_guide returned ~54 KB): live_diagnostics'
+  // guide_section input and its description (measured 159115 live).
+  // set_phase (+0.8 KB live; live only): the assistant's few words for what it is working on, shown in the AI chip and
+  // as a heading in the activity panel (both merged: measured 160021).
+  CHECK(live<160200);  // 159300 before set_phase; 159100 before the guide by section; 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
   CHECK(headless<89950);  // 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
@@ -134,6 +137,29 @@ int main(){try {
   CHECK_THROWS(agent::validate_input(agent::live_output_schema("sketch"),{{"result",{{"sketch_id",12}}}}));
   CHECK_EQ(agent::transaction_policy()["scope"],"connection");
   CHECK(agent::live_guide().at("example").size()>4);
+  // The guide by section (live-MCP stress test 2026-11-24: include_guide returned ~54 KB). The index is small, every section
+  // reads back as itself, together they are the whole guide, and the resource takes the section after '#'.
+  {
+    const auto index=agent::guide_index();
+    CHECK(index.dump().size()<6000);CHECK(index["sections"].size()>=10);CHECK_EQ(index["total_bytes"],agent::guide().size());
+    std::string whole=agent::guide_section("overview")["text"];std::set<std::string> ids;
+    for(const auto& s:index["sections"]){
+      const auto id=s["id"].get<std::string>();CHECK(ids.insert(id).second);CHECK(id.find(' ')==std::string::npos);
+      const auto section=agent::guide_section(id);CHECK_EQ(section["text"].get<std::string>().size(),s["bytes"].get<size_t>());
+      CHECK(section["text"].get<std::string>().rfind("## "+section["title"].get<std::string>(),0)==0);
+      whole+=section["text"].get<std::string>();
+      CHECK_EQ(agent::read_resource("opad://guide/agent#"+id)["contents"][0]["text"],section["text"]);
+    }
+    CHECK(whole==agent::guide());CHECK(ids.count("units-and-expressions"));
+    CHECK_EQ(agent::guide_section("all")["text"],agent::guide());
+    CHECK_EQ(agent::read_resource("opad://guide/agent")["contents"][0]["text"],agent::guide());
+    CHECK_THROWS(agent::guide_section("nothing"));CHECK_THROWS(agent::read_resource("opad://guide/agent#nothing"));
+    CHECK_EQ(agent::resources()["resources"].size(),index["sections"].size()+2);  // the guide, its overview and sections
+    json out=json::object();agent::add_guide(out,{{"include_guide",true},{"guide_section","nothing"}});
+    CHECK(out["agent_guide"].contains("sections") && out["agent_guide_section"].contains("error") && !out["agent_guide_section"]["sections"].empty());
+    out=json::object();agent::add_guide(out,{{"guide_section","references"}});CHECK_EQ(out["agent_guide_section"]["title"],"References");
+    agent::validate_input(agent::live_schema("live_diagnostics"),{{"include_guide",true},{"guide_section","references"}});
+  }
   CHECK_THROWS(agent::validate_input(agent::live_schema("request_status"),{{"request_id",""}}));
   CHECK(agent::live_mutation("save"));
   // Gap log #4: measure is a read unless pinned; then it needs the revision and a request id like any write.

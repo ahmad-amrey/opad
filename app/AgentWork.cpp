@@ -265,7 +265,7 @@ json compactResult(const json& r,const opad::Scene& scene,int depth=0){
 }
 }
 void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)> done,int waited){
-  if(m_cache && m_cache->revision==m_doc->revision){done(m_cache,{});return;}
+  if(m_cache && m_cache->revision==m_doc->contentRevision){done(m_cache,{});return;}
   // Another capture or a save holds the document (a recovery checkpoint right after a commit): wait for it rather
   // than fail the call (gap log #3: "snapshot_failed: Document is busy" after every commit).
   if(m_doc->snapshotBusy() && waited<30000){
@@ -273,7 +273,7 @@ void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)
     QTimer::singleShot(20,this,[self,done=std::move(done),waited]()mutable{if(self)self->snapshot(std::move(done),waited+20);});
     return;
   }
-  const auto revision=m_doc->revision,generation=m_doc->generation;QPointer<AgentBridge> self=this;
+  const auto revision=m_doc->contentRevision,generation=m_doc->generation;QPointer<AgentBridge> self=this;
   if(!m_doc->captureSnapshot(m_jobs,[self,revision,generation,done](std::shared_ptr<opad::Document> copy,const QString& error){
     if(!self)return;if(!copy){done({},error);return;}
     auto value=std::make_shared<Snapshot>();value->doc=std::move(copy);value->revision=revision;
@@ -281,7 +281,7 @@ void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)
     self->m_jobs->async(tr("Preparing agent context"),[value](Progress p){value->scene=opad::resolve(*value->doc);if(p.cancelled())throw opad::Error("cancelled");},
       [self,value,done,generation](bool ok,const QString& error){
         if(!self)return;if(!ok){done({},error);return;}
-        if(generation!=self->m_doc->generation || value->revision!=self->m_doc->revision){done({},tr("Document changed while preparing context. Retry."));return;}
+        if(generation!=self->m_doc->generation || value->revision!=self->m_doc->contentRevision){done({},tr("Document changed while preparing context. Retry."));return;}
         self->m_cache=value;done(value,{});
       });
   },true))done({},tr("Document is busy. Retry after the current operation."));
@@ -299,7 +299,7 @@ void AgentBridge::save(const std::shared_ptr<Session>& session,const json& args,
     error["structuredContent"]["error"]["ask_user"]="Ask the user to answer OPAD's card about the file at the top of the 3D view, then read live_state again before saving.";
     activity(tr("Agent save refused: the file changed on disk and the user is being asked"));reply(session,std::move(error),receipt);return;
   }
-  const auto revision=m_doc->revision,epoch=++m_epoch;
+  const auto revision=m_doc->contentRevision,epoch=++m_epoch;
   m_busy=true;m_owner=session->socket;activity(tr("Agent: %1").arg("save"));
   try {
     m_job=m_doc->saveAsync(m_jobs,QString::fromStdString(args.value("path","")),args.value("overwrite",false),
@@ -331,7 +331,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
   if(write && transaction.empty() && m_prepared && m_prepared->transaction){fail(session,"transaction_active",tr("Commit or cancel the current transaction first."),receipt);return;}
   if(name=="export" && preview){fail(session,"invalid_export",tr("Export a transaction's staged state, or the document; a preview cannot be exported."),receipt);return;}
   const auto state=liveState();const auto linked=name=="context"?linkedFiles():json();  // read here, on the UI thread
-  m_busy=true;m_owner=session->socket;const auto epoch=++m_epoch,revision=m_doc->revision;
+  m_busy=true;m_owner=session->socket;const auto epoch=++m_epoch,revision=m_doc->contentRevision;
   const auto started=std::make_shared<QElapsedTimer>();started->start();activity(tr("Agent: %1").arg(QString::fromStdString(name)));
   // The call's row, running until it is done (none for hidden calls and lookups, which fold; a transaction's steps go under
   // its group). The text comes from the arguments; the done form from what changed.
@@ -542,7 +542,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         }else fail(session,error=="cancelled"?"cancelled":"invalid_operation",error,receipt);
         release(result);return;
       }
-      if(session->target!=target() || m_doc->revision!=revision || (write && (!canEdit() || editorBusy()))){fail(session,"stale_revision",tr("The document or access changed. The computed edit was discarded."),receipt);release(result);return;}
+      if(session->target!=target() || m_doc->contentRevision!=revision || (write && (!canEdit() || editorBusy()))){fail(session,"stale_revision",tr("The document or access changed. The computed edit was discarded."),receipt);release(result);return;}
       if(write && name!="export"){
         auto prepared=std::make_shared<Prepared>();prepared->snapshot=result->snapshot;prepared->id=newId();prepared->label=QString::fromStdString(name);prepared->owner=session->socket;prepared->transaction=!transaction.empty();prepared->result=std::move(result->output);prepared->changes=std::move(result->delta);
         if(name=="model_batch"){  // later batches on this connection may refer to these steps
@@ -580,7 +580,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           const auto kind=refs.front().kind;
           if(kind==opad::Ref::Kind::Body){std::vector<std::string> ids;for(const auto& r:refs)ids.push_back(r.body);m_viewport->selectNodes(ids);}
           else {
-            connect(m_viewport,&Viewport::filterApplied,this,[this,refs,revision,epoch]{if(m_doc->revision==revision && epoch==m_epoch)m_viewport->selectRefs(refs);},Qt::SingleShotConnection);
+            connect(m_viewport,&Viewport::filterApplied,this,[this,refs,revision,epoch]{if(m_doc->contentRevision==revision && epoch==m_epoch)m_viewport->selectRefs(refs);},Qt::SingleShotConnection);
             m_viewport->setSelectionFilter(kind==opad::Ref::Kind::Face?Viewport::SelFilter::Face:kind==opad::Ref::Kind::Edge?Viewport::SelFilter::Edge:Viewport::SelFilter::Vertex);
           }
         }
@@ -613,7 +613,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         }
         reply(session,std::move(response),receipt);activity(tr("Completed: %1 (%2 ms)").arg(QString::fromStdString(name)).arg(started->elapsed()));
       }
-      trace::log(QString("agent: %1 %2 ms revision %3").arg(QString::fromStdString(name)).arg(started->elapsed()).arg(m_doc->revision));release(result);emit statusChanged();
+      trace::log(QString("agent: %1 %2 ms revision %3").arg(QString::fromStdString(name)).arg(started->elapsed()).arg(m_doc->contentRevision));release(result);emit statusChanged();
     });
     m_job=job;
   };
@@ -621,7 +621,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
 }
 void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::string& id,const std::string& receipt,unsigned long long revision){
   if(!m_prepared || m_prepared->id!=id || m_prepared->owner!=session->socket){fail(session,"unknown_prepared",tr("No matching prepared operation belongs to this connection."),receipt);return;}
-  if(m_prepared->snapshot->revision!=revision || m_doc->revision!=revision || editorBusy() || !canEdit() || !m_enabled){m_dropReason=tr("Dropped: the design changed first. Nothing changed.");clearPrepared();fail(session,"stale_revision",tr("The document changed. Prepare the operation again."),receipt);return;}
+  if(m_prepared->snapshot->revision!=revision || m_doc->contentRevision!=revision || editorBusy() || !canEdit() || !m_enabled){m_dropReason=tr("Dropped: the design changed first. Nothing changed.");clearPrepared();fail(session,"stale_revision",tr("The document changed. Prepare the operation again."),receipt);return;}
   auto prepared=std::move(m_prepared);m_viewport->clearPreviewBodies();
   try{
     if(!m_follow)m_viewport->setCameraJson(m_viewport->cameraJson()); // cancel an earlier pending load-fit
@@ -631,16 +631,16 @@ void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::stri
     if(done.isEmpty())done=prepared->label;
     if(done.size()>60)done=done.left(59)+QChar(0x2026);
     const size_t opsBefore=m_doc->doc.ops.size();  // what follows is what this commit made (its row lists them all)
-    m_committing=true;m_doc->commitSnapshot(*prepared->snapshot->doc,prepared->snapshot->scene,revision,tr("%1: %2").arg(client,done));m_committing=false;
+    m_committing=true;m_doc->commitSnapshot(*prepared->snapshot->doc,prepared->snapshot->scene,revision,tr("%1: %2").arg(client,done),"agent");m_committing=false;
     if(opsBefore<m_doc->doc.ops.size()){  // undo / redo replies keep naming it as before
       m_replyLabels.emplace_back(m_doc->doc.ops[opsBefore].id,tr("Agent: %1").arg(prepared->label));
       if(m_replyLabels.size()>100)m_replyLabels.pop_front();
     }
     m_receipts[receipt].state="committed";
-    m_receipts[receipt].revision=m_doc->revision;
-    for(const auto& key:prepared->receipts){m_receipts[key].state="committed";m_receipts[key].revision=m_doc->revision;}
-    auto change=prepared->changes;change["revision"]=m_doc->revision;change["agent"]=session->agent.toStdString();m_changes.push_back(change);if(m_changes.size()>20)m_changes.erase(m_changes.begin());
-    reply(session,live_result({{"state","committed"},{"revision",m_doc->revision},{"result",prepared->result},{"changes",change}}),receipt);
+    m_receipts[receipt].revision=m_doc->contentRevision;
+    for(const auto& key:prepared->receipts){m_receipts[key].state="committed";m_receipts[key].revision=m_doc->contentRevision;}
+    auto change=prepared->changes;change["revision"]=m_doc->contentRevision;change["agent"]=session->agent.toStdString();m_changes.push_back(change);if(m_changes.size()>20)m_changes.erase(m_changes.begin());
+    reply(session,live_result({{"state","committed"},{"revision",m_doc->contentRevision},{"result",prepared->result},{"changes",change}}),receipt);
     if(m_follow && prepared->changes.contains("geometry") && !prepared->changes["geometry"].empty())m_viewport->fitNodesWhenReady(prepared->changes["geometry"].get<std::vector<std::string>>());
     activity(tr("Applied: %1 — Undo is available").arg(prepared->label));
     {  // its row, done: what changed, Show, and Undo while it is the next step Undo takes back

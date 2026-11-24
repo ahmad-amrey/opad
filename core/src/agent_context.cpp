@@ -13,6 +13,7 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <TopExp_Explorer.hxx>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <set>
 #include <map>
@@ -208,15 +209,81 @@ json validate_design(const Document& doc,const Scene& scene,const json& args,con
   return out;
 }
 
+namespace {
+struct GuideSection {
+  std::string id, title, text;
+};
+// The guide cut at its `##` headings (not inside code fences); the text before the first one is the overview. Ids are the
+// headings in lower case, words joined by '-': "Units and expressions" -> units-and-expressions.
+const std::vector<GuideSection>& guide_sections() {
+  static const std::vector<GuideSection> sections = [] {
+    std::vector<GuideSection> out{{"overview", "Overview", {}}};
+    const std::string& text = guide();
+    bool fence = false;
+    for (size_t at = 0; at < text.size();) {
+      const size_t end = std::min(text.find('\n', at), text.size());
+      const std::string line = text.substr(at, end - at);
+      if (line.rfind("```", 0) == 0) fence = !fence;
+      if (!fence && line.rfind("## ", 0) == 0) {
+        std::string title = line.substr(3), id;
+        for (char c : title)
+          if (std::isalnum(static_cast<unsigned char>(c))) id += char(std::tolower(static_cast<unsigned char>(c)));
+          else if (!id.empty() && id.back() != '-') id += '-';
+        while (!id.empty() && id.back() == '-') id.pop_back();
+        out.push_back({id, title, {}});
+      }
+      out.back().text += text.substr(at, std::min(end + 1, text.size()) - at);
+      at = end + 1;
+    }
+    return out;
+  }();
+  return sections;
+}
+
+std::string section_ids() {
+  std::string out;
+  for (const auto& s : guide_sections()) out += (out.empty() ? "" : ", ") + s.id;
+  return out;
+}
+}  // namespace
+
+json guide_index() {
+  json sections = json::array();
+  for (const auto& s : guide_sections())
+    if (s.id != "overview") sections.push_back({{"id", s.id}, {"title", s.title}, {"bytes", s.text.size()}});
+  return {{"sections", sections}, {"overview", guide_sections().front().text}, {"total_bytes", guide().size()},
+          {"read", "live_diagnostics guide_section=<id> (or resources/read opad://guide/agent#<id>) returns one section; "
+                   "guide_section=\"all\" or resources/read opad://guide/agent the whole guide."}};
+}
+
+json guide_section(const std::string& id) {
+  if (id == "all") return {{"id", "all"}, {"title", "OPAD agent guide"}, {"text", guide()}};
+  for (const auto& s : guide_sections())
+    if (s.id == id) return {{"id", s.id}, {"title", s.title}, {"text", s.text}};
+  throw Error("Unknown guide section " + id + "; the sections are " + section_ids() + " (or all).");
+}
+
 json resources() {
-  return {{"resources", json::array({{{"uri", "opad://guide/agent"}, {"name", "agent-guide"}, {"title", "OPAD agent guide"},
-    {"description", "Units and expressions, identifiers and body_ids per feature kind, base-plane frames, sketch geometry, profiles, references, feature conventions, new body names and batch references."},
-    {"mimeType", "text/markdown"}, {"size", guide().size()}}})}};
+  json list = json::array({{{"uri", "opad://guide/agent"}, {"name", "agent-guide"}, {"title", "OPAD agent guide"},
+    {"description", "Units and expressions, identifiers and body_ids per feature kind, base-plane frames, sketch geometry, profiles, references, feature conventions, new body names and batch references. Each section is also opad://guide/agent#<id>."},
+    {"mimeType", "text/markdown"}, {"size", guide().size()}}});
+  for (const auto& s : guide_sections())
+    list.push_back({{"uri", "opad://guide/agent#" + s.id}, {"name", "agent-guide-" + s.id}, {"title", "OPAD agent guide: " + s.title},
+                    {"mimeType", "text/markdown"}, {"size", s.text.size()}});
+  return {{"resources", list}};
 }
 
 json read_resource(const std::string& uri) {
-  if (uri != "opad://guide/agent") throw Error("Unknown resource " + uri + "; resources/list names opad://guide/agent.");
-  return {{"contents", json::array({{{"uri", uri}, {"mimeType", "text/markdown"}, {"text", guide()}}})}};
+  const std::string base = "opad://guide/agent";
+  if (uri == base) return {{"contents", json::array({{{"uri", uri}, {"mimeType", "text/markdown"}, {"text", guide()}}})}};
+  if (uri.rfind(base + "#", 0) == 0) {
+    try {
+      return {{"contents", json::array({{{"uri", uri}, {"mimeType", "text/markdown"}, {"text", guide_section(uri.substr(base.size() + 1))["text"]}}})}};
+    } catch (const Error& e) {
+      throw Error("Unknown resource " + uri + ": " + e.what());
+    }
+  }
+  throw Error("Unknown resource " + uri + "; resources/list names opad://guide/agent and its sections opad://guide/agent#<id>.");
 }
 }
 

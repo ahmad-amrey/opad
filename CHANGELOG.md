@@ -85,6 +85,14 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - Zoomed in close, curved faces stay smooth in two more places: the faces a timeline step made, highlighted while you
   point at it, and Compare's coloured bodies (the other version's, and the changed faces of a modified body). Both
   showed the coarse steps of the whole-model mesh instead of the smooth surface around them.
+- **AI assistants' changes no longer fail because you looked back in the timeline.** Rolling the timeline back and
+  forward, opening a feature or sketch to edit it and leaving it, or switching between light and dark no longer count as
+  changes to the design, so an assistant's next change is not refused as "the document changed". The assistant can also
+  see what changed the design last.
+- AI assistants can read the list of feature kinds and their inputs while OPAD shows its start page, before a design is
+  open.
+- AI assistants read OPAD's agent guide one section at a time instead of all 50 KB at once, which some of them could not
+  take in; the whole guide is still there for those that want it.
 
 ## [0.10.0] - 2026-11-21
 

@@ -140,9 +140,9 @@ void AgentBridge::gitTool(const std::shared_ptr<Session>& s, const std::string& 
     const json& r = out->result;
     if (!receipt.empty()) {
       m_receipts[receipt].state = "committed";
-      m_receipts[receipt].revision = m_doc->revision;
+      m_receipts[receipt].revision = m_doc->contentRevision;
     }
-    reply(s, live_result({{"state", !receipt.empty() ? "committed" : "read"}, {"revision", m_doc->revision}, {"result", r}, {"elapsed_ms", started->elapsed()}}), receipt);
+    reply(s, live_result({{"state", !receipt.empty() ? "committed" : "read"}, {"revision", m_doc->contentRevision}, {"result", r}, {"elapsed_ms", started->elapsed()}}), receipt);
     const QString state = field(r, "state"), branch = field(r, "branch");
     QString line;
     if (name == "git_commit") line = tr("Agent committed %1 on %2: %3").arg(field(r, "short"), branch, field(r, "subject"));

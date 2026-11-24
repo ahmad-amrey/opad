@@ -38,7 +38,8 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         names = set(tools)
         # The agent guide ships inside the binary (TODO 10 B2) and the descriptions point at it, not at docs/.
         resources = request("resources/list")["resources"]
-        assert [r["uri"] for r in resources] == ["opad://guide/agent"] and resources[0]["mimeType"] == "text/markdown", resources
+        assert resources[0]["uri"] == "opad://guide/agent" and resources[0]["mimeType"] == "text/markdown", resources
+        assert all(r["uri"].startswith("opad://guide/agent#") for r in resources[1:]) and len(resources) > 10, resources
         guide = request("resources/read", {"uri": "opad://guide/agent"})["contents"][0]["text"]
         for fact in ("counter-clockwise", "normal = -Y", "one id space", "all_body_ids", "@{cabin#/body_ids/0}"):
             assert fact in guide, fact

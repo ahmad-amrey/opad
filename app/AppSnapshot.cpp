@@ -232,7 +232,7 @@ void AppDocument::startEditable(JobRunner* jobs, std::function<void(bool, const 
     clearHistory();  // what was changed while viewing is part of the document now
     m_savedIds.clear();
     m_savedBodies = 0;
-    refresh();
+    refresh("editable");
     emit pathChanged();
     if (done) done(true, {});
   });
@@ -294,7 +294,7 @@ void AppDocument::loadAssets(JobRunner* jobs, opad::AssetOptions options, std::f
         if (state.value("import", "") == s.value("import", "")) state = s, known = true;
       if (!known) assetStates.push_back(s);
     }
-    refresh();
+    refresh("linked_files");
     if (const QString linked = assetSummary(assetStates); !linked.isEmpty()) emit message(linked);
     if (done) done(true, {});
   });

@@ -35,6 +35,20 @@ json transaction_policy() {
     {"expected_revision","Use base_revision for every staged command and commit; staging does not advance the live revision."},
     {"recovery","After reconnect, bind the same target and query request_status for any uncertain commit. Discarded transactions cannot resume: inspect current context, begin a new transaction and replan with new request IDs."}};
 }
+void add_guide(json& out, const json& args) {
+  if (args.value("include_example", false)) out["guide"] = live_guide();
+  if (args.value("include_guide", false)) out["agent_guide"] = guide_index();
+  if (const auto id = args.value("guide_section", std::string()); !id.empty()) {
+    try {
+      out["agent_guide_section"] = guide_section(id);
+    } catch (const std::exception& e) {
+      json ids = json::array();
+      const json index = guide_index();
+      for (const auto& s : index["sections"]) ids.push_back(s["id"]);
+      out["agent_guide_section"] = {{"error", e.what()}, {"sections", ids}};
+    }
+  }
+}
 json live_guide() {
   return {{"transactions",transaction_policy()},{"identifiers","result.feature_id identifies a history operation; result.body_ids identifies its output bodies; result.sketch_id identifies a sketch. Legacy result.ids contains operation IDs, not body IDs."},
     {"changes","changes.scope=transaction means cumulative changes since transaction_begin; command means this command only. result identifies the last modeling command, including at transaction_commit."},
@@ -81,7 +95,7 @@ const json& live_tools() {
   static const json tools=[] {
   json out=json::array();
   auto add=[&](const std::string& name,const std::string& description,json schema){out.push_back({{"name",name},{"description",description},{"inputSchema",schema},{"outputSchema",live_output_schema(name)},{"annotations",{{"readOnlyHint",!live_mutation(name)},{"openWorldHint",false}}}});};
-  add("live_diagnostics","Start here: compact read-only connection, target, permissions, units, revision, transaction state and next calls. Set include_example for a typed-ID workflow and include_guide for the agent guide (units, frames, sketch geometry, references, feature conventions; also the MCP resource opad://guide/agent).",object({{"include_example",{{"type","boolean"},{"default",false}}},{"include_guide",{{"type","boolean"},{"default",false}}}}));
+  add("live_diagnostics","Start here: compact read-only connection, target, permissions, units, revision, transaction state and next calls. Set include_example for a typed-ID workflow and include_guide for the agent guide's index (units, frames, sketch geometry, references, feature conventions), then guide_section=<id> for one section (\"all\": the whole guide, also the MCP resource opad://guide/agent; one section: opad://guide/agent#<id>).",object({{"include_example",{{"type","boolean"},{"default",false}}},{"include_guide",{{"type","boolean"},{"default",false}}},{"guide_section",{{"type","string"}}}}));
   add("live_instances","List running OPAD windows. Choose the intended instance and document explicitly.",object());
   add("live_bind","Bind this connection to exactly one instance and document target; never follows a newly opened document.",object({{"instance",str()},{"target",str()}},{"instance","target"}));
   add("live_state","Current revision, camera, selection, edit session and bounded recent changes.",object());
