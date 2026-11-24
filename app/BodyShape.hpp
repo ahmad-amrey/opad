@@ -16,6 +16,8 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <memory>
 #include <map>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 // How SubHighlight draws a selection (UI-38, app/Highlight.hpp in OCCT terms): a tint over the faces, the edges' core
@@ -64,6 +66,17 @@ struct BodyPrs {
   // 0.5-1 s for 100,000 edges, and the stock Vertex filter of a DWG's text layer took 0.9 s a layer.
   std::vector<Handle(Select3D_SensitiveEntity)> edgeGroups, vertexGroups;
   std::vector<TopoDS_Shape> edgeShapes, vertexShapes;
+  // A mesh body's Face, Edge and Vertex filters (a scan, an STL): one BVH over its triangulations as stored, its picks taken
+  // in Matches (MeshPickSet in BodyShape.cpp), where OCCT's way made a sensitive and an owner per triangle, per triangle
+  // side or per node on the UI thread: a 3.3M-triangle scan's Edge filter froze the window for 217 s. Index 0 face, 1 edge,
+  // 2 vertex, each a group for GroupSensitive (null: not a mesh). meshCounts: its triangles, sides and nodes.
+  Handle(Select3D_SensitiveEntity) meshGroups[3];
+  int meshCounts[3] = {0, 0, 0};
+  void buildMeshPick(const TopoDS_Shape& mesh);  // worker
+  // Where a big body's build went, and a mesh box selection cut short: set by the app while tracing (thread-safe), null
+  // otherwise (the headless tests build bodies without Qt).
+  static void (*log)(const std::string& line);
+  bool meshPicked() const { return !meshGroups[0].IsNull(); }
   void buildEdgeGroups(const TopTools_IndexedMapOfShape& edges, const Bnd_Box& box);        // worker: edgeGroups and edgeShapes
   void buildVertexGroups(const TopTools_IndexedMapOfShape& vertices, const Bnd_Box& box);  // worker: vertexGroups and vertexShapes
   bool closed = false;                           // closed solid: back faces can be culled
@@ -145,6 +158,12 @@ class BodyShape : public AIS_Shape {
   Handle(SubShapeOwner) groupOwner(TopAbs_ShapeEnum type, int index);
   bool groupedEdges() const { return m_prs && !m_prs->edgeGroups.empty(); }
   bool groupedVertices() const { return m_prs && !m_prs->vertexGroups.empty(); }
+  bool meshPicked() const { return m_prs && m_prs->meshPicked(); }  // its faces, edges and vertices picked through BodyPrs::meshGroups
+  // Sub-shapes of this type found through groups (big drawing layers, meshes): their owners come from groupOwner.
+  bool grouped(TopAbs_ShapeEnum type) const {
+    return meshPicked() ? type == TopAbs_FACE || type == TopAbs_EDGE || type == TopAbs_VERTEX
+                        : (type == TopAbs_EDGE && groupedEdges()) || (type == TopAbs_VERTEX && groupedVertices());
+  }
 
  public:
   bool setRayBias(double offset) { if (offset==m_rayBias) return false; m_rayBias=offset; m_rayTriangles.clear(); SetToUpdate(); return true; }
@@ -188,6 +207,7 @@ class BodyShape : public AIS_Shape {
   Quantity_Color m_hiddenFace, m_hiddenEdge;
   std::map<const Graphic3d_ArrayOfTriangles*, Handle(Graphic3d_ArrayOfTriangles)> m_rayTriangles;  // drawn array -> its biased copy
   std::vector<Handle(SubShapeOwner)> m_edgeOwners, m_vertexOwners;  // by ordinal, as picked (grouped edges, vertices only)
+  std::unordered_map<int, Handle(SubShapeOwner)> m_meshOwners[3];     // a mesh's faces, edges and vertices, as picked
 };
 
 // One group of a big drawing layer's edges or vertices in the Edge or Vertex filter of one body (UI-42): the worker's

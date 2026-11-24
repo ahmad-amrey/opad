@@ -1,6 +1,8 @@
 #include "CurveSamples.hpp"
 #include <Prs3d_PointAspect.hxx>
 #include "BodyShape.hpp"
+#include <chrono>
+#include <string>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include "opad/geometry.hpp"
 #include <Select3D_SensitiveTriangle.hxx>
@@ -19,6 +21,7 @@
 #include <Select3D_SensitiveCurve.hxx>
 #include <Select3D_SensitivePrimitiveArray.hxx>
 #include <Select3D_SensitiveSet.hxx>
+#include <Poly_Triangulation.hxx>
 #include <SelectBasics_SelectingVolumeManager.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <Graphic3d_AspectFillArea3d.hxx>
@@ -152,12 +155,13 @@ class SegmentSet : public Select3D_SensitiveSet {
 };
 
 // How close the segment ab comes to the pick ray (from its near to its far point).
-double rayDistance(const gp_Pnt& eye, const gp_Pnt& away, const gp_Pnt& a, const gp_Pnt& b) {
+double rayDistance(const gp_Pnt& eye, const gp_Pnt& away, const gp_Pnt& a, const gp_Pnt& b, gp_Pnt* nearest = nullptr) {
   const gp_Vec u(eye, away), v(a, b), w(a, eye);
   const double uu = u.Dot(u), uv = u.Dot(v), vv = v.Dot(v), uw = u.Dot(w), vw = v.Dot(w), det = uu * vv - uv * uv;
   double t = det > 1e-18 * uu * vv ? (uu * vw - uv * uw) / det : (vv > 0 ? vw / vv : 0);  // along the segment
   t = std::clamp(t, 0.0, 1.0);
   const gp_Pnt on = a.Translated(v * t);
+  if (nearest) *nearest = on;
   const double along = uu > 0 ? gp_Vec(eye, on).Dot(u) / uu : 0;
   return on.Distance(eye.Translated(u * along));
 }
@@ -578,8 +582,16 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
                                         std::shared_ptr<const opad::FaceColors> faceColors) {
   auto p = std::make_shared<BodyPrs>();
   p->box = box;
+  auto clock = std::chrono::steady_clock::now();
+  std::string phases;  // where a big body's time went (BodyPrs::log)
+  auto phase = [&](const char* what) {
+    const auto now = std::chrono::steady_clock::now();
+    phases += (phases.empty() ? "" : ", ") + std::string(what) + " " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now - clock).count()) + " ms";
+    clock = now;
+  };
   p->triangles = StdPrs_ShadedShape::FillTriangles(meshedProto);
   p->boundaries = StdPrs_ShadedShape::FillFaceBoundaries(meshedProto);
+  phase("arrays");
   if (faceColors && !faceColors->empty() && !p->triangles.IsNull()) {
     // The faces by colour (index 0: the body's own), each group's triangles filled as the whole body's are.
     TopTools_IndexedMapOfShape faces;
@@ -611,6 +623,12 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     return p;
   }
   p->buildNavigation();
+  phase("navigation");
+  const bool mesh = opad::is_mesh_shape(meshedProto);
+  if (mesh) {
+    p->buildMeshPick(meshedProto);
+    phase("mesh picking");
+  }
   TopTools_IndexedMapOfShape edges;
   TopExp::MapShapes(meshedProto, TopAbs_EDGE, edges);
   // A big body (a drawing layer of text and lines: thousands of faces and edges) gets its picking built here as well:
@@ -673,6 +691,7 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     // Grouped circular arcs keep the radius of their canonical analytic edge.
     BRepAdaptor_Curve curve(TopoDS::Edge(edges(id+1))); c.radius=curve.Circle().Radius();
   }
+  phase("edges");
   for(const auto& fit:opad::mesh_circles(meshedProto)) {
     TColgp_Array1OfPnt points(1,fit.segments+1);
     BRep_Builder builder; TopoDS_Compound rim; builder.MakeCompound(rim);
@@ -684,6 +703,7 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     Handle(Select3D_SensitiveCurve) sensitive=new Select3D_SensitiveCurve(nullptr,points); sensitive->BVH();
     p->circles.emplace(fit.index,Circle{rim,fit.circle.Location(),sensitive,fit.index,fit.circle.Radius(),fit.segments,fit.edges});
   }
+  if (mesh) phase("rims");
   if (big) {
     // Each edge's sensitive (the Edge filter wraps them with owners; a drawing layer's in groups) and the whole body's:
     // its triangles (the navigation set) and its free edges' segments in one set (the Body filter).
@@ -779,6 +799,8 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     p->loosePoints=new Graphic3d_ArrayOfPoints(int(loose.size()));
     for(const auto& point:loose) p->loosePoints->AddVertex(point);
   }
+  phase("rest");
+  if (log && p->triangleCount() > 200000) log("body prs: " + std::to_string(p->triangleCount()) + " triangles: " + phases);
   return p;
 }
 
@@ -982,6 +1004,17 @@ void BodyShape::computeSubShapes(const Handle(SelectMgr_Selection)& selection, c
   if(mode!=0 && opad::is_mesh_shape(myshape)) {
     const auto type=AIS_Shape::SelectionType(mode);
     const auto kind=type==TopAbs_FACE?opad::Ref::Kind::Face:type==TopAbs_EDGE?opad::Ref::Kind::Edge:opad::Ref::Kind::Vertex;
+    if(m_prs && m_prs->meshPicked()) {  // the worker's set, owners made as picked (BodyPrs::meshGroups)
+      selection->Add(new GroupSensitive(this,type,m_prs->meshGroups[type==TopAbs_FACE?0:type==TopAbs_EDGE?1:2]));
+      if(type==TopAbs_VERTEX) for(const auto& [id,circle]:m_prs->circles) {
+        // A rim's centre, and its vertices under the circle's owner too (the viewport admits circle owners only with Ctrl).
+        Handle(CircleOwner) owner=new CircleOwner(circle,this,id);
+        for(TopExp_Explorer vertex(circle.edge,TopAbs_VERTEX);vertex.More();vertex.Next())
+          selection->Add(new Select3D_SensitivePoint(owner,BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current()))));
+        selection->Add(new SharedSensitive(owner,circle.sensitive));
+      }
+      return;
+    }
     std::map<std::tuple<double,double,double>,Handle(CircleOwner)> rimVertices;
     std::map<int,Handle(CircleOwner)> circleOwners;
     if(type==TopAbs_VERTEX && m_prs) for(const auto& [id,circle]:m_prs->circles) {
@@ -1136,6 +1169,245 @@ void BodyPrs::buildVertexGroups(const TopTools_IndexedMapOfShape& vertices, cons
   }
 }
 
+namespace {
+// A mesh body's triangles for its Face, Edge and Vertex filters (BodyPrs::meshGroups), built on the mesh worker. The
+// elements are its triangles, read from the triangulations as stored (only their BVH order is kept here). A point pick
+// gathers what is in reach and takes, for a face, the nearest triangle; for an edge or a vertex, of the nearest triangle's
+// sides or corners the one nearest the ray (a scan's sides lie a pixel apart: the nearest in depth alone was often one
+// beside the pointer, and a scan's second layer just behind the surface is hidden). Ordinals as opad::subshape counts them:
+// triangles across the faces in the explorer's order, triangle t's sides 3t..3t+2 (a-b, b-c, c-a), the nodes face by face.
+class MeshPickSet : public Select3D_SensitiveSet {
+  DEFINE_STANDARD_RTTI_INLINE(MeshPickSet, Select3D_SensitiveSet)
+ public:
+  struct Part {
+    Handle(Poly_Triangulation) mesh;
+    gp_Trsf trsf;
+    bool moved = false;
+    int firstTriangle = 0, firstNode = 0;
+  };
+  MeshPickSet(std::vector<Part> parts, int triangles) : Select3D_SensitiveSet(nullptr), m_parts(std::move(parts)), m_order(size_t(triangles)) {
+    for (int i = 0; i < triangles; ++i) m_order[size_t(i)] = i;
+    gp_XYZ sum(0, 0, 0);
+    size_t n = 0;
+    for (const Part& part : m_parts)
+      for (int i = 1; i <= part.mesh->NbNodes(); ++i, ++n) {
+        const gp_Pnt p = node(part, i);
+        m_box.Add(SelectMgr_Vec3(p.X(), p.Y(), p.Z()));
+        sum += p.XYZ();
+      }
+    if (n) m_center = gp_Pnt(sum / double(n));
+  }
+  Standard_Integer Size() const override { return int(m_order.size()); }
+  Select3D_BndBox3d Box(const Standard_Integer i) const override {
+    gp_Pnt p[3];
+    int nodes[3];
+    corners(m_order[size_t(i)], p, nodes);
+    return Select3D_BndBox3d(SelectMgr_Vec3(std::min({p[0].X(), p[1].X(), p[2].X()}), std::min({p[0].Y(), p[1].Y(), p[2].Y()}), std::min({p[0].Z(), p[1].Z(), p[2].Z()})),
+                             SelectMgr_Vec3(std::max({p[0].X(), p[1].X(), p[2].X()}), std::max({p[0].Y(), p[1].Y(), p[2].Y()}), std::max({p[0].Z(), p[1].Z(), p[2].Z()})));
+  }
+  Standard_Real Center(const Standard_Integer i, const Standard_Integer axis) const override {
+    gp_Pnt p[3];
+    int nodes[3];
+    corners(m_order[size_t(i)], p, nodes);
+    return (p[0].Coord(axis + 1) + p[1].Coord(axis + 1) + p[2].Coord(axis + 1)) / 3;
+  }
+  void Swap(const Standard_Integer i, const Standard_Integer j) override { std::swap(m_order[size_t(i)], m_order[size_t(j)]); }
+  Select3D_BndBox3d BoundingBox() override { return m_box; }
+  gp_Pnt CenterOfGeometry() const override { return m_center; }
+  Standard_Integer NbSubElements() const override { return Size(); }
+
+  // A point pick (UI thread): the ordinal of the face, edge or vertex taken, -1 for none; `result` its depth and point.
+  int pick(TopAbs_ShapeEnum type, SelectBasics_SelectingVolumeManager& volume, SelectBasics_PickResult& result) {
+    if (volume.GetActiveSelectionType() != SelectMgr_SelectionType_Point) return -1;
+    m_type = type;
+    m_hits.clear();
+    m_surface = RealLast();
+    m_front = -1;
+    m_eye = volume.GetNearPickedPnt();
+    m_away = volume.GetFarPickedPnt();
+    SelectBasics_PickResult unused;
+    Select3D_SensitiveSet::Matches(volume, unused);
+    if (m_hits.empty()) return -1;
+    const Hit* best = nullptr;
+    if (type == TopAbs_FACE) {
+      for (const Hit& h : m_hits)
+        if (!best || h.depth < best->depth) best = &h;
+    } else if (m_front >= 0) {
+      // The sides or corners of the nearest triangle in reach, nearest the ray: they bound the surface the pointer is on,
+      // so they are in sight (a side a scan's second layer holds just behind it is not, and the view drops it as hidden).
+      for (const Hit& h : m_hits)
+        if (h.triangle == m_front && (!best || h.ray < best->ray)) best = &h;
+      if (!best) return -1;  // the pointer inside a big triangle, away from its sides
+    } else {
+      for (const Hit& h : m_hits)  // beside a silhouette: the nearest
+        if (!best || h.depth < best->depth) best = &h;
+    }
+    result = SelectBasics_PickResult(best->depth, volume.DistToGeometryCenter(m_center), best->point);
+    return best->ordinal;
+  }
+
+  // A box or polygon (UI thread): the ordinals it takes (crossing: any part; window: all of it), at most kTakeLimit.
+  void take(TopAbs_ShapeEnum type, SelectBasics_SelectingVolumeManager& volume, std::vector<int>& out) const {
+    if (Size() == 0) return;
+    const bool crossing = volume.IsOverlapAllowed();
+    const auto& tree = const_cast<MeshPickSet*>(this)->myContent.GetBVH();  // built by the mesh worker: only read here
+    SelectBasics_PickResult unused;
+    std::vector<int> pending{0};
+    while (!pending.empty() && out.size() < kTakeLimit) {
+      const int at = pending.back();
+      pending.pop_back();
+      bool inside = false;
+      if (!volume.OverlapsBox(tree->MinPoint(at), tree->MaxPoint(at), &inside)) continue;
+      const auto& data = tree->NodeInfoBuffer()[size_t(at)];
+      if (data.x() == 0) {
+        pending.push_back(data.y());
+        pending.push_back(data.z());
+        continue;
+      }
+      for (int element = data.y(); element <= data.z() && out.size() < kTakeLimit; ++element) {
+        const int t = m_order[size_t(element)];
+        gp_Pnt p[3];
+        int nodes[3];
+        corners(t, p, nodes);
+        if (type == TopAbs_FACE) {
+          const bool hit = inside || (crossing ? volume.OverlapsTriangle(p[0], p[1], p[2], Select3D_TOS_INTERIOR, unused)
+                                               : volume.OverlapsPoint(p[0]) && volume.OverlapsPoint(p[1]) && volume.OverlapsPoint(p[2]));
+          if (hit) out.push_back(t);
+        } else if (type == TopAbs_EDGE) {
+          for (int k = 0; k < 3; ++k) {
+            const gp_Pnt &a = p[k], &b = p[(k + 1) % 3];
+            if (inside || (crossing ? volume.OverlapsSegment(a, b, unused) : volume.OverlapsPoint(a) && volume.OverlapsPoint(b))) out.push_back(3 * t + k);
+          }
+        } else {
+          for (int k = 0; k < 3; ++k)
+            if (inside || volume.OverlapsPoint(p[k])) out.push_back(nodes[k]);
+        }
+      }
+    }
+    if (type == TopAbs_VERTEX) {  // a node is a corner of several triangles
+      std::sort(out.begin(), out.end());
+      out.erase(std::unique(out.begin(), out.end()), out.end());
+    }
+    if (out.size() >= kTakeLimit && BodyPrs::log) BodyPrs::log("mesh pick: a box took more than " + std::to_string(kTakeLimit) + ", the rest left out");
+  }
+
+ protected:
+  Standard_Boolean overlapsElement(SelectBasics_PickResult& result, SelectBasics_SelectingVolumeManager& volume, Standard_Integer i, Standard_Boolean) override {
+    const int t = m_order[size_t(i)];
+    gp_Pnt p[3];
+    int nodes[3];
+    corners(t, p, nodes);
+    SelectBasics_PickResult r;
+    if (m_type == TopAbs_FACE) {
+      if (!volume.OverlapsTriangle(p[0], p[1], p[2], Select3D_TOS_INTERIOR, r)) return false;
+      m_hits.push_back({r.Depth(), 0, t, t, r.PickedPoint()});
+      result = r;
+      return true;
+    }
+    if (volume.OverlapsTriangle(p[0], p[1], p[2], Select3D_TOS_INTERIOR, r) && r.Depth() < m_surface) m_surface = r.Depth(), m_front = t;
+    bool any = false;
+    for (int k = 0; k < 3; ++k) {
+      SelectBasics_PickResult h;
+      if (m_type == TopAbs_EDGE) {
+        const gp_Pnt &a = p[k], &b = p[(k + 1) % 3];
+        if (!volume.OverlapsSegment(a, b, h)) continue;
+        gp_Pnt on;
+        const double ray = rayDistance(m_eye, m_away, a, b, &on);
+        m_hits.push_back({h.Depth(), ray, 3 * t + k, t, on});
+      } else {
+        if (!volume.OverlapsPoint(p[k], h)) continue;
+        m_hits.push_back({h.Depth(), rayDistance(m_eye, m_away, p[k], p[k]), nodes[k], t, p[k]});
+      }
+      if (!any || h.Depth() < result.Depth()) result = h;
+      any = true;
+    }
+    return any;
+  }
+  Standard_Boolean elementIsInside(SelectBasics_SelectingVolumeManager&, Standard_Integer, Standard_Boolean) override { return false; }  // point picks only
+  Standard_Real distanceToCOG(SelectBasics_SelectingVolumeManager& volume) override { return volume.DistToGeometryCenter(m_center); }
+
+ private:
+  static constexpr size_t kTakeLimit = 250000;
+  struct Hit {
+    double depth, ray;
+    int ordinal, triangle;
+    gp_Pnt point;
+  };
+  static gp_Pnt node(const Part& part, int i) { return part.moved ? part.mesh->Node(i).Transformed(part.trsf) : part.mesh->Node(i); }
+  // Triangle t's corners and their node ordinals.
+  void corners(int t, gp_Pnt (&p)[3], int (&nodes)[3]) const {
+    size_t k = 0;
+    if (m_parts.size() > 1) {
+      k = size_t(std::upper_bound(m_parts.begin(), m_parts.end(), t, [](int v, const Part& part) { return v < part.firstTriangle; }) - m_parts.begin()) - 1;
+    }
+    const Part& part = m_parts[k];
+    int a, b, c;
+    part.mesh->Triangle(t - part.firstTriangle + 1).Get(a, b, c);
+    const int v[] = {a, b, c};
+    for (int j = 0; j < 3; ++j) {
+      p[j] = node(part, v[j]);
+      nodes[j] = part.firstNode + v[j] - 1;
+    }
+  }
+  std::vector<Part> m_parts;
+  std::vector<int> m_order;  // the BVH's order of the triangles
+  Select3D_BndBox3d m_box;
+  gp_Pnt m_center;
+  // The point pick under way (UI thread only).
+  TopAbs_ShapeEnum m_type = TopAbs_FACE;
+  std::vector<Hit> m_hits;
+  double m_surface = 0;  // depth of the nearest triangle under the pointer
+  int m_front = -1;      // that triangle
+  gp_Pnt m_eye, m_away;
+};
+
+// One filter's view of a MeshPickSet, the group GroupSensitive asks: its tolerance is the stock one of that kind (a
+// vertex 12 px, as Select3D_SensitivePoint).
+class MeshModeGroup : public Select3D_SensitiveEntity, public PickGroup {
+  DEFINE_STANDARD_RTTI_INLINE(MeshModeGroup, Select3D_SensitiveEntity)
+ public:
+  MeshModeGroup(const Handle(MeshPickSet)& set, TopAbs_ShapeEnum type) : Select3D_SensitiveEntity(nullptr), m_set(set), m_type(type) {
+    SetSensitivityFactor(type == TopAbs_VERTEX ? 12 : type == TopAbs_EDGE ? 3 : 2);
+  }
+  Standard_Boolean Matches(SelectBasics_SelectingVolumeManager&, SelectBasics_PickResult&) override { return false; }  // through pick and take
+  Standard_Integer NbSubElements() const override { return m_set->NbSubElements(); }
+  Select3D_BndBox3d BoundingBox() override { return m_set->BoundingBox(); }
+  gp_Pnt CenterOfGeometry() const override { return m_set->CenterOfGeometry(); }
+  Standard_Boolean ToBuildBVH() const override { return false; }
+  int firstOrdinal() const override { return 0; }
+  int pick(SelectBasics_SelectingVolumeManager& volume, SelectBasics_PickResult& result) override { return m_set->pick(m_type, volume, result); }
+  void take(SelectBasics_SelectingVolumeManager& volume, std::vector<int>& out) const override { m_set->take(m_type, volume, out); }
+
+ private:
+  Handle(MeshPickSet) m_set;
+  TopAbs_ShapeEnum m_type;
+};
+}  // namespace
+
+void (*BodyPrs::log)(const std::string&) = nullptr;
+
+void BodyPrs::buildMeshPick(const TopoDS_Shape& mesh) {
+  std::vector<MeshPickSet::Part> parts;
+  int triangles = 0, nodes = 0;
+  for (TopExp_Explorer f(mesh, TopAbs_FACE); f.More(); f.Next()) {  // as opad::subshape walks a mesh
+    TopLoc_Location loc;
+    const Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(f.Current()), loc);
+    if (t.IsNull()) continue;
+    parts.push_back({t, loc.Transformation(), !loc.IsIdentity(), triangles, nodes});
+    triangles += t->NbTriangles();
+    nodes += t->NbNodes();
+  }
+  if (triangles == 0) return;
+  Handle(MeshPickSet) set = new MeshPickSet(std::move(parts), triangles);
+  set->BVH();
+  meshGroups[0] = new MeshModeGroup(set, TopAbs_FACE);
+  meshGroups[1] = new MeshModeGroup(set, TopAbs_EDGE);
+  meshGroups[2] = new MeshModeGroup(set, TopAbs_VERTEX);
+  meshCounts[0] = triangles;
+  meshCounts[1] = 3 * triangles;
+  meshCounts[2] = nodes;
+}
+
 GroupSensitive::GroupSensitive(BodyShape* body, TopAbs_ShapeEnum type, const Handle(Select3D_SensitiveEntity)& group)
     : Select3D_SensitiveEntity(body->groupOwner(type, dynamic_cast<PickGroup&>(*group).firstOrdinal())), m_body(body), m_type(type), m_group(group) {
   SetSensitivityFactor(group->SensitivityFactor());
@@ -1159,6 +1431,13 @@ Standard_Boolean GroupSensitive::Matches(SelectBasics_SelectingVolumeManager& mg
 Handle(SubShapeOwner) BodyShape::groupOwner(TopAbs_ShapeEnum type, int index) {
   const bool edge = type == TopAbs_EDGE;
   if (!m_prs) return nullptr;
+  if (m_prs->meshPicked()) {
+    const int k = type == TopAbs_FACE ? 0 : edge ? 1 : type == TopAbs_VERTEX ? 2 : -1;
+    if (k < 0 || index < 0 || index >= m_prs->meshCounts[k]) return nullptr;
+    Handle(SubShapeOwner)& owner = m_meshOwners[k][index];
+    if (owner.IsNull()) owner = new MeshOwner(myshape, this, k == 0 ? opad::Ref::Kind::Face : edge ? opad::Ref::Kind::Edge : opad::Ref::Kind::Vertex, index);
+    return owner;
+  }
   const auto& shapes = edge ? m_prs->edgeShapes : m_prs->vertexShapes;
   if (index < 0 || size_t(index) >= shapes.size()) return nullptr;
   auto& owners = edge ? m_edgeOwners : m_vertexOwners;
