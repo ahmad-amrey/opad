@@ -13,6 +13,10 @@ json live_guide();
 // section, "all" the whole guide; an unknown id answers with the ids, it does not fail the call).
 void add_guide(json& out, const json& args);
 json transaction_policy();
+// A live read's defaults that keep the reply small (#25): features and ops are pages of live_page_limit compact items
+// unless the call says otherwise (limit up to 500, detail=full). Other tools' arguments come back unchanged.
+json live_read_defaults(const std::string& name, json args);
+constexpr int live_page_limit = 50;
 // The git tools (git_status ... git_push) for both servers: live (the bound document's repository, request_id on the
 // writes) or headless (repo names it). Their work is app/GitAgent.cpp; live_tools() lists them. No force or destructive
 // operation is among them.

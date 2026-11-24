@@ -35,6 +35,12 @@ json transaction_policy() {
     {"expected_revision","Use base_revision for every staged command and commit; staging does not advance the live revision."},
     {"recovery","After reconnect, bind the same target and query request_status for any uncertain commit. Discarded transactions cannot resume: inspect current context, begin a new transaction and replan with new request IDs."}};
 }
+json live_read_defaults(const std::string& name, json args) {
+  if (name != "features" && name != "ops") return args;
+  if (!args.contains("limit")) args["limit"] = live_page_limit;
+  if (!args.contains("detail")) args["detail"] = "compact";
+  return args;
+}
 void add_guide(json& out, const json& args) {
   if (args.value("include_example", false)) out["guide"] = live_guide();
   if (args.value("include_guide", false)) out["agent_guide"] = guide_index();
@@ -98,7 +104,8 @@ const json& live_tools() {
   add("live_diagnostics","Start here: compact read-only connection, target, permissions, units, revision, transaction state and next calls. Set include_example for a typed-ID workflow and include_guide for the agent guide's index (units, frames, sketch geometry, references, feature conventions), then guide_section=<id> for one section (\"all\": the whole guide, also the MCP resource opad://guide/agent; one section: opad://guide/agent#<id>).",object({{"include_example",{{"type","boolean"},{"default",false}}},{"include_guide",{{"type","boolean"},{"default",false}}},{"guide_section",{{"type","string"}}}}));
   add("live_instances","List running OPAD windows. Choose the intended instance and document explicitly.",object());
   add("live_bind","Bind this connection to exactly one instance and document target; never follows a newly opened document.",object({{"instance",str()},{"target",str()}},{"instance","target"}));
-  add("live_state","Current revision, camera, selection, edit session and bounded recent changes.",object());
+  add("live_state","Current revision (revision_change: what moved it; view edits such as hides do not), camera, selection, edit session and the last command's changes.",
+      object({{"change_history",{{"type","boolean"},{"default",false},{"description","All kept changes (up to 20), not only the last."}}}}));
   add("wait_for_idle","Wait without blocking the UI, up to 10 seconds, for this connection to be ready. Human editors return immediately with idle=false. Does not cancel work or reserve an edit lock; check revision before writing.",object({{"timeout_ms",{{"type","integer"},{"minimum",0},{"maximum",10000},{"default",2000}}}}));
   add("save","Save the committed live document to disk without a dialog. Omit path to save to its current file; an unsaved document needs an absolute .opad path. Saving to another existing file requires overwrite=true. Finish active editors and commit/cancel previews or transactions first. Requires edit access. Does not add an Undo step or change revision. Reuse request_id only to retrieve the same save receipt.",object({{"path",{{"type","string"},{"minLength",1},{"maxLength",32767}}},{"overwrite",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()}},{"expected_revision","request_id"}));
   // An agent starts without a person or the CLI: a document opened or made in the bound window (also from its start page).
@@ -162,6 +169,11 @@ const json& live_tools() {
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
     auto schema=command_schema(c,true);
     if(c.name=="sketch_edit")schema["properties"]["geometry"]=brief_geometry();  // the sketch tool has the full schema (B12)
+    if(c.name=="features" || c.name=="ops"){  // pages of compact items by default (live_read_defaults)
+      schema["properties"]["offset"]={{"type","integer"},{"minimum",0},{"default",0}};
+      schema["properties"]["limit"]={{"type","integer"},{"minimum",1},{"maximum",500},{"default",live_page_limit},{"description","result: items, total, next_offset (null at the end)"}};
+      schema["properties"]["detail"]["default"]="compact";
+    }
     schema["properties"]["transaction"]=str();
     if(live_mutation(c.name)) {
       schema["properties"]["expected_revision"]=revision();schema["properties"]["request_id"]=str();
@@ -171,7 +183,8 @@ const json& live_tools() {
       // measure writes only with pin, explode only with name or update: then (and only then) they need the revision
       // and a request id.
       if(c.name=="measure")schema["properties"]["pin"]={{"type","boolean"},{"default",false},{"description","Append a measurement op; then expected_revision and request_id are required. Without pin, measure is a read."}};
-      else if(c.name!="explode"){schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
+      // joint_set likewise writes only without preview (a preview only reports, #26).
+      else if(c.name!="explode" && c.name!="joint_set"){schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
     }
     add(c.name,c.description,schema);
   }

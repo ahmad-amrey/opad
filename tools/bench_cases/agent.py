@@ -17,7 +17,9 @@ CASES = [
     # with Undo on the newest step only, "Claude: ..." as the undo step, ai_client on the op; the viewport's preview chip and
     # its Discard; Properties' "Claude (AI) · hh:mm"; the timeline marker's Show in AI activity; Show / Back with the camera;
     # "AI" in the Annotations author filter; Stop's divider and toast with no row left running; undo / redo reply labels as
-    # before; failure rows naming their own call; a failed commit's row.
+    # before; the user's hides and colours keep the revision (live_state's view_edits, the last command's changes only, all
+    # with change_history), a staged preview survives a show and its commit keeps it; features and ops as pages of compact
+    # items; joint_set preview without an id or an op; failure rows naming their own call; a failed commit's row.
     ("agent-activity", "empty", {"OPAD_BENCH_AGENT_ACTIVITY": "{prefix}", "OPAD_BENCH_AGENT": "{root}/activity-agent"}),
     ("agent-activity-ar", "empty", {"OPAD_BENCH_AGENT_ACTIVITY": "{prefix}", "OPAD_BENCH_AGENT": "{root}/activity-agent-ar", "OPAD_LANG": "ar"}),
 ]

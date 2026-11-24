@@ -143,7 +143,7 @@ def main():
         items = {n["id"]: n for n in client.call("context", section="nodes", limit=100)["result"]["items"]}
         assert items[ids["pad"]["body_ids"][0]]["parent"] == lid, items[ids["pad"]["body_ids"][0]]
         assert items[ids["free"]["body_ids"][0]].get("parent") in (None, ""), items[ids["free"]["body_ids"][0]]
-        made_in = {f["id"]: f.get("component") for f in client.call("features")["result"]}
+        made_in = {f["id"]: f.get("component") for f in client.call("features", limit=500)["result"]["items"]}
         assert made_in[ids["outline"]["sketch_id"]] == lid and made_in[ids["pad"]["feature_id"]] == lid and not made_in[ids["free"]["feature_id"]], made_in
         print("Batch component for feature and sketch steps: PASS", flush=True)
         # TODO 11 UI-33 phase 2: the lid moved, its sketch and body go along, and the next body made from the sketch

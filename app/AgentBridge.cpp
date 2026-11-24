@@ -50,7 +50,14 @@ AgentBridge::AgentBridge(AppDocument* doc,DesignController* design,Viewport* vie
     stop();if(m_cache)dispose(std::move(m_cache));m_changes=json::array();
     if(!m_replacing.pending)m_replacing={m_doc->hasDocument?m_doc->doc.header.uuid:std::string(),m_doc->path(),m_doc->hasDocument && !m_doc->browse,true};
   });
-  connect(doc,&AppDocument::changed,this,[this]{if(m_replacing.pending)followReplace();if(!m_committing)clearPrepared();if(m_cache)dispose(std::move(m_cache));publish();});
+  // Staged work stays through a roll-back or a hide (the content it was planned on is still there; its commit keeps the
+  // user's looks), and the cached copy through what leaves the ops alone.
+  connect(doc,&AppDocument::changed,this,[this]{
+    if(m_replacing.pending)followReplace();
+    if(!m_committing && (!m_prepared || m_prepared->snapshot->revision!=m_doc->contentRevision))clearPrepared();
+    if(m_cache && m_cache->docRevision!=m_doc->docRevision)dispose(std::move(m_cache));
+    publish();
+  });
   connect(doc,&AppDocument::pathChanged,this,&AgentBridge::publish);
   connect(design,&DesignController::stateChanged,this,[this]{
     if(editorBusy() && !m_doc->snapshotBusy()){
@@ -172,7 +179,7 @@ json AgentBridge::linkedFiles()const{
     {"next","ask_user"},
     {"ask_user","Ask the user to answer OPAD's Linked files question (or to click the file's \"not read\" badge in the browser) with Read them or Always trust. Agents cannot grant this trust. Then read live_state again: linked_files is gone once the files are read."}};
 }
-json AgentBridge::liveState()const{
+json AgentBridge::liveState(bool history)const{
   auto out=descriptor();out["editing"]=editingState();out["revision"]=m_doc->contentRevision;out["dirty"]=m_doc->isDirty();out["busy"]=m_busy;
   // What moved the revision last (an edit, undo, open, an agent's commit, ...) and the view-only re-resolves since, which
   // leave it alone (a timeline roll-back, an editor's roll-back, the icons).
@@ -180,7 +187,9 @@ json AgentBridge::liveState()const{
   out["edit_session"]=out["editing"]["edit_session"];
   out["camera"]=m_viewport->cameraJson();out["selection"]=json::array();
   auto refs=m_viewport->selection();for(size_t i=0;i<std::min(size_t(100),refs.size());++i)out["selection"].push_back(refs[i].to_json());
-  out["selection_total"]=refs.size();out["changes"]=m_changes;out["follow_changes"]=m_follow;
+  out["selection_total"]=refs.size();out["follow_changes"]=m_follow;
+  // The last command's changes; the kept history (tens of KB on a big model, #17) only when asked for.
+  out["changes"]=history || m_changes.empty()?m_changes:json::array({m_changes.back()});out["changes_total"]=m_changes.size();
   out["profile_selection"]=json::array();const auto profiles=m_viewport->selectedCandidates();
   for(size_t i=0;i<std::min(size_t(100),profiles.size());++i){auto profile=json::parse(profiles[i],nullptr,false);out["profile_selection"].push_back(profile.is_discarded()?json(profiles[i]):profile);}
   if(m_design->sketchActive())out["active_sketch"]=m_design->sketch()->agentContext();
@@ -278,6 +287,10 @@ void AgentBridge::fail(const std::shared_ptr<Session>& s,const std::string& code
   detail["retryable"]=transient;detail["retry_after_ms"]=transient?json(50):json(nullptr);
   if(transient)detail["next"]="Call wait_for_idle, check revision and transaction state, then retry with a new request_id.";
   if(code=="not_bound" || code=="target_changed")detail["next"]=json{"live_instances","live_bind"};
+  if(code=="stale_revision"){  // what moved it: the agent can tell whether it touches its plan
+    detail["revision"]=m_doc->contentRevision;detail["revision_change"]=m_doc->revisionChange();
+    detail["recent_revisions"]=m_doc->revisionLog();
+  }
   activity(tr("Agent error: %1").arg(message));failed(code,message);reply(s,std::move(error),receipt);
 }
 void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Receipt& receipt){
@@ -366,7 +379,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     return;
   }
   if(name=="live_state"){
-    if(m_busy || !m_doc->hasDocument)reply(s,live_result({{"state","read"},{"revision",m_doc->contentRevision},{"result",liveState()}}));
+    if(m_busy || !m_doc->hasDocument)reply(s,live_result({{"state","read"},{"revision",m_doc->contentRevision},{"result",liveState(args.value("change_history",false))}}));
     else execute(s,name,args,{});
     return;
   }
@@ -377,7 +390,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
   }
   if(git_tool(name)){gitTool(s,name,std::move(args),key,hash);return;}  // the document's repository (AgentGit.cpp)
   const bool write=live_mutation(name,args);
-  if(write && (!args.contains("expected_revision") || !args.contains("request_id"))){fail(s,"invalid_arguments",tr("A pinned measurement changes the document: pass expected_revision and request_id."));return;}
+  if(write && (!args.contains("expected_revision") || !args.contains("request_id"))){fail(s,"invalid_arguments",name=="measure"?tr("A pinned measurement changes the document: pass expected_revision and request_id."):tr("This call changes the document: pass expected_revision and request_id."));return;}
   if(write){
     auto found=m_receipts.find(key);if(found!=m_receipts.end()){
       if(found->second.hash!=hash){fail(s,"request_id_reused",tr("This request ID already belongs to different arguments."));return;}

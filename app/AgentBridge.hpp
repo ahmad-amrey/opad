@@ -49,7 +49,8 @@ class AgentBridge : public QObject {
   bool publishesSelection() const;
   QString statusSummary() const {return stateText();}
   opad::json descriptor() const;
-  opad::json liveState() const;  // what live_state answers (benches read it too)
+  // What live_state answers (benches read it too): the last command's changes, all kept ones (up to 20) with history.
+  opad::json liveState(bool history = false) const;
   // Used only by the isolated application acceptance harness.
   void bench();
   // OPAD_BENCH_AGENT_ACTIVITY (AgentActivityBench.cpp); propertiesLine: the Properties panel's author line for a step
@@ -85,7 +86,10 @@ class AgentBridge : public QObject {
   using BatchSteps=opad::agent::BatchSteps;  // step id -> its result, from this connection's earlier batches
  private:
   using json=opad::json;
-  struct Snapshot {std::shared_ptr<opad::Document> doc;opad::Scene scene;unsigned long long revision=0;};
+  // revision = the content revision it copied, docRevision and baseIds = the log it copied (a commit keeps the user's
+  // hides and colours made since: AppDocument::commitRebased). A write's result keeps its source's.
+  struct Snapshot {std::shared_ptr<opad::Document> doc;opad::Scene scene;unsigned long long revision=0,docRevision=0;
+    std::shared_ptr<const std::vector<std::string>> baseIds;};
   struct Session {
     QPointer<QLocalSocket> socket;QByteArray input;QString target,agent;std::string clientId;
     QElapsedTimer requestTimer;bool bound=false,receiving=false;

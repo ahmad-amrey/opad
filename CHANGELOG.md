@@ -100,8 +100,15 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
   forward, opening a feature or sketch to edit it and leaving it, or switching between light and dark no longer count as
   changes to the design, so an assistant's next change is not refused as "the document changed". The assistant can also
   see what changed the design last.
+  Hiding, showing, colouring or locking parts doesn't count either, also while the assistant is working or has a preview
+  waiting: its change goes in after yours and your hidden parts stay hidden. When the design did change meanwhile, the
+  assistant is told what changed it.
 - AI assistants can read the list of feature kinds and their inputs while OPAD shows its start page, before a design is
   open.
+- AI assistants get the design history and the operation list a page at a time (50 short entries: name, kind and
+  state), and only the last change when they ask what changed, instead of replies of tens of KB that could fill their
+  memory. They can still ask for the full details.
+- An AI assistant trying a mechanism position (a preview) no longer gets back an id for a position that was never saved.
 - AI assistants read OPAD's agent guide one section at a time instead of all 50 KB at once, which some of them could not
   take in; the whole guide is still there for those that want it.
 - **An AI assistant's multi-step change checks every step.** A step that makes a broken solid (a sweep along a path

@@ -31,6 +31,10 @@ json run(const std::string& name, const json& args, Document* live = nullptr);
 // The screenshot options render and the live viewport_image share (TODO 10 B9): views, edge_lines, highlight, shading.
 void apply_picture_options(RenderOptions& options, const json& args);
 
+// A long list as a page when args has offset or limit ({items, total, offset, next_offset: null on the last page}), else
+// the list itself (the CLI's and scripts' shape). Live agents always get pages (live_read_defaults).
+json page_list(json items, const json& args);
+
 // Exporter registry (built-in formats plus plugins).
 using ExportFn = std::function<json(const Document&, const json& args)>;
 void register_exporter(const std::string& format, ExportFn fn);

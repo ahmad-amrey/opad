@@ -366,7 +366,7 @@ void register_sim_commands(const std::function<void(const CommandInfo&, Handler)
       });
 
   reg("joint_set",
-      "Drive joints to values (deg / mm) or place a part; the rest follow through the joints. Writes a pose; preview only reports",
+      "Drive joints to values (deg / mm) or place a part; the rest follow through the joints. Writes a pose (id: its op); preview only reports values and moved, no id",
       {{"doc", "path"},
        {"values", {{"type", "object"}, {"additionalProperties", {{"anyOf", {{{"type", "number"}}, {{"type", "array"}, {"items", {{"type", {"number", "null"}}}}}}}}},
                    {"description", "{joint id: value (deg or mm) or [values, null leaves one free]}"}}},
@@ -374,7 +374,7 @@ void register_sim_commands(const std::function<void(const CommandInfo&, Handler)
        {"matrix", "[16] row-major world placement for part"},
        {"anchor", "string - the part to keep still when nothing else holds the mechanism"},
        {"name", "string - the pose's name"},
-       {"preview", "bool - solve and report without writing"},
+       {"preview", "bool - solve and report without writing (no id)"},
        {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need_doc(d);

@@ -80,6 +80,8 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
     quint64 group = 0, firstBox = 0, shown = 0;
     json away;  // a camera far from the model: Show moves off it, Back returns to it
     quint64 retry = 0;  // a row left saying "Retrying…"
+    std::string body, joint;  // the body the user hides meanwhile (#16), the joint joint_set previews (#26)
+    size_t looksAt = 0, opsCount = 0;
     size_t rows = 0;
     QElapsedTimer clock;
   };
@@ -506,6 +508,118 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         const json change = m_doc->revisionChange();
         require(change.value("cause", "") == "agent" && !change.contains("view_refreshes"), "revision_change after the commit: " + QString::fromStdString(change.dump()));
         pass("a timeline roll-back and forward keeps expected_revision; live_state says what moved it");
+        // The user hides, shows, colours and hides a body (four appearance ops, as in the second MCP stress test, #16, where
+        // they moved the revision 33 -> 37 between two agent calls): the content revision stays and live_state names them.
+        st->base = m_doc->contentRevision;
+        for (const auto& [id, n] : m_doc->scene.nodes)
+          if (n.kind == opad::Node::Kind::Body && !n.locked) {
+            st->body = id;
+            break;
+          }
+        require(!st->body.empty(), "a body to hide");
+        const auto docBefore = m_doc->docRevision;
+        const size_t opsBefore = m_doc->doc.ops.size();
+        m_doc->run("appearance", {{"target", st->body}, {"visible", false}});
+        m_doc->run("appearance", {{"target", st->body}, {"visible", true}});
+        m_doc->run("appearance", {{"target", st->body}, {"color", {0.8, 0.2, 0.2}}});
+        m_doc->run("appearance", {{"target", st->body}, {"visible", false}});
+        require(m_doc->doc.ops.size() == opsBefore + 4 && m_doc->docRevision == docBefore + 4 && m_doc->contentRevision == st->base,
+                QStringLiteral("four looks: ops %1 -> %2, doc revision %3 -> %4, content %5 -> %6")
+                    .arg(opsBefore).arg(m_doc->doc.ops.size()).arg(docBefore).arg(m_doc->docRevision).arg(st->base).arg(m_doc->contentRevision));
+        tool("live_state");
+        return true;
+      },
+      [=, this] {  // live_state: the view edits since, and only the last command's changes (#17)
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "live_state: " + QString::fromStdString(st->reply.dump()).left(400));
+        const json& out = st->reply["structuredContent"]["result"];
+        const json edits = out.value("revision_change", json::object()).value("view_edits", json::object());
+        require(out.value("revision", 0ull) == st->base && edits.value("count", 0) == 4 && edits.value("last", json::array()).size() == 4,
+                "live_state's revision and the view edits since: " + QString::fromStdString(out.value("revision_change", json::object()).dump()));
+        require(out.value("changes", json::array()).size() == 1 && out.value("changes_total", 0) >= 2,
+                QStringLiteral("live_state gives the last command's changes only: %1 of %2")
+                    .arg(out.value("changes", json::array()).size()).arg(out.value("changes_total", 0)));
+        tool("live_state", {{"change_history", true}});
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        const json& out = st->reply["structuredContent"]["result"];
+        require(out.value("changes", json::array()).size() == out.value("changes_total", size_t(0)) && out.value("changes_total", 0) >= 2,
+                "change_history gives every kept change: " + QString::fromStdString(out.value("changes", json::array()).dump()).left(200));
+        pass("view edits keep the revision; live_state names them and gives the last command's changes (all with change_history)");
+        // A preview staged with the revision read before the hides, then the user shows the body again meanwhile.
+        tool("feature", box({{"inputs", {{"x", "160 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}, {"preview", true}}), true);
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false) && st->reply["structuredContent"].value("state", "") == "staged",
+                "a preview with the revision from before the hides: " + QString::fromStdString(st->reply.dump()).left(400));
+        st->transaction = st->reply["structuredContent"].value("preview_id", "");
+        st->looksAt = m_doc->doc.ops.size();
+        m_doc->run("appearance", {{"target", st->body}, {"visible", true}});
+        require(m_prepared && m_prepared->id == st->transaction && m_doc->contentRevision == st->base, "a show keeps the staged preview");
+        tool("preview_commit", {{"id", st->transaction}, {"expected_revision", st->base}}, true);
+        return true;
+      },
+      [=, this] {  // the commit keeps the user's show and puts the agent's ops after it
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false) && st->reply["structuredContent"].value("state", "") == "committed",
+                "the preview's commit after a show: " + QString::fromStdString(st->reply.dump()).left(400));
+        require(m_doc->contentRevision == st->base + 1, "the commit moved the content revision by one");
+        const auto& ops = m_doc->doc.ops;
+        require(ops.size() > st->looksAt + 1 && ops[st->looksAt].type == "appearance" && ops.back().type != "appearance",
+                QStringLiteral("the user's show, then the agent's ops: %1 ops, show at %2").arg(ops.size()).arg(st->looksAt));
+        const auto* n = m_doc->scene.node(st->body);
+        require(n && n->visible && n->has_color, "the body is shown and keeps its colour after the agent's commit");
+        pass("an agent commit keeps the user's hides and colours made while it worked");
+        tool("features");
+        return true;
+      },
+      [=, this] {  // #25: features is a page of compact items
+        if (!answered() || !idle()) return false;
+        const json& out = st->reply["structuredContent"]["result"];
+        const json items = out.value("items", json::array());
+        require(out.is_object() && !items.empty() && items.size() <= size_t(opad::agent::live_page_limit) && out.value("total", 0) == int(items.size()) &&
+                    out.contains("next_offset") && out["next_offset"].is_null(),
+                "features as a page: " + QString::fromStdString(out.dump()).left(400));
+        require(items[0].contains("state") && items[0].contains("kind") && !items[0].contains("inputs"), "compact features: " + QString::fromStdString(items[0].dump()));
+        tool("ops", {{"limit", 2}});
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        const json& out = st->reply["structuredContent"]["result"];
+        require(out.value("items", json::array()).size() == 2 && out.value("next_offset", json()) == 2 && out.value("total", size_t(0)) == m_doc->doc.ops.size(),
+                "ops as a page: " + QString::fromStdString(out.dump()).left(400));
+        pass("features and ops are pages of compact items");
+        tool("joint", {{"kind", "revolute"}, {"part", st->body}, {"at", {{"origin", {0, 0, 0}}, {"z", {0, 0, 1}}}}, {"expected_revision", m_doc->contentRevision}}, true);
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "a joint: " + QString::fromStdString(st->reply.dump()).left(400));
+        st->joint = st->reply["structuredContent"]["result"].value("id", "");
+        st->opsCount = m_doc->doc.ops.size();
+        require(!st->joint.empty(), "the joint's id");
+        tool("joint_set", {{"values", {{st->joint, 30}}}, {"preview", true}});  // a read: no revision or request id needed
+        return true;
+      },
+      [=, this] {  // #26: a preview writes nothing, so it has no id
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "joint_set preview: " + QString::fromStdString(st->reply.dump()).left(400));
+        const json& out = st->reply["structuredContent"]["result"];
+        require(out.contains("values") && !out.contains("id") && m_doc->doc.ops.size() == st->opsCount,
+                "joint_set preview reports values, no id, no op: " + QString::fromStdString(out.dump()).left(300));
+        tool("ops", {{"limit", 1}});  // the agent's cached copy has no pose op either
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        require(st->reply["structuredContent"]["result"].value("total", size_t(0)) == m_doc->doc.ops.size(),
+                "the agent's copy after a joint_set preview: " + QString::fromStdString(st->reply.dump()).left(300));
+        pass("joint_set preview writes nothing and answers without an id");
         // A failure names the call that failed, not another connection's call refused meanwhile.
         ActivityEvent e;
         e.kind = ActivityEvent::Running;

@@ -463,7 +463,14 @@ gui case agent-connect (APPDATA / HOME / XDG_CONFIG_HOME / CLAUDE_CONFIG_DIR poi
 tools/test_mcp_feedback.py with a real Codex.
 Agents' `expected_revision` is `AppDocument::contentRevision` (ops or the document changed: `refresh(cause, label)`,
 `commitSnapshot`, `recover`), never `revision`, which every scene re-resolve moves (`refreshView`: timeline and editor
-roll-backs, the icons, detach); `live_state.revision_change` says what moved it last. The agent guide is served by `##`
+roll-backs, the icons, detach); `live_state.revision_change` says what moved it last. Appearance-only ops (hide, show,
+colour, opacity, lock: `AppDocument::viewOnly`) move only `docRevision` (`refreshLook`; `view_edits` in revision_change),
+which every other snapshot-and-swap caller checks (`commitSnapshot`: clipboard paste, recovery merge, version restore);
+the agent commits through `commitRebased` (the snapshot's op ids in `Snapshot::baseIds`): the user's looks made since stay
+and the agent's ops go after them, so staged work survives a hide or a roll-back. live_state gives the last command's
+changes (`change_history` for the kept 20); live `features`/`ops` are pages of compact items (`live_read_defaults`,
+core `commands::page_list`; the CLI keeps the plain list). Only a write's `preview` is staging: a read keeps its own
+(joint_set preview). The agent guide is served by `##`
 section (`guide_index`, `guide_section`, `opad://guide/agent#<id>`); `include_guide` returns the index.
 
 ## Builds and the update channels (`core/CMakeLists.txt` build_info, `app/UpdateCheck.*`, `app/UpdatesArea.cpp`)

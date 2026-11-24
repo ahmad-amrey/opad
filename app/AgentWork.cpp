@@ -106,7 +106,7 @@ json compactResult(const json& r,const opad::Scene& scene,int depth=0){
 }
 }
 void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)> done,int waited){
-  if(m_cache && m_cache->revision==m_doc->contentRevision){done(m_cache,{});return;}
+  if(m_cache && m_cache->docRevision==m_doc->docRevision){done(m_cache,{});return;}
   // Another capture or a save holds the document (a recovery checkpoint right after a commit): wait for it rather
   // than fail the call (gap log #3: "snapshot_failed: Document is busy" after every commit).
   if(m_doc->snapshotBusy() && waited<30000){
@@ -114,16 +114,23 @@ void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)
     QTimer::singleShot(20,this,[self,done=std::move(done),waited]()mutable{if(self)self->snapshot(std::move(done),waited+20);});
     return;
   }
-  const auto revision=m_doc->contentRevision,generation=m_doc->generation;QPointer<AgentBridge> self=this;
-  if(!m_doc->captureSnapshot(m_jobs,[self,revision,generation,done](std::shared_ptr<opad::Document> copy,const QString& error){
+  // The copy is made while the document is guarded (captureSnapshot): it is the log at these revisions.
+  const auto revision=m_doc->contentRevision,docRevision=m_doc->docRevision,generation=m_doc->generation;QPointer<AgentBridge> self=this;
+  if(!m_doc->captureSnapshot(m_jobs,[self,revision,docRevision,generation,done](std::shared_ptr<opad::Document> copy,const QString& error){
     if(!self)return;if(!copy){done({},error);return;}
-    auto value=std::make_shared<Snapshot>();value->doc=std::move(copy);value->revision=revision;
+    auto value=std::make_shared<Snapshot>();value->doc=std::move(copy);value->revision=revision;value->docRevision=docRevision;
     self->m_jobs->backgroundNext();  // agent traffic: no busy cursor, no completion toast
-    self->m_jobs->async(tr("Preparing agent context"),[value](Progress p){value->scene=opad::resolve(*value->doc);if(p.cancelled())throw opad::Error("cancelled");},
+    self->m_jobs->async(tr("Preparing agent context"),[value](Progress p){
+        auto ids=std::make_shared<std::vector<std::string>>();ids->reserve(value->doc->ops.size());
+        for(const auto& op:value->doc->ops)ids->push_back(op.id);
+        value->baseIds=std::move(ids);
+        value->scene=opad::resolve(*value->doc);if(p.cancelled())throw opad::Error("cancelled");},
       [self,value,done,generation](bool ok,const QString& error){
         if(!self)return;if(!ok){done({},error);return;}
         if(generation!=self->m_doc->generation || value->revision!=self->m_doc->contentRevision){done({},tr("Document changed while preparing context. Retry."));return;}
-        self->m_cache=value;done(value,{});
+        // A hide or a colour meanwhile: still the content the agent asked about (its commit keeps those), not cached
+        if(value->docRevision==self->m_doc->docRevision)self->m_cache=value;
+        done(value,{});
       });
   },true))done({},tr("Document is busy. Retry after the current operation."));
 }
@@ -171,7 +178,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
   }
   if(write && transaction.empty() && m_prepared && m_prepared->transaction){fail(session,"transaction_active",tr("Commit or cancel the current transaction first."),receipt);return;}
   if(name=="export" && preview){fail(session,"invalid_export",tr("Export a transaction's staged state, or the document; a preview cannot be exported."),receipt);return;}
-  const auto state=liveState();const auto linked=name=="context"?linkedFiles():json();  // read here, on the UI thread
+  const auto state=liveState(name=="live_state" && args.value("change_history",false));const auto linked=name=="context"?linkedFiles():json();  // read here, on the UI thread
   m_busy=true;m_owner=session->socket;const auto epoch=++m_epoch,revision=m_doc->contentRevision;
   const auto started=std::make_shared<QElapsedTimer>();started->start();activity(tr("Agent: %1").arg(QString::fromStdString(name)));
   // The call's row, running until it is done (none for hidden calls and lookups, which fold; a transaction's steps go under
@@ -205,8 +212,12 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       p.setPhase(tr("Inspecting inputs"));
       if(write && name!="model_batch")opad::agent::check_references(*source->doc,source->scene,args,known.get());
       const bool compact=args.value("verbosity","full")=="compact";  // TODO 10 B11
-      for(const char* key:{"expected_revision","request_id","transaction","preview","references","verbosity"})args.erase(key);
-      if(write){result->snapshot=std::make_shared<Snapshot>();result->snapshot->doc=std::make_shared<opad::Document>(*source->doc);result->snapshot->revision=source->revision;args["by"]="Agent";}
+      for(const char* key:{"expected_revision","request_id","transaction","references","verbosity"})args.erase(key);
+      // A write's preview is staging, the command never sees it; a read keeps its own (joint_set preview=true is a read
+      // that only reports: without it the command wrote a pose into the shared copy and answered with its id, #26).
+      if(write)args.erase("preview");
+      else args=opad::agent::live_read_defaults(name,std::move(args));  // features and ops: a page
+      if(write){result->snapshot=std::make_shared<Snapshot>();result->snapshot->doc=std::make_shared<opad::Document>(*source->doc);result->snapshot->revision=source->revision;result->snapshot->docRevision=source->docRevision;result->snapshot->baseIds=source->baseIds;args["by"]="Agent";}
       auto working=write?result->snapshot:source;
       std::set<std::string> batchValid;  // body keys model_batch's steps already found valid
       if(p.cancelled())throw opad::Error("cancelled");
@@ -479,7 +490,8 @@ void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::stri
     if(done.isEmpty())done=prepared->label;
     if(done.size()>60)done=done.left(59)+QChar(0x2026);
     const size_t opsBefore=m_doc->doc.ops.size();  // what follows is what this commit made (its row lists them all)
-    m_committing=true;m_doc->commitSnapshot(*prepared->snapshot->doc,prepared->snapshot->scene,revision,tr("%1: %2").arg(client,done),"agent");m_committing=false;
+    m_committing=true;AppDocument::SnapshotBase base{revision,prepared->snapshot->docRevision,prepared->snapshot->baseIds?*prepared->snapshot->baseIds:std::vector<std::string>{}};
+    m_doc->commitRebased(*prepared->snapshot->doc,prepared->snapshot->scene,base,tr("%1: %2").arg(client,done),"agent");m_committing=false;
     if(opsBefore<m_doc->doc.ops.size()){  // undo / redo replies keep naming it as before
       m_replyLabels.emplace_back(m_doc->doc.ops[opsBefore].id,tr("Agent: %1").arg(prepared->label));
       if(m_replyLabels.size()>100)m_replyLabels.pop_front();

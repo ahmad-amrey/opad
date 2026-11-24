@@ -192,12 +192,30 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
 
   reg("feature_kinds", "Every feature kind with the inputs it takes", json::object(), false, [](Document*, const json&) { return design::feature_specs_json(); });
 
-  reg("features", "The design history: sketches and features in order, with their state", {{"doc", "path"}}, false, [](Document* d, const json&) {
+  reg("features", "The design history: sketches and features in order, with their state; offset/limit page it",
+      {{"doc", "path"}, {"offset", "int - first item of the page (default 0)"}, {"limit", "int - items per page (default all)"},
+       {"detail", {{"type", "string"}, {"enum", {"full", "compact"}}, {"description", "compact: id, kind, name, state (ok, error, suppressed)"}}}},
+      false, [](Document* d, const json& a) {
     Document& doc = need(d);
     const Scene s = resolve(doc);
+    const bool compact = a.value("detail", "full") == "compact";
     json out = json::array();
     for (const auto& e : effective_ops(doc)) {
-      if (e.op->type == "sketch") {
+      if (compact && (e.op->type == "sketch" || e.op->type == "feature")) {
+        const SketchItem* k = e.op->type == "sketch" ? s.sketch(e.op->id) : nullptr;
+        const Feature* f = k ? nullptr : s.feature(e.op->id);
+        if (!k && !f) continue;
+        const std::string& error = k ? k->error : f->error;
+        json j = {{"id", e.op->id}, {"kind", k ? std::string("sketch") : f->kind}, {"name", k ? k->name : f->name},
+                  {"state", !error.empty() ? "error" : f && f->suppressed ? "suppressed" : "ok"}};
+        if (!error.empty()) {  // a line, cut on a character boundary
+          size_t cut = std::min(error.size(), size_t(160));
+          while (cut < error.size() && cut > 0 && (static_cast<unsigned char>(error[cut]) & 0xC0) == 0x80) --cut;
+          j["error"] = cut < error.size() ? error.substr(0, cut) + "..." : error;
+        }
+        if (const std::string& c = k ? k->component : f->component; !c.empty()) j["component"] = c;
+        out.push_back(std::move(j));
+      } else if (e.op->type == "sketch") {
         const SketchItem* k = s.sketch(e.op->id);
         json j = {{"id", e.op->id}, {"type", "sketch"}, {"name", k->name}, {"plane", k->plane}, {"dof", k->dof}, {"visible", k->visible}};
         j["entities"] = k->geometry.value("entities", json::array()).size();
@@ -218,7 +236,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         out.push_back(j);
       }
     }
-    return out;
+    return page_list(std::move(out), a);
   });
 
   reg("sketch", "Create a sketch on a plane from its geometry: points, entities, constraints and high-level shapes (rectangles, rounded rectangles, arcs by three points or a radius, paths with fillets and tangent arcs, slots, offsets, text), which become ordinary curves; the result's id_map lists what each shape made. Points, entities, constraints, images and patterns share one id space: point 1 and entity 1 collide, so number them apart (points 1-99, entities 100-199, constraints 200+). The agent guide (MCP resource opad://guide/agent) describes the format",
