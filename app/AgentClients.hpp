@@ -14,6 +14,7 @@
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QToolButton;
 
 class AgentClientRow : public QWidget {
   Q_OBJECT
@@ -46,7 +47,9 @@ class AgentClientRow : public QWidget {
   QString m_executable, m_discovery;
   agentclients::State m_state = agentclients::State::Unchecked;
   std::optional<agentclients::Entry> m_entry;
-  QLabel *m_title, *m_status, *m_note;
+  QLabel *m_title, *m_status, *m_note, *m_pill;
+  QToolButton* m_details;  // shows m_status (the technical state line, report())
+  QWidget* m_pathRow = nullptr;
   QLineEdit* m_path = nullptr;
   QPushButton *m_browse = nullptr, *m_connect, *m_point, *m_remove, *m_check;
   bool m_running = false;

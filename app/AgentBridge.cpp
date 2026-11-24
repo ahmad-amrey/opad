@@ -2,6 +2,10 @@
 #include "DesignController.hpp"
 #include "Viewport.hpp"
 #include "Panels.hpp"
+#include "AreaController.hpp"
+#include "TimelineWidget.hpp"
+#include "Toast.hpp"
+#include "Units.hpp"
 #include "opad/live.hpp"
 #include <QLocalSocket>
 #include <QApplication>
@@ -15,6 +19,13 @@
 #include <QVBoxLayout>
 #include <QPushButton>
 #include <QCryptographicHash>
+#include <QActionGroup>
+#include <QClipboard>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QGuiApplication>
+#include <QMenu>
+#include <QPlainTextEdit>
 #include <mutex>
 using opad::json;
 using namespace opad::agent;
@@ -30,16 +41,28 @@ AgentBridge::AgentBridge(AppDocument* doc,DesignController* design,Viewport* vie
   QDir().mkpath(m_directory);m_file=m_directory+"/"+m_instance+".json";
   m_lock=std::make_unique<QLockFile>(m_file+".lock");m_lock->tryLock(0);
   m_follow=settings.value("agent/follow",false).toBool();
+  m_everConnected=settings.value("agent/everConnected",false).toBool();m_announce=settings.value("agent/announce",true).toBool();
   m_server.setSocketOptions(QLocalServer::UserAccessOption);
   connect(&m_server,&QLocalServer::newConnection,this,&AgentBridge::accept);
   // Another state of the document: unfinished work stops; whether bound connections follow is known once it is in (changed).
   connect(doc,&AppDocument::aboutToReplace,this,[this]{
+    dropNeeds(QString());  // its Save or Allow was about the document that goes
     stop();if(m_cache)dispose(std::move(m_cache));m_changes=json::array();
     if(!m_replacing.pending)m_replacing={m_doc->hasDocument?m_doc->doc.header.uuid:std::string(),m_doc->path(),m_doc->hasDocument && !m_doc->browse,true};
   });
   connect(doc,&AppDocument::changed,this,[this]{if(m_replacing.pending)followReplace();if(!m_committing)clearPrepared();if(m_cache)dispose(std::move(m_cache));publish();});
   connect(doc,&AppDocument::pathChanged,this,&AgentBridge::publish);
-  connect(design,&DesignController::stateChanged,this,[this]{if(editorBusy() && !m_doc->snapshotBusy())clearPrepared();emit statusChanged();});
+  connect(design,&DesignController::stateChanged,this,[this]{
+    if(editorBusy() && !m_doc->snapshotBusy()){
+      if(m_prepared)m_dropReason=m_design->sketchActive()?tr("Dropped when you opened the sketch. Nothing changed."):tr("Dropped when you started editing. Nothing changed.");
+      clearPrepared();
+    }
+    emit statusChanged();
+  });
+  // Rows offer Undo only while their step is the next one Undo takes back, and Show only while their bodies are there.
+  connect(doc,&AppDocument::undoChanged,this,&AgentBridge::refreshRows);
+  connect(doc,&AppDocument::changed,this,&AgentBridge::refreshRows);
+  connect(this,&AgentBridge::statusChanged,this,&AgentBridge::refreshUi);
   setAccess(settings.value("agent/enabled",false).toBool(),settings.value("agent/edit",false).toBool());
   // Test instances use separate INI settings and an explicit opt-in environment variable.
   if(!qEnvironmentVariable("OPAD_BENCH_SETTINGS").isEmpty() && qEnvironmentVariableIsSet("OPAD_BENCH_AGENT"))setAccess(true,true);
@@ -60,11 +83,28 @@ void AgentBridge::followReplace(){
   m_replacing.pending=false;
   const bool same=m_replacing.open && m_doc->hasDocument && !m_doc->browse && !m_replacing.uuid.empty() && m_doc->doc.header.uuid==m_replacing.uuid &&
     !m_replacing.path.isEmpty() && QFileInfo(m_doc->path())==QFileInfo(m_replacing.path);
-  if(!same){++m_identity;for(auto& s:m_sessions)s->bound=false;return;}  // another document: bound explicitly, never followed
+  if(!same){
+    ++m_identity;for(auto& s:m_sessions)s->bound=false;
+    // Rows of the document that went no longer show or undo anything: they say where they were.
+    if(m_feed && !m_feed->events().empty()){
+      const QString from=QFileInfo(m_replacing.path).fileName();
+      for(auto e:m_feed->events()){
+        if(e.kind==ActivityEvent::Divider)continue;
+        e.canShow=false;e.canUndo=false;e.subjects.clear();e.stale=true;
+        if(!from.isEmpty())e.second=tr("From %1").arg(from);
+        m_feed->post(e);
+      }
+      divider(tr("Opened another document · %1").arg(QTime::currentTime().toString("HH:mm")));
+    }
+    return;
+  }  // another document: bound explicitly, never followed
   bool any=false;for(auto& s:m_sessions)if(s->bound){s->reloaded=true;any=true;}
-  if(any)activity(tr("The document was reloaded from its file; bound agents follow it"));
+  if(any){
+    activity(tr("The document was reloaded from its file; bound agents follow it"));
+    divider(tr("The document reloaded from its file · %1").arg(QTime::currentTime().toString("HH:mm")));
+  }
 }
-json AgentBridge::descriptor()const{return {{"instance",m_instance.toStdString()},{"endpoint",m_endpoint.toStdString()},{"target",target().toStdString()},{"document",m_doc->hasDocument?m_doc->doc.header.uuid:""},{"title",m_doc->title().toStdString()},{"path",m_doc->path().toStdString()},{"pid",QCoreApplication::applicationPid()},{"enabled",m_enabled},{"edit",m_edit},{"version",opad::version_string()}};}
+json AgentBridge::descriptor()const{return {{"instance",m_instance.toStdString()},{"endpoint",m_endpoint.toStdString()},{"target",target().toStdString()},{"document",m_doc->hasDocument?m_doc->doc.header.uuid:""},{"title",m_doc->title().toStdString()},{"path",m_doc->path().toStdString()},{"pid",QCoreApplication::applicationPid()},{"enabled",m_enabled},{"edit",canEdit()},{"version",opad::version_string()}};}
 void AgentBridge::publish(){
   // Fixed-size descriptor; serialize/write on a worker. Serialize publishes under one mutex
   // and discard older generations, including those still pending when the window closes.
@@ -76,8 +116,14 @@ void AgentBridge::publish(){
 void AgentBridge::setAccess(bool enabled,bool edit){
   if(!enabled || !edit)stop();m_enabled=enabled;m_edit=edit;
   QSettings s;s.setValue("agent/enabled",enabled);s.setValue("agent/edit",edit);
-  if(enabled && !m_server.isListening() && !m_server.listen(m_endpoint)){m_enabled=false;activity(tr("Connection failed: %1").arg(m_server.errorString()));}
+  m_listenFailed=false;
+  if(enabled && !m_server.isListening() && !m_server.listen(m_endpoint)){
+    m_enabled=false;m_listenFailed=true;const auto reason=m_server.errorString();activity(tr("Connection failed: %1").arg(reason));
+    if(m_services)if(auto* stack=m_services->toasts())
+      if(auto* t=stack->toast(tr("AI access couldn't start: another program may be using it."),tr("Details"),[this]{settings(1);},0))t->setToolTip(reason);
+  }
   if(!m_enabled){m_server.close();const auto sessions=m_sessions;for(auto& session:sessions)if(session->socket)session->socket->disconnectFromServer();}
+  if(canEdit() && m_enabled)dropNeeds(QStringLiteral("allowEdit"));  // allowed from the chip's menu or Settings: nothing left to ask
   publish();
 }
 bool AgentBridge::publishesSelection()const{return m_enabled || std::any_of(m_sessions.begin(),m_sessions.end(),[](const auto& s){return s->bound;});}
@@ -143,10 +189,23 @@ void AgentBridge::accept(){while(m_server.hasPendingConnections()){
   auto session=std::make_shared<Session>();session->socket=m_server.nextPendingConnection();session->clientId=uuid();m_sessions.push_back(session);
   connect(session->socket,&QLocalSocket::readyRead,this,[this,session]{read(session);});
   connect(session->socket,&QLocalSocket::disconnected,this,[this,session]{
+    const bool wasBound=session->bound;const auto name=who(session);
     session->bound=false;
-    if(m_prepared && m_prepared->owner==session->socket)clearPrepared();
-    if(m_busy && m_owner==session->socket){++m_epoch;if(m_job)m_job->cancel();m_busy=false;m_owner.clear();}
-    if(session->socket)session->socket->deleteLater();std::erase(m_sessions,session);emit statusChanged();
+    if(m_prepared && m_prepared->owner==session->socket){
+      const QString label=m_prepared->transaction?m_prepared->label:QString();
+      m_dropReason=tr("Dropped when %1 disconnected. Nothing changed.").arg(name.brief);clearPrepared();
+      if(m_services)m_services->toast(label.isEmpty()?tr("%1 disconnected; its preview was removed. Nothing changed.").arg(name.brief)
+                                                     :tr("%1 disconnected; its preview %2 was removed. Nothing changed.").arg(name.brief,agentsay::plain(agentsay::quote(label,48))),QString(),{},6000);
+    }
+    if(wasBound){
+      m_leftAt=QDateTime::currentDateTime();m_leftName=name.brief;
+      divider(tr("%1 disconnected · %2").arg(name.brief,QTime::currentTime().toString("HH:mm")));
+      QTimer::singleShot(61000,this,[this]{emit statusChanged();});
+    }
+    if(m_busy && m_owner==session->socket){++m_epoch;m_busy=false;if(m_job)m_job->cancel();m_owner.clear();}  // not busy first, as stop()
+    if(session->socket)session->socket->deleteLater();std::erase(m_sessions,session);
+    if(!boundCount())m_paused=false;  // Pause changes lasts while someone is connected
+    emit statusChanged();
   });
 }}
 void AgentBridge::read(const std::shared_ptr<Session>& session){
@@ -213,7 +272,7 @@ void AgentBridge::fail(const std::shared_ptr<Session>& s,const std::string& code
   detail["retryable"]=transient;detail["retry_after_ms"]=transient?json(50):json(nullptr);
   if(transient)detail["next"]="Call wait_for_idle, check revision and transaction state, then retry with a new request_id.";
   if(code=="not_bound" || code=="target_changed")detail["next"]=json{"live_instances","live_bind"};
-  activity(tr("Agent error: %1").arg(message));reply(s,std::move(error),receipt);
+  activity(tr("Agent error: %1").arg(message));failed(code,message);reply(s,std::move(error),receipt);
 }
 void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Receipt& receipt){
   if(receipt.state=="cancelled"){
@@ -234,12 +293,25 @@ void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Rec
 }
 void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::string hash){
   const auto name=request.at("name").get<std::string>();auto args=request.value("arguments",json::object());
+  if(agentsay::kindOf(name,args)!=agentsay::Kind::Hidden || name=="undo" || name=="redo" || name=="open_document" || name=="new_document")m_call={name,args,{}};
   if(!m_enabled){fail(s,"access_disabled",tr("Agent access is disabled."));return;}
   if(name=="live_bind"){
     if(args.at("instance")!=m_instance.toStdString() || args.at("target")!=target().toStdString() || target().isEmpty()){fail(s,"wrong_target",tr("Choose the current document explicitly using live_instances."));return;}
     if(request.value("version","")!=opad::version_string()){fail(s,"version_mismatch",tr("Use the CLI installed with this OPAD version."));return;}
+    const bool again=s->bound;
     s->bound=true;s->target=target();s->agent=QString::fromStdString(request.value("client",json::object()).value("name","MCP client")).left(100);m_seenClient=true;
-    activity(tr("Connected: %1").arg(s->agent));auto state=liveState();state["client_id"]=s->clientId;reply(s,live_result(state));return;
+    activity(tr("Connected: %1").arg(s->agent));
+    if(!again){
+      const auto name=who(s);m_leftAt={};
+      if(!m_everConnected){m_everConnected=true;QSettings().setValue("agent/everConnected",true);}
+      divider(tr("%1 connected · %2").arg(name.brief,QTime::currentTime().toString("HH:mm")));
+      // Once per run: who connected, to what, and that it can only look when so; the panel stays closed.
+      if(QSettings().value("agent/announce",true).toBool() && !m_announced && m_services && (!m_panel || !m_panel->isVisible())){
+        m_announced=true;
+        const QString file=fileLabel();
+        m_services->toast(canEdit()?tr("%1 connected to %2.").arg(name.brief,file):tr("%1 connected to %2 and can only look.").arg(name.brief,file),tr("Show activity"),[this]{showActivity();},6000);
+      }
+    }auto state=liveState();state["client_id"]=s->clientId;reply(s,live_result(state));return;
   }
   if(name=="live_diagnostics") {
     if(!s->bound || s->target!=target()) {
@@ -255,9 +327,9 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     }
     json next=m_busy?json{"live_diagnostics","stop"}:editorBusy()?json{"live_state"}:
       m_prepared?(m_prepared->owner!=s->socket?json{"live_state"}:m_prepared->transaction?json{"validate","transaction_commit","transaction_cancel"}:json{"viewport_image","preview_commit","preview_cancel"}):
-      m_edit?json{"context","feature_schema","transaction_begin"}:json{"context","entity_details","viewport_image"};
+      canEdit()?json{"context","feature_schema","transaction_begin"}:json{"context","entity_details","viewport_image"};
     json out={{"connection","bound"},{"instance",m_instance.toStdString()},{"target",target().toStdString()},
-      {"permissions",{{"enabled",m_enabled},{"edit",m_edit}}},{"revision",m_doc->revision},{"units",m_doc->scene.units},
+      {"permissions",{{"enabled",m_enabled},{"edit",canEdit()}}},{"revision",m_doc->revision},{"units",m_doc->scene.units},
       {"geometry_units","mm"},{"busy",m_busy},{"editor_busy",editorBusy()},{"transaction_state",transaction},{"next_calls",next}};
     if(auto linked=linkedFiles();!linked.is_null())out["linked_files"]=std::move(linked);
     if(args.value("include_example",false))out["guide"]=live_guide();if(args.value("include_guide",false))out["agent_guide"]=guide();reply(s,live_result(out));return;
@@ -273,7 +345,13 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     fail(s,"no_document",tr("No document is open in this window: open_document opens a file, new_document makes an empty .opad."));return;
   }
   if(name=="wait_for_idle"){auto timer=std::make_shared<QElapsedTimer>();timer->start();waitForIdle(s,args.value("timeout_ms",2000),m_epoch,timer);return;}
-  if(name=="stop"){stop();reply(s,live_result({{"stopped",true}}));return;}
+  if(name=="stop"){
+    const bool working=m_busy || m_prepared;
+    if(m_prepared)m_dropReason=tr("Dropped: %1 stopped its unfinished work. Nothing changed.").arg(who(s).brief);
+    stop();reply(s,live_result({{"stopped",true}}));
+    if(working)divider(tr("%1 stopped its unfinished work · %2").arg(who(s).brief,QTime::currentTime().toString("HH:mm")));
+    return;
+  }
   if(name=="live_state"){
     if(m_busy || !m_doc->hasDocument)reply(s,live_result({{"state","read"},{"revision",m_doc->revision},{"result",liveState()}}));
     else execute(s,name,args,{});
@@ -292,7 +370,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
       if(found->second.hash!=hash){fail(s,"request_id_reused",tr("This request ID already belongs to different arguments."));return;}
       replyReceipt(s,found->second);return;
     }
-    if(!m_edit){fail(s,"read_only",tr("Agent access is view-only. Enable editing in Settings to change or export the document."));return;}
+    if(!canEdit()){fail(s,"read_only",tr("Agent access is view-only. Enable editing in Settings to change or export the document."));return;}
     if(m_doc->snapshotBusy() && !m_busy && !m_design->sketchActive() && !m_design->featureActive() && !m_design->pickingPlane()){
       if(s->requestTimer.elapsed()>=2000){fail(s,"edit_session_busy",tr("Document is busy. Retry after the current operation."));return;}
       // A recovery checkpoint can briefly own the write guard between MCP calls.
@@ -310,7 +388,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
   }
   if(name=="transaction_cancel" || name=="preview_cancel"){
     if(!m_prepared || m_prepared->id!=args.at("id").get<std::string>() || m_prepared->owner!=s->socket){fail(s,"unknown_prepared",tr("No matching prepared operation belongs to this connection."));return;}
-    clearPrepared();reply(s,live_result({{"cancelled",true}}));return;
+    m_dropReason=tr("Discarded. Nothing changed.");clearPrepared();reply(s,live_result({{"cancelled",true}}));return;
   }
   if(m_busy){fail(s,"busy",tr("An agent operation is still running. Wait or use Stop."));return;}
   if(write)m_receipts.emplace(key,Receipt{hash});
@@ -320,36 +398,41 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     const bool back=name=="undo";
     if(m_prepared){m_receipts.erase(key);fail(s,"prepared_active",tr("Commit or cancel the current transaction first."));return;}
     if(back?!m_doc->canUndo():!m_doc->canRedo()){m_receipts.erase(key);fail(s,back?"nothing_to_undo":"nothing_to_redo",back?tr("There is nothing to undo."):tr("There is nothing to redo."));return;}
-    const QString label=back?m_doc->undoLabel():m_doc->redoLabel();
+    const QString label=replyLabel(back,back?m_doc->undoLabel():m_doc->redoLabel());
     if(back)m_doc->undo();else m_doc->redo();
     m_receipts[key].state="committed";m_receipts[key].revision=m_doc->revision;
     reply(s,live_result({{"state","committed"},{"revision",m_doc->revision},{"result",{{back?"undone":"redone",label.toStdString()}}}}),key);
-    activity(back?tr("Agent: undo %1").arg(label):tr("Agent: redo %1").arg(label));emit statusChanged();return;
+    activity(back?tr("Agent: undo %1").arg(label):tr("Agent: redo %1").arg(label));
+    ActivityEvent e;e.kind=ActivityEvent::Change;e.icon=back?QStringLiteral("rollLeft"):QStringLiteral("rollRight");e.client=who(s).brief;
+    e.text=back?tr("Undid %1").arg(agentsay::quote(label)):tr("Redid %1").arg(agentsay::quote(label));e.canShow=false;post(e);
+    emit statusChanged();return;
   }
   if(name=="transaction_commit" || name=="preview_commit"){commit(s,args.at("id").get<std::string>(),key,args.at("expected_revision").get<unsigned long long>());return;}
   execute(s,name,std::move(args),write?key:std::string());
 }
-void AgentBridge::clearPrepared(bool cancelReceipts){if(m_prepared){
+void AgentBridge::clearPrepared(bool cancelReceipts,bool dropRow){if(m_prepared){
   if(cancelReceipts)for(const auto& key:m_prepared->receipts)if(m_receipts[key].state=="staged")m_receipts[key].state="cancelled";
+  if(dropRow && m_staged)if(auto* e=row(m_staged)){
+    e->state=ActivityEvent::Dropped;e->second=m_dropReason.isEmpty()?tr("Dropped. Nothing changed."):m_dropReason;e->subjects.clear();post(*e);
+  }
+  if(dropRow){m_staged=0;m_group=0;}
+  m_dropReason.clear();
   m_viewport->clearPreviewBodies();dispose(std::move(m_prepared));
+  emit statusChanged();  // the preview chips go (every caller's path, also a document change's)
 }}
-void AgentBridge::stop(){++m_epoch;clearPrepared();if(m_job)m_job->cancel();m_busy=false;m_owner.clear();emit statusChanged();}
+void AgentBridge::stop(){
+  // Not busy before the cancel: Job::cancel runs the call's done callback at once, and failed() takes the running row as the
+  // cancelled call's only when nothing is busy (else the row stayed "running" and the chip said "working").
+  ++m_epoch;clearPrepared();m_busy=false;if(m_job)m_job->cancel();m_owner.clear();
+  if(m_running && m_feed)if(auto* r=row(m_running);r && r->kind==ActivityEvent::Running)m_feed->remove(m_running);  // stopped before its job began
+  m_running=0;dropRetrying();
+  emit statusChanged();
+}
 void AgentBridge::disconnectClients(){
   stop();const auto sessions=m_sessions;
   for(const auto& session:sessions){session->bound=false;if(session->socket)session->socket->abort();}
   emit statusChanged();
 }
 void AgentBridge::activity(const QString& text){
-  if(!m_panel)showActivity();m_stateLabel->setText(stateText());m_activity->addItem(text);
-  while(m_activity->count()>100)delete m_activity->takeItem(0);m_activity->scrollToBottom();emit statusChanged();
-}
-void AgentBridge::showActivity(){
-  if(!m_panel){auto* content=new QWidget;auto* layout=new QVBoxLayout(content);m_stateLabel=new QLabel;m_stateLabel->setWordWrap(true);layout->addWidget(m_stateLabel);m_activity=new QListWidget;layout->addWidget(m_activity);
-    auto* follow=new QCheckBox(tr("Follow changes"));follow->setChecked(m_follow);layout->addWidget(follow);
-    connect(follow,&QCheckBox::toggled,this,[this](bool on){m_follow=on;QSettings().setValue("agent/follow",on);});
-    auto* cancel=new QPushButton(tr("Stop agent work"));layout->addWidget(cancel);connect(cancel,&QPushButton::clicked,this,&AgentBridge::stop);
-    m_panel=new ToolPanel("agent-activity","history",&Tokens::sel,tr("Agent activity"),content,360,m_window);
-    connect(this,&AgentBridge::statusChanged,m_stateLabel,[this]{m_stateLabel->setText(stateText()+"\n"+m_doc->title());});
-  }
-  m_panel->anchorTo(QRect(m_viewport->mapToGlobal(QPoint()),m_viewport->size()));m_panel->show();m_panel->raise();
+  m_raw<<text;while(m_raw.size()>500)m_raw.removeFirst();emit statusChanged();
 }

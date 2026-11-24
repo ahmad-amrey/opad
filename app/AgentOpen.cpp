@@ -25,6 +25,8 @@ bool AgentBridge::unsaved(const std::shared_ptr<Session>& s) {
   error["structuredContent"]["state"] = "failed";
   error["structuredContent"]["error"]["next"] = json{"save"};
   activity(tr("Agent error: %1").arg(QString::fromStdString(error["structuredContent"]["error"]["message"].get<std::string>())));
+  needsYou(tr("%1 wants to open another file").arg(who(s).brief), tr("%1 has unsaved changes. Nothing was changed.").arg(name), QStringLiteral("save"), tr("Save"),
+           QString::fromStdString(error["structuredContent"]["error"]["message"].get<std::string>()));
   reply(s, std::move(error));
   return true;
 }
@@ -35,7 +37,7 @@ void AgentBridge::openDocument(const std::shared_ptr<Session>& s, const std::str
     return replyReceipt(s, found->second);
   }
   const bool create = name == "new_document";
-  if (!m_edit) return fail(s, "read_only", tr("Agent access is view-only. Opening or creating a document needs editing permission (Settings > AI integration)."));
+  if (!canEdit()) return fail(s, "read_only", tr("Agent access is view-only. Opening or creating a document needs editing permission (Settings > AI integration)."));
   if (m_busy) return fail(s, "busy", tr("An agent operation is still running. Wait or use Stop."));
   if (editorBusy() || m_doc->snapshotBusy()) return fail(s, "edit_session_busy", tr("Finish the active sketch or feature operation before agent edits."));
   if (m_prepared) return fail(s, "prepared_active", tr("Commit or cancel the current transaction first."));
@@ -84,6 +86,13 @@ void AgentBridge::openDocument(const std::shared_ptr<Session>& s, const std::str
       m_receipts[again] = m_receipts[receipt];
       const QString shown = QFileInfo(path).fileName();
       activity(create ? tr("Agent made and opened %1").arg(shown) : tr("Agent opened %1").arg(shown));
+      ActivityEvent e;
+      e.kind = ActivityEvent::Result;
+      e.icon = QStringLiteral("open");
+      e.client = who(s).brief;
+      e.canShow = false;
+      e.text = create ? tr("Started a new document %1").arg(agentsay::isolate(shown)) : m_doc->browse ? tr("Opened %1 (view only)").arg(agentsay::isolate(shown)) : tr("Opened %1").arg(agentsay::isolate(shown));
+      post(e);
       emit statusChanged();
     });
     emit openRequested(path);

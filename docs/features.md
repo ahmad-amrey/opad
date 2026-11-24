@@ -327,7 +327,7 @@ switches to Design with those picks. Solid > History has Edit feature with Suppr
 arrow (for the marker selected on the timeline); Construct has Origin planes and axes (shown over a model, picked only
 in New sketch's plane step); the View tabs have Named views, Rendering and Panels dropdowns. The menu bar: File, Edit,
 View, Insert (Import, Link as asset, KiCad, canvases and their submenus), Inspect (measuring, notes, Compare), Design,
-Sketch (while sketching), Version, Tools (AI integration, Agent activity, File types), Help.
+Sketch (while sketching), Version, Tools (AI assistants, AI activity, Stop AI work, File types), Help.
 Annotations are created and edited inline, with type selection and comment threads. Set your display
 name in Settings to identify new annotations, comments and design operations.
 Drag a note's title to move its card without changing the document; the card stays attached to its

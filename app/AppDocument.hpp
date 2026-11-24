@@ -176,6 +176,10 @@ class AppDocument : public QObject {
   bool canRedo() const { return !m_redo.empty() && !loading && (!designBusy || m_capturing); }
   QString undoLabel() const { return m_undo.empty() ? QString() : m_undo.back().label; }
   QString redoLabel() const { return m_redo.empty() ? QString() : m_redo.back().label; }
+  // The step Undo takes back next holds this op (an AI assistant's row offers Undo only then); a step undone holds it.
+  bool undoTopHas(const std::string& opId) const;
+  bool redoHas(const std::string& opId) const;
+  bool redoTopHas(const std::string& opId) const;  // the step Redo brings back next holds this op
   QStringList undoLabels() const;  // every step, the next one to undo first (the Undo arrow's list)
   QStringList redoLabels() const;
   void undo(int steps = 1);  // several steps: one refresh

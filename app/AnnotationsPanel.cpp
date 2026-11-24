@@ -64,7 +64,7 @@ AnnotationsPanel::AnnotationsPanel(AppDocument* doc, QWidget* parent) : QWidget(
 }
 
 void AnnotationsPanel::rebuild() {
-  QString currentAuthor = m_author->currentText();
+  const QString currentAuthor = m_author->currentData().toString();  // as saved ("Agent"), not as shown ("AI")
   std::set<std::string> authors;
   std::set<std::string> deleted(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end());
   std::set<std::string> removed;
@@ -75,12 +75,14 @@ void AnnotationsPanel::rebuild() {
   for (const auto& op : m_doc->doc.ops) if (op.type == "annotation" || op.type == "measurement") authors.insert(op.data.value("by", ""));
   m_author->blockSignals(true);
   m_author->clear();
-  m_author->addItem(tr("All authors"));
-  for (const auto& a : authors) m_author->addItem(QString::fromStdString(a));
-  int idx = m_author->findText(currentAuthor);
+  m_author->addItem(tr("All authors"), QString());
+  // An AI assistant's notes (saved by "Agent") are one entry, "AI", first after All authors.
+  if (authors.erase("Agent")) m_author->addItem(tr("AI"), QStringLiteral("Agent"));
+  for (const auto& a : authors) m_author->addItem(QString::fromStdString(a), QString::fromStdString(a));
+  int idx = m_author->findData(currentAuthor);
   m_author->setCurrentIndex(idx < 0 ? 0 : idx);
   m_author->blockSignals(false);
-  std::string filterAuthor = m_author->currentIndex() > 0 ? m_author->currentText().toStdString() : std::string();
+  std::string filterAuthor = m_author->currentIndex() > 0 ? m_author->currentData().toString().toStdString() : std::string();
   int status = m_status->currentIndex();
 
   auto* cl = static_cast<QVBoxLayout*>(m_cards->layout());
@@ -140,6 +142,7 @@ void AnnotationsPanel::rebuild() {
     cl->insertWidget(cl->count() - 1, card);
   }
   m_count->setText(tr("%1 of %2").arg(shown).arg(total));
+  m_shown = shown;
 }
 
 void AnnotationsPanel::markCurrent() {

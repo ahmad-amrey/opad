@@ -135,4 +135,8 @@ void AreaServices::setCentralPage(QWidget* page) {
 }
 QWidget* AreaServices::centralPage() const { return m_window->m_centralPage; }
 void AreaServices::addStatusChip(QWidget* chip) { m_window->m_statusRow->addChip(chip); }
+void AreaServices::publishSelection(bool on) {
+  if (on) m_window->scheduleSelectionSync();
+  else m_window->unpublishSelection();
+}
 PathChip* AreaServices::pathChip() const { return m_window->m_statusPath; }

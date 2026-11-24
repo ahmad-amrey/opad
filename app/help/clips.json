@@ -5712,14 +5712,15 @@
    "items": [
     {"el": "camera", "center": [-12, 0], "zoom": 0.9},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
-    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "AI integration", "hl": -1, "from": 0.2, "to": 2.6, "fade": 0.15, "rows": [{"text": "Enable local agent access", "check": false}, {"text": "Waiting for client", "dim": true}, {"text": "Allow design edits and exports", "check": false}], "keys": [[0.8, {"hl": 0}], [1.0, {"rows": [{"text": "Enable local agent access", "check": true}, {"text": "Waiting for client", "dim": true}, {"text": "Allow design edits and exports", "check": false}], "ease": "step"}], [1.6, {"hl": 2}], [1.8, {"rows": [{"text": "Enable local agent access", "check": true}, {"text": "Waiting for client", "dim": true}, {"text": "Allow design edits and exports", "check": true}], "ease": "step"}], [2.1, {"hl": -1}]]},
-    {"el": "card", "screen": [0.03, 0.06], "w": 200, "title": "Client setup", "button": "Copy configuration", "press": 3.4, "hl": -1, "from": 2.45, "fade": 0.15, "rows": [{"label": "\"command\": \"opad-cli.exe\""}]},
-    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.8]}], [0.8, {"screen": [0.099, 0.285]}], [1.0, {"screen": [0.099, 0.285], "click": 1}], [1.6, {"screen": [0.099, 0.528]}], [1.8, {"screen": [0.099, 0.528], "click": 1}], [3.2, {"screen": [0.472, 0.439]}], [3.4, {"screen": [0.472, 0.439], "click": 1}], [4.2, {"screen": [0.75, 0.8]}]]}
+    {"el": "card", "screen": [0.03, 0.06], "w": 220, "title": "AI assistants", "hl": -1, "from": 0.2, "fade": 0.15, "rows": [{"text": "Claude Code · Not set up", "dim": true}, {"text": "Let AI assistants see your designs", "check": false}, {"text": "…and change them (each change can be undone)", "check": false}], "keys": [[0.8, {"hl": 0}], [1.0, {"rows": [{"text": "Claude Code · Ready", "dim": false}, {"text": "Let AI assistants see your designs", "check": false}, {"text": "…and change them (each change can be undone)", "check": false}], "ease": "step"}], [1.6, {"hl": 1}], [1.8, {"rows": [{"text": "Claude Code · Ready", "dim": false}, {"text": "Let AI assistants see your designs", "check": true}, {"text": "…and change them (each change can be undone)", "check": false}], "ease": "step"}], [2.4, {"hl": 2}], [2.6, {"rows": [{"text": "Claude Code · Ready", "dim": false}, {"text": "Let AI assistants see your designs", "check": true}, {"text": "…and change them (each change can be undone)", "check": true}], "ease": "step"}], [3.0, {"hl": -1}]]},
+    {"el": "chip", "screen": [0.6, 0.88], "icon": "aiMark", "text": "AI ready", "from": 3.2, "to": 4.0, "fade": 0.1},
+    {"el": "chip", "screen": [0.6, 0.88], "icon": "aiMark", "text": "Claude is connected", "from": 4.0, "fade": 0.1},
+    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.8]}], [0.8, {"screen": [0.099, 0.285]}], [1.0, {"screen": [0.099, 0.285], "click": 1}], [1.6, {"screen": [0.099, 0.4065]}], [1.8, {"screen": [0.099, 0.4065], "click": 1}], [2.4, {"screen": [0.099, 0.528]}], [2.6, {"screen": [0.099, 0.528], "click": 1}], [3.4, {"screen": [0.75, 0.8]}]]}
    ],
    "steps": [
-    {"to": 1.3, "caption": "Enable local agent access"},
-    {"to": 2.6, "caption": "Allow edits, or leave it view-only"},
-    {"to": 5.0, "caption": "Copy the configuration for your AI client"}
+    {"to": 1.3, "caption": "Set up your AI app with one click"},
+    {"to": 3.0, "caption": "Let it see your design, and change it if you like"},
+    {"to": 5.0, "caption": "The AI chip shows when it connects"}
    ]
   },
   {
@@ -5727,15 +5728,29 @@
    "items": [
     {"el": "camera", "center": [-14, 0], "zoom": 0.9},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
-    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 3},
-    {"el": "solid", "profile": {"circle": [4, 0, 3]}, "at": [0, 0, 3], "height": 6, "tone": "sel", "toneAmount": 0.45, "from": 2.3, "fade": 0.3, "keys": [[2.3, {"toneAmount": 0.45}], [3.2, {"toneAmount": 0}]]},
-    {"el": "card", "screen": [0.03, 0.06], "w": 210, "title": "Agent activity", "button": "Stop agent work", "press": 4.0, "hl": -1, "from": 0.2, "rows": [{"text": "Connected: Claude"}, {"text": ""}, {"text": ""}, {"text": "Follow changes", "check": true}], "keys": [[1.2, {"rows": [{"text": "Connected: Claude"}, {"text": "Agent: feature"}, {"text": ""}, {"text": "Follow changes", "check": true}], "ease": "step"}], [2.3, {"rows": [{"text": "Connected: Claude"}, {"text": "Agent: feature"}, {"text": "Applied: Extrude 1 — Undo is available"}, {"text": "Follow changes", "check": true}], "ease": "step"}]]},
-    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.85]}], [3.0, {"screen": [0.75, 0.85]}], [3.8, {"screen": [0.539, 0.803]}], [4.0, {"screen": [0.539, 0.803], "click": 1}], [4.7, {"screen": [0.78, 0.85]}]]}
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 6},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 6, "tone": "hov", "toneAmount": 0.5, "from": 3.4, "to": 4.6, "fade": 0.2},
+    {"el": "card", "screen": [0.03, 0.06], "w": 230, "title": "AI activity", "button": "Stop", "hl": -1, "from": 0.2, "rows": [{"text": "Claude is connected"}, {"text": ""}, {"text": ""}, {"text": "Zoom to its changes", "check": true}], "keys": [[1.0, {"rows": [{"text": "Claude is connected"}, {"text": "Looked over the model · 6 lookups", "dim": true}, {"text": ""}, {"text": "Zoom to its changes", "check": true}], "ease": "step"}], [1.8, {"rows": [{"text": "Claude is connected"}, {"text": "Looked at the model from the front"}, {"text": ""}, {"text": "Zoom to its changes", "check": true}], "ease": "step"}], [2.6, {"rows": [{"text": "Claude is connected"}, {"text": "Looked at the model from the front"}, {"text": "Filleted 4 edges of Bracket, 2 mm"}, {"text": "Zoom to its changes", "check": true}], "ease": "step"}], [3.4, {"hl": 2}], [4.6, {"hl": -1}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.85]}], [3.0, {"screen": [0.75, 0.85]}], [3.4, {"screen": [0.2, 0.528]}], [4.6, {"screen": [0.2, 0.528]}], [5.0, {"screen": [0.78, 0.85]}]]}
    ],
    "steps": [
-    {"to": 1.2, "caption": "Each request of the agent is listed"},
-    {"to": 3.2, "caption": "Follow changes shows its edits in the view"},
-    {"to": 5.0, "caption": "Stop agent work ends what it started"}
+    {"to": 1.6, "caption": "Lookups fold into one line"},
+    {"to": 3.4, "caption": "Each change reads as what was done"},
+    {"to": 5.0, "caption": "Hover a change: its part lights up"}
+   ]
+  },
+  {
+   "id": "tools.agentStop", "duration": 5.0, "view": "iso",
+   "items": [
+    {"el": "camera", "center": [-14, 0], "zoom": 0.9},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "height": 6},
+    {"el": "card", "screen": [0.03, 0.06], "w": 210, "title": "AI activity", "button": "Stop", "press": 2.2, "hl": -1, "from": 0.2, "rows": [{"text": "Claude is working"}, {"text": "Adding a fillet to Bracket…", "dim": true}, {"text": ""}, {"text": ""}], "keys": [[2.4, {"rows": [{"text": "You stopped Claude"}, {"text": "Changes it already made stay; Undo removes them.", "dim": true}, {"text": ""}, {"text": ""}], "ease": "step"}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.85]}], [1.4, {"screen": [0.75, 0.85]}], [2.0, {"screen": [0.539, 0.803]}], [2.2, {"screen": [0.539, 0.803], "click": 1}], [3.0, {"screen": [0.78, 0.85]}]]}
+   ],
+   "steps": [
+    {"to": 2.4, "caption": "Stop ends the assistant's unfinished work"},
+    {"to": 5.0, "caption": "Changes it made stay; Undo removes them"}
    ]
   },
   {

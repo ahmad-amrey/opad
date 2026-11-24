@@ -813,6 +813,28 @@ void AppDocument::recordStep(const QString& label, size_t opsBefore) {
   emit undoChanged();
 }
 
+bool AppDocument::undoTopHas(const std::string& opId) const {
+  if (m_undo.empty() || opId.empty() || !canUndo()) return false;
+  const size_t n = std::min(m_undo.back().count, doc.ops.size());
+  for (size_t i = doc.ops.size() - n; i < doc.ops.size(); ++i)
+    if (doc.ops[i].id == opId) return true;
+  return false;
+}
+
+bool AppDocument::redoTopHas(const std::string& opId) const {
+  if (m_redo.empty() || opId.empty()) return false;
+  for (const auto& op : m_redo.back().ops)
+    if (op.id == opId) return true;
+  return false;
+}
+
+bool AppDocument::redoHas(const std::string& opId) const {
+  for (const auto& step : m_redo)
+    for (const auto& op : step.ops)
+      if (op.id == opId) return true;
+  return false;
+}
+
 void AppDocument::undo(int steps) {
   if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity,steps]{if(generation==identity)undo(steps);});return;}
   if (!canUndo()) return;

@@ -416,7 +416,6 @@ class MainWindow : public QMainWindow {
   QStringList m_kicadOffered;
   int m_displayTotal = 0;
   Job* m_selFileJob = nullptr;      // selection.json writer
-  bool m_selPublishing = false;     // agent access is on: the selection is published (UI-06)
   Job* m_measureJob = nullptr;      // the guided tool's measurement; cancelled as soon as the picks move on
   Job* m_propsJob = nullptr;        // geometry for the properties panel
   Job* m_sectionJob = nullptr;      // the section plane from a picked face (UI-51: inspected on a worker)

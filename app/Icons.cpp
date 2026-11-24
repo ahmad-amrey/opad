@@ -72,6 +72,8 @@ QHash<QString, QString>& table() {
       {"min", R"(<path d="M5 12h14"/>)"},
       {"max", R"(<rect x="5" y="5" width="14" height="14"/>)"},
       {"flip", R"(<path d="M12 3v18M9 8L4 12l5 4zM15 8l5 4-5 4z"/>)"},
+      {"aiMark", R"(<path d="M12 3 C12.6 7.2 14.8 9.4 19 10 C14.8 10.6 12.6 12.8 12 17 C11.4 12.8 9.2 10.6 5 10 C9.2 9.4 11.4 7.2 12 3 Z"/><path d="M19 16v5M16.5 18.5h5"/>)"},
+      {"aiMarkSolid", R"(<path d="M12 3 C12.6 7.2 14.8 9.4 19 10 C14.8 10.6 12.6 12.8 12 17 C11.4 12.8 9.2 10.6 5 10 C9.2 9.4 11.4 7.2 12 3 Z" fill="currentColor"/>)"},
       {"warning", R"(<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 18h.01"/>)"},
       {"check", R"(<path d="M5 12l5 5L20 7"/>)"},
       {"issue", R"(<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>)"},

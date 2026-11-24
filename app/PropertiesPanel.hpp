@@ -41,6 +41,7 @@ class PropertiesPanel : public QWidget {
   void addSectionProvider(PropertySectionProvider provider);  // feature areas; sections in the order providers were added
   void refresh();  // fills again: a provider's sections changed
   QTreeWidget* table() const { return m_table; }  // benches
+  QString subtitle() const;  // the line under the title: who made a step and when ("Claude (AI) · 14:02"); benches
  signals:
   void faceChosen(int index);
  protected:

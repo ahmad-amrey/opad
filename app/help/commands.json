@@ -2581,17 +2581,24 @@
   },
   {
    "id": "tools.ai",
-   "title": "AI integration",
-   "summary": "Connects an AI client to this window step by step, and sets what an agent may change and follows its activity.",
-   "details": "Connect an AI client registers OPAD in Claude Code, Claude Desktop or Codex with one click, shows each client's state (connected, not connected, registered for another OPAD, its program missing) and lists the four steps: connect, restart the client, allow access, ask. Choose whether an agent may make design edits and exports, or copy the MCP configuration for another client. The status bar's AI chip opens the same dialog, on Connect an AI client while no client is connected.",
-   "keywords": ["agent", "MCP", "assistant", "AI", "Claude", "Claude Code", "Claude Desktop", "Codex", "connect"]
+   "title": "AI assistants",
+   "summary": "Sets up an AI app such as Claude Code, Claude Desktop or Codex to work on your designs, and chooses what it may do.",
+   "details": "Connect sets up an AI app with one click and shows whether each one is ready. Choose whether assistants may only look at your designs or also change them; every change is a normal step you can undo. Access lists who is connected now, and Other AI apps has the setup to copy into any other app; the AI chip in the status bar opens it too.",
+   "keywords": ["AI", "assistant", "Claude", "Claude Code", "Claude Desktop", "Codex", "MCP", "agent", "connect"]
   },
   {
    "id": "tools.agentActivity",
-   "title": "Agent activity",
-   "summary": "Shows what a connected AI agent is doing, with a button that stops its work.",
-   "details": "The panel lists the agent's requests as they come, and Follow changes shows its edits in the view. Stop agent work ends what it started.",
-   "keywords": ["agent", "AI", "MCP", "log", "stop"]
+   "title": "AI activity",
+   "summary": "Shows, in plain words, what a connected AI assistant looked at and changed.",
+   "details": "Each change reads as what was done, with your part and step names: hover it to light up its part, Show frames it, and Undo takes it back while it is the latest step. Lookups fold into one line, a picture the assistant took shows as a thumbnail, and anything that needs you is marked in amber with one button. Zoom to its changes frames each change as it is applied, and Stop ends unfinished work. The panel never opens by itself; the AI chip shows a count of new changes.",
+   "keywords": ["AI", "assistant", "activity", "Claude", "Codex", "agent", "log", "stop"]
+  },
+  {
+   "id": "tools.agentStop",
+   "title": "Stop AI work",
+   "summary": "Stops what an AI assistant is doing and removes its preview; changes it already made stay.",
+   "details": "Stop cancels the assistant's unfinished work and drops a preview it is showing. The assistant stays connected, and changes it already made stay in the document, where Undo removes them. It is also in the AI chip's menu and the AI activity panel.",
+   "keywords": ["AI", "assistant", "stop", "cancel", "Claude", "Codex", "agent"]
   },
   {
    "id": "tools.fileTypes",
