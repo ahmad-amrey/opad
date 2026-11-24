@@ -62,6 +62,10 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
   Everything is still listed.
 
 ### Fixed
+- **3D scans and other big meshes no longer freeze OPAD.** Choosing the axis in *Move / copy*, or switching to the
+  Face, Edge or Vertex filter, used to make OPAD wait while it prepared every triangle of the mesh for picking: over
+  three minutes on a 3-million-triangle scan. It now takes no noticeable time, picking a scan's edges, points and
+  triangles works as on any part, committing a move no longer pauses, and scans open faster.
 - **Sketch fillet says why a corner can't be rounded:** two ends that only touch (common in DXF drawings: merge the
   points), a tangent join, more than two curves meeting, or a radius too big, with the largest that fits. Any sketch
   change OPAD refuses now shows its reason in a notice, not only on the status line.

@@ -313,6 +313,7 @@ void Viewport::benchSubShot(const QString& path) {
 }
 
 void Viewport::initViewer() {
+  if (trace::enabled()) BodyPrs::log = [](const std::string& line) { trace::log(QString::fromStdString(line)); };
   if (m_initialised) return;
   trace::Scope scope("Viewport::initViewer");
   Handle(Aspect_DisplayConnection) disp = new Aspect_DisplayConnection();
@@ -984,8 +985,10 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
   m_ctx->Activate(ais, AIS_Shape::SelectionMode(t));
   // An axis input's round faces: the bodies' faces too (the owner filter keeps the round ones). An edge on such a face is
   // nearer the pointer and of a higher priority, so a rim still picks the rim.
+  // A mesh has none (the owner filter refuses its triangles): its Face mode would only be tested and refused at every pick.
   if (m_roundFaces && m_filter == SelFilter::Edge)
-    if (const auto node = m_nodeOf.find(ais.get()); node != m_nodeOf.end() && m_items.count(node->second)) m_ctx->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE));
+    if (const auto node = m_nodeOf.find(ais.get()); node != m_nodeOf.end() && m_items.count(node->second))
+      if (const auto body = Handle(BodyShape)::DownCast(ais); body.IsNull() || !body->meshPicked()) m_ctx->Activate(ais, AIS_Shape::SelectionMode(TopAbs_FACE));
 }
 
 bool Viewport::drawingLayer(const Handle(AIS_InteractiveObject)& ais) const {
