@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 #include <QDialog>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QLineEdit>
@@ -17,6 +18,7 @@
 #include <QScrollArea>
 #include <QTabWidget>
 #include <QTimer>
+#include <memory>
 #include <nlohmann/json.hpp>
 
 #include "AgentBridge.hpp"
@@ -72,7 +74,9 @@ OPAD_BENCH(OPAD_BENCH_AGENT_CONNECT, agentConnect) {
   auto* tabs = dialog ? dialog->findChild<QTabWidget*>() : nullptr;
   check(tabs && tabs->currentWidget() && tabs->currentWidget()->objectName() == "agentConnectPage" && !agent->clientConnected(),
         "with no client connected it opens on Connect an AI client");
-  QTimer::singleShot(400, &w, [=, &w]() mutable {
+  // The rows check their clients asynchronously; a real Codex found as a Store app can take seconds to answer
+  // `codex mcp list`, so wait until its row is checked (at most 20 s) instead of a fixed 400 ms.
+  auto run = [=, &w]() mutable {
     bool ok2 = ok;
     auto check2 = [&ok2](bool pass, const QString& what) {
       trace::log(QString("bench: agent connect: %1 %2").arg(what, pass ? "PASS" : "FAIL"));
@@ -111,6 +115,17 @@ OPAD_BENCH(OPAD_BENCH_AGENT_CONNECT, agentConnect) {
     dialog->close();
     trace::log(QString("bench: agent connect: the Connect an AI client page %1").arg(ok2 ? "PASS" : "FAIL"));
     QCoreApplication::exit(ok2 ? 0 : 2);
+  };
+  auto* poll = new QTimer(&w);
+  auto started = std::make_shared<QElapsedTimer>();
+  started->start();
+  QObject::connect(poll, &QTimer::timeout, &w, [=, &w]() mutable {
+    auto* codex = w.findChild<AgentClientRow*>("agentClientCodex");
+    if (started->elapsed() < 400 || (codex && codex->state() == agentclients::State::Unchecked && started->elapsed() < 20000)) return;
+    poll->stop();
+    poll->deleteLater();
+    run();
   });
+  poll->start(100);
   return true;
 }
