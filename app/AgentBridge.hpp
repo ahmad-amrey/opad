@@ -183,7 +183,7 @@ class AgentBridge : public QObject {
   // The phase an assistant says it is in (set_phase): the chip and the strip show it while its connection lasts; cleared by
   // an empty title, its disconnect, the user's Stop or another document.
   QString m_phase;QPointer<QLocalSocket> m_phaseOwner;
-  QString phase() const {return m_phaseOwner?m_phase:QString();}
+  QString phase() const;  // out of line: QPointer<QLocalSocket> needs the complete type (Qt 6.4)
   void setPhase(const std::shared_ptr<Session>&,const std::string& title);
   static QString shortPhase(const QString&);
   std::map<std::string,std::vector<qint64>> m_retries;  // a retryable code's times (three in 20 s: "Retrying…")

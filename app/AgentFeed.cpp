@@ -348,6 +348,8 @@ void AgentBridge::addRead(const QString& text, const QString& name) {
 }
 
 // The chip's room: the phase cut at a word near 32 characters.
+QString AgentBridge::phase() const { return m_phaseOwner ? m_phase : QString(); }
+
 QString AgentBridge::shortPhase(const QString& text) {
   if (text.size() <= 32) return text;
   QString cut = text.left(31);
