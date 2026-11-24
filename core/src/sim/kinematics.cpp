@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <numeric>
 #include <set>
@@ -178,6 +179,26 @@ struct Mechanism::Impl {
 
   // The scale an angle residual is weighed at, so a radian counts as much as the mechanism's size in mm.
   double weight(const Coord& c) const { return c.angle ? L : 1.0; }
+
+  // "\"Slide\" translation held at its upper limit 12 mm (asked 20 mm)": which coordinate, the limit (deg / mm) and the ask.
+  std::string limit_note(const Jt& j, size_t c, double limit, const char* verb, double asked = NAN) const {
+    const Coord& co = j.k->coords[c];
+    const double unit = co.angle ? kDeg : 1.0;
+    auto num = [](double v) {
+      char buf[32];
+      std::snprintf(buf, sizeof buf, "%.3f", std::fabs(v) < 5e-4 ? 0.0 : v);
+      std::string t = buf;
+      while (t.back() == '0') t.pop_back();
+      if (t.back() == '.') t.pop_back();
+      return t;
+    };
+    const char* u = co.angle ? " deg" : " mm";
+    const auto [lo, hi] = j.limits[c];
+    const bool upper = std::isnan(lo) || (!std::isnan(hi) && std::fabs(limit - hi) < std::fabs(limit - lo));
+    std::string out = "\"" + j.name + "\" " + co.name + " " + verb + " at its " + (upper ? "upper" : "lower") + " limit " + num(limit / unit) + u;
+    if (!std::isnan(asked)) out += " (asked " + num(asked / unit) + u + ")";
+    return out;
+  }
 
   // The joint's own equations (relative position the kind does not allow), written into out.
   int constraint_rows(const Jt& j) const {
@@ -582,8 +603,10 @@ struct Mechanism::Impl {
         }
       }
       if (!added) break;
-      for (const auto& t : extra) res.notes.push_back("\"" + joints[size_t(t.joint)].name + "\" stopped at its limit");
     }
+    // Each round's solve starts its notes afresh, so the coordinates held at a limit are named once, here.
+    if (res.ok)
+      for (const auto& t : extra) res.notes.push_back(limit_note(joints[size_t(t.joint)], size_t(t.coord), t.value, "stopped"));
     return res;
   }
 
@@ -644,8 +667,9 @@ struct Mechanism::Impl {
         const double unit = j.k->coords[c].angle ? kDeg : 1.0;
         double v = values[c] * unit;
         const auto [lo, hi] = j.limits[c];
-        if (!std::isnan(lo) && v < lo) v = lo, res.notes.push_back("\"" + j.name + "\" held at its lower limit");
-        if (!std::isnan(hi) && v > hi) v = hi, res.notes.push_back("\"" + j.name + "\" held at its upper limit");
+        const double asked = v;
+        if (!std::isnan(lo) && v < lo) v = lo, res.notes.push_back(limit_note(j, c, lo, "held", asked));
+        if (!std::isnan(hi) && v > hi) v = hi, res.notes.push_back(limit_note(j, c, hi, "held", asked));
         goal.push_back({it->second, int(c), v});
       }
     }
@@ -695,7 +719,23 @@ struct Mechanism::Impl {
           at(lo);
           commit_values();
           res.reached = (s - 1 + lo) / steps;
-          res.notes.push_back("stopped where a joint it moves reaches its limit (" + std::to_string(int(std::lround(100 * res.reached))) + "% of the way)");
+          const std::string way = std::to_string(int(std::lround(100 * res.reached))) + "% of the way";
+          // Name the coordinates that now sit on a limit, none of them driven: those are what stopped it.
+          std::vector<std::string> stops;
+          for (size_t ji = 0; ji < joints.size(); ++ji) {
+            const Jt& j = joints[ji];
+            if (j.k->relation) continue;
+            const auto q = measure(j);
+            for (size_t c = 0; c < q.size(); ++c) {
+              if (std::any_of(goal.begin(), goal.end(), [&](const Target& g) { return g.joint == int(ji) && g.coord == int(c); })) continue;
+              const auto [lim_lo, lim_hi] = j.limits[c];
+              const double eps = j.k->coords[c].angle ? 1e-5 : 1e-5 * L;
+              if (!std::isnan(lim_hi) && std::fabs(q[c] - lim_hi) < eps) stops.push_back(limit_note(j, c, lim_hi, "stopped"));
+              else if (!std::isnan(lim_lo) && std::fabs(q[c] - lim_lo) < eps) stops.push_back(limit_note(j, c, lim_lo, "stopped"));
+            }
+          }
+          if (stops.empty()) res.notes.push_back("stopped where a joint it moves reaches its limit (" + way + ")");
+          for (const auto& n : stops) res.notes.push_back(n + ", " + way);
           break;
         }
         for (size_t i = 0; i < parts.size(); ++i) parts[i].T = good[i];
@@ -820,7 +860,18 @@ json Mechanism::analysis() const {
   int n = 0;
   for (size_t i = 0; i < im.parts.size(); ++i)
     if (!hold[i]) var[i] = n, n += 6;
-  const auto gs = im.groups({}, {});
+  // A part's first ground (or rigid joint to the world) is what holds it: the part is no variable, so its six equations
+  // are met by construction and are neither constraints nor redundant. A second one on the same part is redundant.
+  std::vector<Impl::Group> gs;
+  {
+    std::set<int> grounded;
+    for (auto& g : im.groups({}, {})) {
+      const Impl::Jt& j = im.joints[size_t(g.joint)];
+      const bool grounds = !j.k->relation && j.a < 0 && j.b >= 0 && (j.kind == "ground" || j.kind == "rigid");
+      if (grounds && g.rows == 6 && grounded.insert(j.b).second) continue;
+      gs.push_back(std::move(g));
+    }
+  }
   int rows = 0;
   for (const auto& g : gs) rows += g.rows;
   Eigen::MatrixXd J = Eigen::MatrixXd::Zero(std::max(rows, 1), std::max(n, 1));
@@ -861,6 +912,33 @@ json Mechanism::analysis() const {
   out["dof"] = n - rank;
   out["constraints"] = rows;
   out["redundant"] = std::max(0, rows - rank);
+  // Which joints repeat equations: taken in order, those whose rows add less rank than they have (in a loop, the joint
+  // that closes it). Only worked out when there are some.
+  if (rows > rank) {
+    const double tol = 1e-8 * std::max(n > 0 ? Eigen::JacobiSVD<Eigen::MatrixXd>(J).singularValues()(0) : 0.0, 1.0);
+    auto rank_of = [&](int top) {
+      if (top == 0 || n == 0) return 0;
+      const auto s = Eigen::JacobiSVD<Eigen::MatrixXd>(J.topRows(top)).singularValues();
+      int r = 0;
+      for (int i = 0; i < s.size(); ++i)
+        if (s(i) > tol) ++r;
+      return r;
+    };
+    std::map<int, int> repeated;  // joint index -> equations
+    int at = 0, before = 0;
+    for (const auto& g : gs) {
+      at += g.rows;
+      const int now = rank_of(at);
+      if (now - before < g.rows && g.joint >= 0) repeated[g.joint] += g.rows - (now - before);
+      before = now;
+    }
+    json list = json::array();
+    for (const auto& [ji, count] : repeated) {
+      const auto& j = im.joints[size_t(ji)];
+      list.push_back({{"id", j.id}, {"name", j.name}, {"kind", j.kind}, {"equations", count}});
+    }
+    out["redundant_joints"] = list;
+  }
   out["parts"] = im.part_ids;
   json held = json::array(), free_parts = json::array();
   for (size_t i = 0; i < im.parts.size(); ++i) {
