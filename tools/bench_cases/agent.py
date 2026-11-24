@@ -1,8 +1,9 @@
 """gui_benches cases of the AI integration's settings (app/AgentSettings.cpp, app/AgentClients.cpp)."""
 
-# Claude Desktop's and Claude Code's settings in folders of the case's own (APPDATA on Windows, HOME on macOS,
+# Claude Desktop's and Claude Code's settings in folders of the case's own (APPDATA and LOCALAPPDATA on Windows: the packaged
+# Claude keeps them in LOCALAPPDATA's Claude-Data; HOME on macOS,
 # XDG_CONFIG_HOME on Linux; CLAUDE_CONFIG_DIR): the bench writes and rewrites them, never a real configuration.
-ISOLATED = {"APPDATA": "{root}/agent-connect/appdata", "XDG_CONFIG_HOME": "{root}/agent-connect/xdg", "HOME": "{root}/agent-connect/home",
+ISOLATED = {"APPDATA": "{root}/agent-connect/appdata", "LOCALAPPDATA": "{root}/agent-connect/localappdata", "XDG_CONFIG_HOME": "{root}/agent-connect/xdg", "HOME": "{root}/agent-connect/home",
             "CLAUDE_CONFIG_DIR": "{root}/agent-connect/claude"}
 
 CASES = [

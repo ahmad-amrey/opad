@@ -1,6 +1,6 @@
 // The AI assistant's place in the window (AreaController.hpp), around the bridge MainWindow makes (AgentBridge.hpp):
-//   - the status bar's AI chip, in the row beside the document's path (AreaServices::addStatusChip), after the areas'
-//     own chips (it is added in ready(): the bridge is made after the status bar's hooks ran);
+//   - the status bar's AI chip at its far end, the right corner (a core feature, not a document chip: the row beside the
+//     path keeps its room for the document's name); added in ready(), after every area's status widgets, so it comes last;
 //   - the viewport's preview chip at the end of the top-left chips row while an AI preview or task is staged: the AI mark,
 //     "Claude's preview · not applied" and Discard (the same discard as the panel's group row); its tooltip lists the
 //     staged steps in words;
@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QMainWindow>
 #include <QMenu>
+#include <QStatusBar>
 #include <QToolButton>
 #include <utility>
 
@@ -30,7 +31,7 @@ class AgentArea : public AreaController {
   void ready() override {
     m_agent = services().window()->findChild<AgentBridge*>();
     if (!m_agent) return;
-    services().addStatusChip(m_agent->chip());
+    services().window()->statusBar()->addPermanentWidget(m_agent->chip());
     buildPreviewChip();
     m_publishing = m_agent->publishesSelection();
     connect(m_agent, &AgentBridge::statusChanged, this, [this] {
