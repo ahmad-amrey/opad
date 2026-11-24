@@ -11,7 +11,7 @@ using namespace opad;
 
 namespace {
 // A 4 mm square swept along an S-shaped fit spline: the kernel builds it, but the solid fails BRepCheck (a live
-// stress test met the same with a headset's arms). A box intersected with its start then leaves a small valid body.
+// agent's batch met the same). A box intersected with its start then leaves a small valid body.
 json path_step() {
   return {{"id", "path"}, {"command", "sketch"}, {"arguments", {{"plane", {{"base", "xy"}}}, {"geometry", {
     {"points", json::array({{{"id", 1}, {"x", 0}, {"y", 0}}, {{"id", 2}, {"x", 10}, {"y", 5}}, {{"id", 3}, {"x", 20}, {"y", -5}},
