@@ -170,6 +170,47 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
       [=, this] {  // polling makes no row
         if (!answered()) return false;
         require(events().size() == st->rows, "live_state adds no row");
+        tool("set_phase", {{"title", "Checking the model"}});
+        return true;
+      },
+      [=, this] {  // set_phase: a heading row in the assistant's words, the chip and the strip say it
+        if (!answered()) return false;
+        require(!st->reply.value("isError", false), "set_phase: " + QString::fromStdString(st->reply.dump()));
+        const auto& e = last();
+        require(e.kind == ActivityEvent::Phase && agentsay::plain(e.text).contains("Checking the model"), "a phase heading row: " + agentsay::plain(e.text));
+        require(phase() == "Checking the model", "the bridge's phase: " + phase());
+        if (english) {
+          require(chipText() == "Claude · Checking the model", "the chip names the phase: " + chipText());
+          require(agentsay::plain(m_feed->strip().line1) == "Claude · “Checking the model”", "the strip names the phase: " + m_feed->strip().line1);
+        }
+        m_feed->scrollToEnd();
+        m_panel->grab().save(prefix + ".phase.png");
+        m_chip->grab().save(prefix + ".phase-chip.png");
+        st->rows = events().size();
+        tool("set_phase", {{"title", "Checking the model"}});
+        return true;
+      },
+      [=, this] {  // the same title again: nothing new
+        if (!answered()) return false;
+        require(events().size() == st->rows, "the same phase again adds no row");
+        tool("set_phase", {{"title", "Designing a mounting block for the motor\nwith four holes and rounded edges"}});
+        return true;
+      },
+      [=, this] {  // a long title with a line break: one line; the chip cuts it at a word (over 80 characters the tool refuses)
+        if (!answered()) return false;
+        require(!st->reply.value("isError", false), "a long set_phase: " + QString::fromStdString(st->reply.dump()));
+        require(phase() == "Designing a mounting block for the motor with four holes and rounded edges", "the phase on one line: " + phase());
+        require(events().size() == st->rows + 1 && last().kind == ActivityEvent::Phase, "a new phase, a new heading");
+        if (english) require(chipText().startsWith("Claude · Designing a mounting") && chipText().endsWith(QStringLiteral("…")) && chipText().size() <= 42, "the chip's cut phase: " + chipText());
+        tool("set_phase", {{"title", ""}});
+        return true;
+      },
+      [=, this] {  // empty: cleared, the chip as before
+        if (!answered()) return false;
+        require(phase().isEmpty() && events().size() == st->rows + 1, "an empty title clears the phase, no row");
+        if (english) require(chipText() == "Claude", "the chip without a phase: " + chipText());
+        pass("set_phase: a heading row, the chip and the strip; same title no row; long titles cut; empty clears");
+        st->rows = events().size();
         tool("context", {{"section", "nodes"}});
         return true;
       },

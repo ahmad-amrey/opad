@@ -15,6 +15,9 @@ Working with an AI assistant is calm and readable now: OPAD tells you in plain w
 AI app looked at and changed, marks its steps in the timeline, and asks you only when it needs you.
 
 ### Added
+- **See what the AI is working on at a glance.** An assistant can name the stage it is in, in a few words ("Opening the
+  drawing", "Designing the mounting bracket"): the AI chip shows it beside the assistant's name, and the AI activity panel
+  starts a heading with it, so the entries under it read as that stage's work.
 - **Stop AI work** (Tools, the chip's menu and the panel) stops what the assistant is doing and removes its preview;
   changes it already made stay. **Pause changes** lets it look but not change anything until you resume.
 - **Development builds, if you want them.** *Help > Offer development builds* makes OPAD offer the builds of the
@@ -31,14 +34,17 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
   of the view says "Claude's preview · not applied", lists its steps when you point at it, and its *Discard* drops it.
 - **The AI chip** in the status bar carries a new AI mark and says what is going on in a word or two: *Connect AI*,
   *AI ready*, *Claude*, *Claude · working*, *Claude · preview*, *Claude needs you*, with a count of changes made while the
-  panel was closed. Its menu stops the assistant, sets what it may do, pauses its changes for now, or disconnects it.
+  panel was closed. Its menu stops the assistant, sets what it may do, pauses its changes for now, or disconnects it. It
+  sits at the right end of the status bar, leaving the room beside the document's name to the name.
 - **When the assistant needs you**, one entry says so in amber with one button: for example, if it may only look and
   tries to change something, *Allow changes* lets it. Errors it fixes by itself no longer fill the panel.
 - **Steps an AI made** carry its mark in the timeline, their tooltip and Properties name the assistant and the time
   ("Claude (AI) · 14:02"), and Undo reads "Undo Claude: Added …". The assistant's name is saved with the step. A step's
   right-click menu has *Show in AI activity*, and the Annotations panel can show only the AI's notes (author *AI*).
 - **Settings > AI assistants** (was AI integration) sets up Claude Code, Claude Desktop or Codex with one click, shows
-  whether each is ready, and gives a sentence to try. Setup for other apps moved to *Other AI apps*.
+  whether each is ready, and gives a sentence to try. Setup for other apps moved to *Other AI apps*. It finds Claude
+  Desktop and the Codex app as installed from the Microsoft Store, and the Claude Code that comes with Claude Desktop; a
+  box for an app's program appears only when OPAD can't find it, and says so.
 - **Version control in a folder of its own.** Setting up version control for a document that shares its folder with
   other files now offers to move it into a folder of its own first, so the repository holds just your design. AI agents
   setting up version control ask you first too, then move the design or use the folder as it is.

@@ -18,6 +18,7 @@
 #include <unordered_set>
 
 #include "AgentBridge.hpp"
+#include "opad/live.hpp"
 #include "AreaController.hpp"
 #include "DesignController.hpp"
 #include "TimelineWidget.hpp"
@@ -148,10 +149,14 @@ AgentChip::State AgentBridge::chipState() const {
     st.tip = tr("%1 is showing a preview. Your design hasn't changed yet.").arg(name.brief);
     return st;
   }
+  const QString now = phase();
+  // The assistant's phase in a few words (set_phase), attributed: "Claude · Designing the bracket"; the tooltip quotes it whole.
+  const QString phaseTip = now.isEmpty() ? QString() : tr("%1 is working on %2").arg(name.brief, agentsay::plain(agentsay::quote(now, 80)));
   if (m_running && m_working.isValid() && m_working.elapsed() >= 400) {
-    st.text = tr("%1 · working").arg(name.brief);
+    st.text = now.isEmpty() ? tr("%1 · working").arg(name.brief) : tr("%1 · %2").arg(name.brief, agentsay::isolate(shortPhase(now)));
     if (m_feed)
       if (auto* e = m_feed->event(m_running)) st.tip = agentsay::plain(e->text);
+    if (!phaseTip.isEmpty()) st.tip = st.tip.isEmpty() ? phaseTip : phaseTip + "\n" + st.tip;
     return st;
   }
   if (m_paused) {
@@ -161,6 +166,7 @@ AgentChip::State AgentBridge::chipState() const {
     return st;
   }
   st.text = n > 1 ? tr("%1 +%2").arg(name.brief).arg(n - 1) : name.brief;
+  if (!now.isEmpty()) st.text = tr("%1 · %2").arg(st.text, agentsay::isolate(shortPhase(now)));
   if (!m_edit) {
     st.glyph = QStringLiteral("eye");
     st.tip = tr("%1 is connected to %2 and can look but not change anything.").arg(name.full, file);
@@ -339,6 +345,44 @@ void AgentBridge::addRead(const QString& text, const QString& name) {
   e.canShow = false;
   const auto id = post(e);
   m_fold = id;
+}
+
+// The chip's room: the phase cut at a word near 32 characters.
+QString AgentBridge::shortPhase(const QString& text) {
+  if (text.size() <= 32) return text;
+  QString cut = text.left(31);
+  if (const int space = cut.lastIndexOf(QLatin1Char(' ')); space >= 16) cut.truncate(space);
+  return cut.trimmed() + QStringLiteral("…");
+}
+
+// set_phase: the assistant's few words for what it is doing. Plain one-line text, at most 80 characters; the same title
+// again changes nothing; a new one is a heading row in the feed ("In Claude's words"), empty clears it. Never a document change.
+void AgentBridge::setPhase(const std::shared_ptr<Session>& s, const std::string& raw) {
+  QString title;
+  for (const QChar c : QString::fromStdString(raw))
+    if (c.isSpace()) title += QChar(' ');  // a line break or a tab: one line
+    else if (c.category() != QChar::Other_Control && c.category() != QChar::Other_Format) title += c;
+  title = title.simplified();
+  if (title.size() > 80) title = title.left(79).trimmed() + QStringLiteral("…");
+  const auto name = who(s);
+  const bool same = title == phase() && (title.isEmpty() || m_phaseOwner == s->socket);
+  if (!same) {
+    m_phase = title;
+    m_phaseOwner = title.isEmpty() ? nullptr : s->socket;
+    activity(title.isEmpty() ? tr("%1 finished its phase").arg(name.brief) : tr("%1's phase: %2").arg(name.brief, title));
+    if (!title.isEmpty()) {
+      ActivityEvent e;
+      e.kind = ActivityEvent::Phase;
+      e.icon = QStringLiteral("aiMark");
+      e.text = agentsay::quote(title, 80);
+      e.second = QTime::currentTime().toString(QStringLiteral("HH:mm"));
+      e.client = name.brief;
+      e.canShow = false;
+      post(e);
+    }
+    publish();
+  }
+  reply(s, opad::agent::live_result({{"phase", title.toStdString()}}));
 }
 
 void AgentBridge::divider(const QString& text) {
@@ -614,6 +658,8 @@ void AgentBridge::userStop() {
   const auto names = connectedName();
   const QString name = names.brief.isEmpty() ? tr("the AI assistant") : names.brief;
   if (m_prepared) m_dropReason = tr("Dropped: you stopped %1. Nothing changed.").arg(name);
+  m_phase.clear();  // what it said it was doing is over
+  m_phaseOwner.clear();
   stop();
   divider(tr("You stopped %1 · %2").arg(name, QTime::currentTime().toString(QStringLiteral("HH:mm"))));
   if (m_services) m_services->toast(tr("Stopped %1. Changes it already made stay; Undo removes them.").arg(name), QString(), {}, 4000);
@@ -654,7 +700,7 @@ void AgentBridge::refreshUi() {
       st.line1 = tr("%1 is showing a preview").arg(name.brief);
       st.line2 = tr("Not applied yet. Your design hasn't changed.");
     } else if (m_running) {
-      st.line1 = tr("%1 is working").arg(name.brief);
+      st.line1 = phase().isEmpty() ? tr("%1 is working").arg(name.brief) : tr("%1 · %2").arg(name.brief, agentsay::quote(phase(), 60));
       if (auto* e = row(m_running)) st.line2 = agentsay::plain(e->text);
     } else if (m_paused) {
       st.line1 = tr("Changes paused");
@@ -667,7 +713,7 @@ void AgentBridge::refreshUi() {
         if (s->bound && s->socket && s->socket->state() == QLocalSocket::ConnectedState) names << who(s).brief;
       st.line2 = names.join(tr(", "));
     } else {
-      st.line1 = tr("%1 is connected").arg(name.brief);
+      st.line1 = phase().isEmpty() ? tr("%1 is connected").arg(name.brief) : tr("%1 · %2").arg(name.brief, agentsay::quote(phase(), 60));
       st.pill = m_edit ? tr("Can edit") : tr("Look only");
       st.line2 = fileLabel();
     }

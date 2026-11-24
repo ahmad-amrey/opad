@@ -88,6 +88,24 @@ class ActivityRow : public QFrame {
       setToolTip(e.at.toString(QStringLiteral("HH:mm:ss")));
       return;
     }
+    if (e.kind == ActivityEvent::Phase) {  // a heading: the AI mark, the assistant's words, who and when on the right
+      auto* row = new QHBoxLayout(this);
+      row->setContentsMargins(8, 12, 8, 4);
+      row->setSpacing(8);
+      row->addWidget(iconLabel(QStringLiteral("aiMark"), e.stale ? &Tokens::fg3 : &Tokens::hov, 14, this));
+      auto* label = new QLabel(para(e.text));
+      label->setObjectName(QStringLiteral("agentRowText"));
+      label->setTextFormat(Qt::PlainText);
+      label->setWordWrap(true);
+      label->setStyleSheet(QStringLiteral("color:%1;font-size:13px;font-weight:600").arg(css(e.stale ? t.fg3 : t.fg)));
+      row->addWidget(label, 1);
+      auto* when = new QLabel(para(e.second));
+      when->setObjectName(QStringLiteral("agentRowSecond"));
+      when->setStyleSheet(QStringLiteral("color:%1;font-size:11px").arg(css(t.fg3)));
+      row->addWidget(when);
+      setToolTip(agentsay::Say::tr("In %1's words").arg(e.client));
+      return;
+    }
     auto* outer = new QHBoxLayout(this);
     outer->setContentsMargins(e.kind == ActivityEvent::NeedsYou ? 0 : 8, 6, 8, 6);
     outer->setSpacing(8);
@@ -277,7 +295,7 @@ class ActivityRow : public QFrame {
       for (auto* b : m_actions) b->hide();
   }
   void paintEvent(QPaintEvent* e) override {
-    if (m_hover && m_event.kind != ActivityEvent::Divider) {
+    if (m_hover && m_event.kind != ActivityEvent::Divider && m_event.kind != ActivityEvent::Phase) {
       QPainter p(this);
       p.fillRect(rect(), theme::current().bg3);
     }
@@ -291,7 +309,7 @@ class ActivityRow : public QFrame {
     if (!m_event.subjects.empty() && m_event.canShow) emit m_panel->activated(m_id, QStringLiteral("show"));
   }
   void contextMenuEvent(QContextMenuEvent* e) override {
-    if (m_event.kind == ActivityEvent::Divider) return;
+    if (m_event.kind == ActivityEvent::Divider || m_event.kind == ActivityEvent::Phase) return;
     QMenu menu(this);
     using agentsay::Say;
     const bool live = m_event.canShow && !m_event.subjects.empty() && m_event.state != ActivityEvent::Gone;

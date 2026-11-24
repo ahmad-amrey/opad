@@ -475,5 +475,10 @@
  "Program: %1": "البرنامج: %1",
  "Settings file: %1": "ملف الإعدادات: %1",
  "OPAD looked for %1 and didn't find it. If it is installed, choose its program (%2).": "بحث OPAD عن %1 ولم يجده. إن كان مثبّتًا، فاختر برنامجه (%2).",
- "%1's program, chosen by you (empty it to let OPAD find it):": "برنامج %1 الذي اخترته (أفرغ الحقل ليبحث عنه OPAD بنفسه):"
+ "%1's program, chosen by you (empty it to let OPAD find it):": "برنامج %1 الذي اخترته (أفرغ الحقل ليبحث عنه OPAD بنفسه):",
+ "%1 is working on %2": "%1 يعمل على %2",
+ "In %1's words": "بكلمات %1",
+ "%1 finished its phase": "أنهى %1 مرحلته",
+ "%1's phase: %2": "مرحلة %1: %2",
+ "%1 · %2": "%1 · %2"
 }

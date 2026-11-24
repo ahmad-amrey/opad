@@ -27,7 +27,8 @@ class QToolButton;
 class QVBoxLayout;
 
 struct ActivityEvent {
-  enum Kind { Divider, Running, Look, Reads, Change, Group, Note, Result, NeedsYou, Quiet };
+  // Phase: a heading in the assistant's own words (set_phase), the rows after it are its work.
+  enum Kind { Divider, Running, Look, Reads, Change, Group, Note, Result, NeedsYou, Quiet, Phase };
   enum State { Active, Done, Staged, Applied, Dropped, Undone, Gone };
   quint64 id = 0;
   Kind kind = Running;
@@ -75,6 +76,7 @@ class ActivityPanel : public QWidget {
   void remove(quint64 id);
   void clear();
   void setStrip(const Strip& strip);
+  const Strip& strip() const { return m_stripState; }
   void setEmpty(const Empty& empty);
   void setBusy(bool working);  // Stop is the primary while something runs or a preview waits
   void setFollow(bool on);
