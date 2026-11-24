@@ -22,6 +22,11 @@ as a commit log.
 - **Rules follow parameters.** The lengths in an edge or face rule (a plane's height, the box, the radius and length
   limits) may be expressions such as `height` or `w / 2`, and the rule matches again when a parameter changes.
 
+### Fixed
+- **Shell after a pocket near a fillet.** A body whose pocket comes close to a rim fillet, closer than the shell's
+  thickness, now shells, where it used to say it "cannot be shelled by that thickness". When it still cannot, the
+  message names the two faces that come too close and how far apart they are.
+
 ## [0.10.1] - 2026-11-22
 
 Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,

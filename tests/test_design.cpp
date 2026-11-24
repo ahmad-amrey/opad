@@ -680,6 +680,40 @@ TEST(a_failing_features_bodies_keep_their_names_and_references) {
   CHECK(s.node(other) && s.node(other)->name != name);
 }
 
+// Shell after a pocket near a rim fillet: the pocket's wall comes within the thickness of the fillet,
+// a face it does not touch, which the kernel's neighbour-only join could not close; the join over every face does. Where
+// that fails too, the error names the faces that come too close.
+TEST(shell_after_a_pocket_near_a_rim_fillet) {
+  auto cup = [](double a, double b, std::string* error) {
+    Document doc = Document::create();
+    auto ellipse = [](double x, double y) {
+      return json{{"entities", json::array({{{"id", 10}, {"type", "spline"},
+                                             {"equation", {{"x", std::to_string(x) + " mm * cos(t)"}, {"y", std::to_string(y) + " mm * sin(t)"}, {"t0", "0 deg"}, {"t1", "360 deg"}, {"tolerance", 0.005}}}}})}};
+    };
+    const std::string outline = commands::run("sketch", {{"geometry", ellipse(40, 25)}}, &doc)["sketch_id"];
+    const std::string body = feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", outline}}})}, {"distance", "20 mm"}})["body_ids"][0];
+    feature_cmd(doc, "fillet", {{"edges", json::array({{{"body", body}, {"kind", "edge"}, {"select", {{"at_plane", {{"axis", "z"}, {"value", 20}}}}}}})}, {"radius", "6 mm"}});
+    const std::string pocket = commands::run("sketch", {{"plane", {{"origin", {0, 0, 20}}, {"normal", {0, 0, 1}}}}, {"geometry", ellipse(a, b)}}, &doc)["sketch_id"];
+    feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", pocket}}})}, {"distance", "3 mm"}, {"flip", true}, {"operation", "cut"}, {"targets", json::array({body_ref(body)})}});
+    const double solid = total_volume(doc);
+    try {
+      feature_cmd(doc, "shell", {{"faces", json::array({{{"body", body}, {"kind", "face"}, {"select", {{"normal", "-z"}, {"at_plane", {{"axis", "z"}, {"value", 0}}}}}}})}, {"thickness", "2 mm"}});
+    } catch (const Error& e) {
+      *error = e.what();
+      return 0.0;
+    }
+    return solid - total_volume(doc);  // what the shell took out
+  };
+  std::string error;
+  const double close = cup(33, 18, &error), roomy = cup(30, 15, &error);
+  CHECK(error.empty());
+  // Both hollowed: the cavity a little smaller with the bigger pocket (its walls' 2 mm skin takes room from it).
+  CHECK(roomy > 35000 && close > 35000 && close < roomy);
+  error.clear();
+  // The join over every face leaves no valid solid here (OCCT 7.9): the faces are named instead, the fillet and the wall.
+  if (cup(32, 17, &error) == 0.0) CHECK(error.find("mm apart, closer than the thickness") != std::string::npos);
+}
+
 // A mirror's name_map names the copies after their sources with words swapped, and puts each in the sibling component whose
 // name swaps so: a right-hand assembly mirrored into the left one with no renames or reparenting.
 TEST(mirror_name_map_names_and_places_the_copies) {
