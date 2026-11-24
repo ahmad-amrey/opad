@@ -174,6 +174,11 @@ std::string value_text(const std::string& type, const json& v, const Scene& s, c
   if (v.is_string()) return clip(v.get<std::string>(), 80);
   if (v.is_boolean()) return v.get<bool>() ? "yes" : "no";
   if (v.is_number()) return num(v.get<double>()) + (type == "length" ? " mm" : type == "angle" ? " deg" : "");
+  if (type == "names" && v.is_object()) {  // a mirror's words to swap: "R=L, Right=Left"
+    std::string text;
+    for (const auto& [from, to] : v.items()) text += (text.empty() ? "" : ", ") + from + "=" + (to.is_string() ? to.get<std::string>() : to.dump());
+    return clip(text, 80);
+  }
   return refs_text(v, s);
 }
 json without_hints(const json& v) {

@@ -11,6 +11,9 @@ as a commit log.
 - **Ellipse dimensions.** An ellipse in a sketch takes a major and a minor radius dimension, with expressions like any
   other, so a parametric ellipse no longer needs an equation spline. The Dimension tool picks the radius nearer where
   you click the ellipse.
+- **Mirror names its copies.** *Swap in names* (e.g. `R=L, Right=Left`) names each mirrored copy after its source with
+  those words swapped ("Bracket R" becomes "Bracket L") and puts it in the component beside its source's whose name swaps
+  the same way ("Right side" to "Left side"), so a mirrored assembly needs no renaming or moving afterwards.
 - **Sharper edge and face rules.** A rule can take what reaches into a box (`bounds_mode` "intersects") or stays out of it
   ("outside"), leave a side of the box open, pick edges and faces by length or area, and tell a ring's inner rim from its
   outer one (`loop` "inner" / "outer").

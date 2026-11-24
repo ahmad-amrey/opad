@@ -59,6 +59,9 @@ json input_schema(const design::InputSpec& in) {
   else if(in.type=="bool")out=type("boolean");
   else if(in.type=="choice")out=choice(in.choices);
   else if(in.type=="text")out=type("string");
+  else if(in.type=="names"){  // words swapped in names (a mirror's copies)
+    out={{"anyOf",{type("string"),{{"type","object"},{"additionalProperties",type("string")}}}}};
+    out["description"]="Whole words swapped in copy names: \"R=L, Right=Left\" or {\"R\":\"L\"}; also picks the sibling component so named.";}
   else if(in.type=="plane")out=plane();
   else if(in.type=="axis"){out=object({{"base",choice({"x","y","z"})},{"edge",ref()},{"face",ref()},{"sketch",type("string")},{"entity",type("integer")},{"feature",type("string")},{"direction",vector(3)},{"origin",vector(3)}},{},false);
     out["description"]="A base axis; a straight or circular edge (its line or centre axis); a face (a cylinder's, cone's or torus's axis, or a planar face's normal); a sketch line {sketch, entity}; a construction axis feature; or written out {direction: [x,y,z], origin?: [x,y,z]}.";}

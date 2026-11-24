@@ -680,6 +680,39 @@ TEST(a_failing_features_bodies_keep_their_names_and_references) {
   CHECK(s.node(other) && s.node(other)->name != name);
 }
 
+// A mirror's name_map names the copies after their sources with words swapped, and puts each in the sibling component whose
+// name swaps so: a right-hand assembly mirrored into the left one with no renames or reparenting.
+TEST(mirror_name_map_names_and_places_the_copies) {
+  Document doc = Document::create();
+  const std::string right = commands::run("component", {{"name", "Right side"}}, &doc)["component_id"];
+  const std::string left = commands::run("component", {{"name", "Left side"}}, &doc)["component_id"];
+  auto box = [&](const char* name, double x, const std::string& parent) {
+    return commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", std::to_string(x) + " mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "5 mm"}}},
+                                     {"body_name", name}, {"parent", parent}}, &doc)["body_ids"][0].get<std::string>();
+  };
+  const std::string cup = box("Bracket R", 40, right), arm = box("Arm_R", 60, right), rim = box("Rim", 80, right);
+  const json made = feature_cmd(doc, "mirror", {{"bodies", json::array({body_ref(cup), body_ref(arm), body_ref(rim)})}, {"plane", {{"base", "yz"}}},
+                                                {"name_map", "R=L, Right=Left"}, {"operation", "new"}});
+  Scene s = resolve(doc);
+  std::map<std::string, std::string> parents;
+  for (const auto& id : made["body_ids"]) {
+    const Node* n = s.node(id.get<std::string>());
+    CHECK(n);
+    if (n) parents[n->name] = n->parent;
+  }
+  CHECK(parents.count("Bracket L") && parents["Bracket L"] == left);
+  CHECK(parents.count("Arm_L") && parents["Arm_L"] == left);
+  CHECK(parents.count("Rim 2") && parents["Rim 2"] == left);  // nothing to swap in "Rim": numbered, in the swapped component
+  // Mirrored again: "Bracket L" is taken, so the next copy is numbered after it; an object map works as the text does.
+  const json again = feature_cmd(doc, "mirror", {{"bodies", json::array({body_ref(cup)})}, {"plane", {{"base", "yz"}}}, {"name_map", {{"R", "L"}}}, {"operation", "new"}});
+  CHECK_EQ(resolve(doc).node(again["body_ids"][0].get<std::string>())->name, std::string("Bracket L 2"));
+  // The names stay through a regeneration (they are the result's), and a malformed map says what it takes.
+  commands::run("feature_edit", {{"target", made["feature_id"]}, {"inputs", {{"plane", {{"base", "xz"}}}}}}, &doc);
+  s = resolve(doc);
+  CHECK(s.node(made["body_ids"][0].get<std::string>()) && s.node(made["body_ids"][0].get<std::string>())->name == "Bracket L");
+  CHECK_THROWS(feature_cmd(doc, "mirror", {{"bodies", json::array({body_ref(cup)})}, {"plane", {{"base", "yz"}}}, {"name_map", "R to L"}, {"operation", "new"}}));
+}
+
 CHECK_MAIN()
 
 TEST(spline_nodes_insert_without_shape_change_and_weights_persist) {

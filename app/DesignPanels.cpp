@@ -362,6 +362,19 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
       label->setText(QString());
       h->addWidget(label);
       h->addWidget(w.check, 1);
+    } else if (in.type == "text" || in.type == "names") {
+      w.text = new QLineEdit(w.row);
+      QString shown;
+      if (value.is_string()) shown = QString::fromStdString(value.get<std::string>());
+      else if (value.is_object())  // an agent's {"R": "L"}: shown as the panel writes it
+        for (const auto& [from, to] : value.items())
+          shown += (shown.isEmpty() ? "" : ", ") + QString::fromStdString(from) + "=" + QString::fromStdString(to.is_string() ? to.get<std::string>() : to.dump());
+      w.text->setText(shown);
+      if (in.type == "names") w.text->setPlaceholderText(tr("e.g. R=L, Right=Left"));
+      connect(w.text, &QLineEdit::textEdited, this, &FeaturePanel::inputsChanged);
+      connect(w.text, &QLineEdit::returnPressed, this, &FeaturePanel::accepted);
+      h->addWidget(label);
+      h->addWidget(w.text, 1);
     } else if (isPick(in.type)) {
       w.pick = new PickBox(w.row);
       if (!m_values.contains(in.name) && !in.def.is_null()) m_values[in.name] = in.def;
@@ -535,6 +548,7 @@ opad::json FeaturePanel::inputs() const {
     if (w.expr) out[in.name] = w.expr->text().toStdString();
     else if (w.combo) out[in.name] = w.combo->currentData().toString().toStdString();
     else if (w.check) out[in.name] = w.check->isChecked();
+    else if (w.text) out[in.name] = w.text->text().trimmed().toStdString();
   }
   return out;
 }

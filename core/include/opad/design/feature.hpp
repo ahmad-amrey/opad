@@ -27,7 +27,7 @@ struct InputSpec {
   std::string name;   // key in the op's "inputs"
   std::string label;  // English source text; the app translates
   // length | angle | number | count: expression or number
-  // bool | choice | text
+  // bool | choice | text | names (words to swap: "R=L, Right=Left" or {"R": "L"}; a mirror's name_map)
   // bodies | faces | edges: lists of references ({"body":node,"kind":..,"index":N,"hint":{..}})
   // profiles: [{"sketch":id,"at":[u,v],...}] regions of sketches   path: {"sketch":id} or edges
   // plane: {"base":"xy|xz|yz"} | {"face":ref} | {"feature":id}     axis: {"base":"x|y|z"} | {"edge":ref} | {"sketch":id,"entity":n} | {"feature":id}

@@ -228,7 +228,12 @@ std::vector<FeatureSpec> build_specs() {
   add("combine", "Combine", "combine", "combine", "Join, cut or intersect bodies.",
       {advancing(pick("target", "Target bodies", "bodies", 1, 0)), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
   add("split", "Split body", "split", "combine", "Cut bodies in two along a plane.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Splitting plane", "plane")});
-  add("mirror", "Mirror", "mirror", "pattern", "Mirrored copies of bodies.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Mirror plane", "plane")}, "new");
+  // name_map: words swapped in the copies' names ("R=L, Right=Left", or {"R": "L"} from an agent), and the component a copy
+  // goes into, when its source's has a sibling of the swapped name (engine.cpp materialize). Used when the copies are made.
+  add("mirror", "Mirror", "mirror", "pattern",
+      "Mirrored copies of bodies. Swap in names (e.g. R=L, Right=Left) names each copy after its source with those words swapped, "
+      "and puts it in the component whose name swaps so, beside its source's.",
+      {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Mirror plane", "plane"), in("name_map", "Swap in names", "names", "", "", true)}, "new");
   add("pattern_rect", "Rectangular pattern", "patternRect", "pattern", "Copies of bodies in rows and columns.",
       {pick("bodies", "Bodies", "bodies", 1, 0), in("axis", "Direction", "axis", json{{"base", "x"}}), in("count", "Count", "count", "3"), in("spacing", "Spacing", "length", "20 mm"),
        in("second", "Second direction", "bool", false), in("axis2", "Direction 2", "axis", json{{"base", "y"}}, "second=true"), in("count2", "Count 2", "count", "2", "second=true"),

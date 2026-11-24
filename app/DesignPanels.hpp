@@ -161,6 +161,7 @@ class FeaturePanel : public QWidget {
     QCheckBox* check = nullptr;
     PickBox* pick = nullptr;
     QPushButton* rule = nullptr;  // "By rule…" (faces and edges)
+    QLineEdit* text = nullptr;    // text and names inputs
   };
   std::map<QString, Row> m_widgets;
   opad::json m_values = opad::json::object();  // picks and the values of hidden inputs
