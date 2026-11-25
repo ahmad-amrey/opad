@@ -532,7 +532,10 @@ json engines() {
                      "joint_set and mechanism still work, and a build with Chrono runs the study as defined";
   if (!fea)
     for (const char* k : {"static", "modal", "thermal"}) why[k] = out["note"];
-  if (!foam.found())
+  if (!foam.problem.empty()) {
+    out["openfoam_problem"] = foam.problem;
+    why["flow"] = foam.problem;
+  } else if (!foam.found())
     why["flow"] = "flow studies need OpenFOAM, which is not on this machine: install it (Windows: OpenCFD's MinGW build from openfoam.com or "
                   "blueCFD-Core; Ubuntu: apt install openfoam; macOS: a Docker or OpenCFD build) and put its bin folder on the PATH, or set "
                   "OPAD_OPENFOAM to its directory";

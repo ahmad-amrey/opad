@@ -164,7 +164,7 @@ curve scaled by 5/360; past 30 degrees of wall the non-orthogonal correction), e
 wall/inlet/outlet, 3 layers). The fan curve is written inline (`fanCurve table`): openfoam.org reads no curve file. Settings, plan (`plan_flow`) and case files
 (`write_flow_case`) need no OpenFOAM: `study` with `run: false` returns `plan`. Recirculation = reversed cells (against
 the local bulk way) in face-connected groups touching a wall. Shared OpenFOAM readers and the program runner:
-`core/src/sim/foam_case.hpp` (moved out of cfd.cpp). `ctest -R flow`; the solves: `flow-solve` (label slow,
+`core/src/sim/foam_case.hpp` (moved out of cfd.cpp). `openfoam()` also finds OpenCFD's Windows installer (per user `%APPDATA%\ESI-OpenCFD\OpenFOAM\v<N>`, programs and DLLs in `msys64/home/ofuser/OpenFOAM/OpenFOAM-v<N>/platforms/<build>/bin`; OPAD_OPENFOAM may name either folder); its Pstream needs MS-MPI (`thirdParty/msmpisetup.exe`, admin), else `problem` says so and found() is false. `ctest -R flow`; the solves: `flow-solve` (label slow,
 `OPAD_TEST_FLOW_3D=1` adds the full-part check); `OPAD_KEEP_CFD=1` keeps a case's folder.
 
 ## Floating tool panels (no right dock)
