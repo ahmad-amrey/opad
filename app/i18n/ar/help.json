@@ -1187,5 +1187,12 @@
  "I already have it: find it points OPAD at an installed one": "«لدي بالفعل: ابحث عنه» يدلّ OPAD على حلّال مثبّت",
  "From": "المصدر",
  "a few hundred MB": "بضع مئات من الميغابايتات",
- "Simulation check": "فحص المحاكاة"
+ "Simulation check": "فحص المحاكاة",
+ "Connect your AI app with one button": "اربط تطبيق الذكاء الاصطناعي بزر واحد",
+ "Choose what it may do": "اختر ما يُسمح له به",
+ "Claude Desktop · Not connected yet": "Claude Desktop · لم يُربط بعد",
+ "Using another AI app? Copy setup message": "تطبيق آخر؟ نسخ رسالة الإعداد",
+ "What may it do? Nothing": "ماذا يجوز له؟ لا شيء",
+ "Claude Desktop · Connected": "Claude Desktop · مربوط",
+ "What may it do? Look and edit": "ماذا يجوز له؟ النظر والتحرير"
 }

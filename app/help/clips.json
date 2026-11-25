@@ -5712,14 +5712,14 @@
    "items": [
     {"el": "camera", "center": [-12, 0], "zoom": 0.9},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
-    {"el": "card", "screen": [0.03, 0.06], "w": 220, "title": "AI assistants", "hl": -1, "from": 0.2, "fade": 0.15, "rows": [{"text": "Claude Code · Not set up", "dim": true}, {"text": "Let AI assistants see your designs", "check": false}, {"text": "…and change them (each change can be undone)", "check": false}], "keys": [[0.8, {"hl": 0}], [1.0, {"rows": [{"text": "Claude Code · Ready", "dim": false}, {"text": "Let AI assistants see your designs", "check": false}, {"text": "…and change them (each change can be undone)", "check": false}], "ease": "step"}], [1.6, {"hl": 1}], [1.8, {"rows": [{"text": "Claude Code · Ready", "dim": false}, {"text": "Let AI assistants see your designs", "check": true}, {"text": "…and change them (each change can be undone)", "check": false}], "ease": "step"}], [2.4, {"hl": 2}], [2.6, {"rows": [{"text": "Claude Code · Ready", "dim": false}, {"text": "Let AI assistants see your designs", "check": true}, {"text": "…and change them (each change can be undone)", "check": true}], "ease": "step"}], [3.0, {"hl": -1}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 230, "title": "AI assistants", "hl": -1, "from": 0.2, "fade": 0.15, "rows": [{"text": "Claude Desktop · Not connected yet", "dim": true}, {"text": "Using another AI app? Copy setup message", "dim": true}, {"text": "What may it do? Nothing"}], "keys": [[0.8, {"hl": 0}], [1.0, {"rows": [{"text": "Claude Desktop · Connected", "dim": false}, {"text": "Using another AI app? Copy setup message", "dim": true}, {"text": "What may it do? Nothing"}], "ease": "step"}], [1.6, {"hl": -1}], [2.4, {"hl": 2}], [2.6, {"rows": [{"text": "Claude Desktop · Connected", "dim": false}, {"text": "Using another AI app? Copy setup message", "dim": true}, {"text": "What may it do? Look and edit"}], "ease": "step"}], [3.0, {"hl": -1}]]},
     {"el": "chip", "screen": [0.6, 0.88], "icon": "aiMark", "text": "AI ready", "from": 3.2, "to": 4.0, "fade": 0.1},
     {"el": "chip", "screen": [0.6, 0.88], "icon": "aiMark", "text": "Claude is connected", "from": 4.0, "fade": 0.1},
-    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.8]}], [0.8, {"screen": [0.099, 0.285]}], [1.0, {"screen": [0.099, 0.285], "click": 1}], [1.6, {"screen": [0.099, 0.4065]}], [1.8, {"screen": [0.099, 0.4065], "click": 1}], [2.4, {"screen": [0.099, 0.528]}], [2.6, {"screen": [0.099, 0.528], "click": 1}], [3.4, {"screen": [0.75, 0.8]}]]}
+    {"el": "cursor", "keys": [[0, {"screen": [0.75, 0.8]}], [0.8, {"screen": [0.099, 0.285]}], [1.0, {"screen": [0.099, 0.285], "click": 1}], [1.6, {"screen": [0.099, 0.285]}], [2.4, {"screen": [0.099, 0.528]}], [2.6, {"screen": [0.099, 0.528], "click": 1}], [3.4, {"screen": [0.75, 0.8]}]]}
    ],
    "steps": [
-    {"to": 1.3, "caption": "Set up your AI app with one click"},
-    {"to": 3.0, "caption": "Let it see your design, and change it if you like"},
+    {"to": 1.3, "caption": "Connect your AI app with one button"},
+    {"to": 3.0, "caption": "Choose what it may do"},
     {"to": 5.0, "caption": "The AI chip shows when it connects"}
    ]
   },
