@@ -172,9 +172,15 @@ class Vcs : public AreaController {
       m_git->setFile(doc->hasDocument && !doc->browse && !doc->doc.path.empty() ? doc->path() : QString());
     });
     // Linked files a clone would not have (outside the repository, or by an absolute path only): said once per set of files.
-    connect(m_git, &GitWatch::changed, this, [this] { checkOutside(); });
+    connect(m_git, &GitWatch::changed, this, [this] {
+      checkOutside();
+      keepLinkedTracked();
+    });
     if (auto* assets = services().window()->findChild<AssetsArea*>(); assets && assets->monitor())
-      connect(assets->monitor(), &AssetMonitor::statesChanged, this, [this] { checkOutside(); });
+      connect(assets->monitor(), &AssetMonitor::statesChanged, this, [this] {
+        checkOutside();
+        keepLinkedTracked();
+      });
     m_compare = new CompareMode(services(), m_git);
     m_version = new VersionControl(services(), m_git, m_compare, disk);
     // An agent's git tool (AgentGit.cpp): the chip and the panel read the repository again, and the file comes in when
@@ -236,6 +242,18 @@ class Vcs : public AreaController {
                      20000);
   }
   QSet<QString> m_toldOutside;
+  // The document's linked files kept tracked by its repository's .gitignore (GitWatch::keepTracked: "!/<path>" for those of
+  // an ignored type), from what it links now, so renames, moves, packing (Copy into the repository) and removals follow.
+  // Not while the files are being looked at: the look's statesChanged brings them.
+  void keepLinkedTracked() {
+    auto* assets = services().window()->findChild<AssetsArea*>();
+    if (!assets || !assets->monitor() || assets->monitor()->checking() || m_git->repo().state != git::Repo::State::Ready) return;
+    QStringList files;
+    for (const auto& [import, a] : assets->monitor()->assets())
+      if (a.asset.value("storage", "linked") != "embedded")
+        if (const QString file = assets->monitor()->file(import); !file.isEmpty()) files << file;
+    m_git->keepTracked(files);
+  }
   // The document's linked files that are not embedded (the move's copy, the outside notice), by import.
   std::vector<std::string> linkedImports() const {
     std::vector<std::string> out;

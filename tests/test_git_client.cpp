@@ -285,7 +285,7 @@ TEST(attributes_and_ignore_are_idempotent) {
   CHECK(theirs.endsWith("*.opad text eol=lf merge=opad diff=opad -filter\n"));
 
   const QString ignore = git::ignoreText("build/\n");
-  CHECK(ignore.startsWith("build/\n\n# OPAD") && ignore.contains("*.opad.tmp\n") && ignore.contains("opad-data/\n"));
+  CHECK(ignore.startsWith("build/\n\n# >>> OPAD") && ignore.contains("*.opad.tmp\n") && ignore.contains("opad-data/\n"));
   CHECK_EQ(git::ignoreText(ignore), ignore);
   const QString crlf = QString(ignore).replace("\n", "\r\n");
   CHECK_EQ(git::ignoreText(crlf), crlf);  // nothing missing: the user's file as it was
@@ -638,13 +638,13 @@ TEST(push_warnings) {
     f.write(bytes);
   };
   noise(dir + "/big.bin");
-  noise(dir + "/assets/board.step");
+  noise(dir + "/assets/board.kicad_pcb");
   git_(dir, {"add", "-A"});
   git_(dir, {"commit", "-q", "-m", "files"});
   const bool lfs = !git::probe(in(dir), doc).lfsVersion.isEmpty();
   const QString warned = git::pushWarnings(in(dir), 4096, 1024).join('\n');
   CHECK(warned.contains("big.bin (") && warned.contains("Keep it in Git LFS"));
-  CHECK_EQ(warned.contains("assets/board.step ("), !lfs);  // in LFS only a pointer goes into the history
+  CHECK_EQ(warned.contains("assets/board.kicad_pcb ("), !lfs);  // in LFS only a pointer goes into the history
   CHECK_EQ(warned.contains("in 1 Git LFS files go up"), lfs);
   CHECK(git::pushWarnings(in(dir)).isEmpty());  // the real limits: nothing big here
   git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", tmp.path() + "/remote.git"});
@@ -849,7 +849,7 @@ TEST(lfs_push_and_clone) {
     return;
   }
   const QByteArray bytes = noise(300000);
-  QFile asset(dir + "/assets/board.step");
+  QFile asset(dir + "/assets/board.kicad_pcb");
   CHECK(asset.open(QIODevice::WriteOnly) && asset.write(bytes) == bytes.size());
   asset.close();
   git_(dir, {"add", "-A"});
@@ -868,11 +868,11 @@ TEST(lfs_push_and_clone) {
   CHECK(git::pushWarnings(in(dir), 4096, 1024).isEmpty());
   const QString copy = tmp.path() + "/copy";
   CHECK(git::clone(in(tmp.path()), QDir::toNativeSeparators(remote), copy, git::RunOptions::network()).ok());
-  QFile pointer(copy + "/assets/board.step");
+  QFile pointer(copy + "/assets/board.kicad_pcb");
   CHECK(pointer.open(QIODevice::ReadOnly) && pointer.readAll().startsWith("version https://git-lfs.github.com/spec/v1"));
   pointer.close();
   CHECK(git::afterClone(in(copy), copy, install).contains("Git LFS is set up for this clone."));
-  QFile cloned(copy + "/assets/board.step");
+  QFile cloned(copy + "/assets/board.kicad_pcb");
   CHECK(cloned.open(QIODevice::ReadOnly) && cloned.readAll() == bytes);
 }
 
