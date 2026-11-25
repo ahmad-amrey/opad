@@ -24,6 +24,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLocale>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
@@ -45,6 +46,7 @@
 #include "opad/geometry.hpp"
 #include "opad/sim/airflow.hpp"
 #include "opad/sim/fea.hpp"
+#include "opad/sim/flow.hpp"
 #include "opad/sim/joints.hpp"
 
 using opad::json;
@@ -239,6 +241,7 @@ struct FaceInfo {
   bool planar = false;
   int wires = 0;
   double area = 0, holeSize = 0;  // the largest inner loop's size (a ring's bore)
+  double width = 0;               // the face's own size across (a disc's diameter)
   gp_Pnt centre;
 };
 
@@ -257,6 +260,15 @@ std::vector<FaceInfo> faces(const opad::Document& doc, const opad::Scene& s, con
     BRepGProp::SurfaceProperties(f, g);
     fi.area = g.Mass();
     fi.centre = g.CentreOfMass();
+    {
+      Bnd_Box fb;
+      BRepBndLib::Add(f, fb);
+      if (!fb.IsVoid()) {
+        double x0, y0, z0, x1, y1, z1;
+        fb.Get(x0, y0, z0, x1, y1, z1);
+        fi.width = std::max({x1 - x0, y1 - y0, z1 - z0});
+      }
+    }
     if (surf.GetType() == GeomAbs_Plane) {
       fi.planar = true;
       gp_Dir n = surf.Plane().Axis().Direction();
@@ -327,10 +339,10 @@ json proposals(const opad::Document& doc, const opad::Scene& s, const std::vecto
         if (d > farthest) farthest = d, a = rings[i], b = rings[j];
       }
     if (a && b) {
-      const double sa = a->holeSize > 0 ? a->holeSize : std::sqrt(a->area), sb = b->holeSize > 0 ? b->holeSize : std::sqrt(b->area);
-      if (sb > sa) std::swap(a, b);  // the wider end first: the air goes in there
-      out["ends"] = {{{"ref", a->ref.to_json()}, {"size", a->holeSize > 0 ? a->holeSize : std::sqrt(a->area)}},
-                     {{"ref", b->ref.to_json()}, {"size", b->holeSize > 0 ? b->holeSize : std::sqrt(b->area)}}};
+      // The opening's size: a ring's bore, else the face itself (a body that is the fluid: its end disc).
+      auto size = [](const FaceInfo* f) { return f->holeSize > 0 ? f->holeSize : f->width; };
+      if (size(b) > size(a)) std::swap(a, b);  // the wider end first: the air goes in there
+      out["ends"] = {{{"ref", a->ref.to_json()}, {"size", size(a)}}, {{"ref", b->ref.to_json()}, {"size", size(b)}}};
     }
   }
   return out;
@@ -598,8 +610,10 @@ QString GuidedCheck::bodyNames(const std::vector<std::string>& ids, int most) co
 
 // ---------------------------------------------------------------- the steps
 void GuidedCheck::build() {
-  if (m_frame) {
+  if (m_frame) {  // out of this widget at once (its deletion waits for the event loop): nothing finds its parts any more
     m_outer->removeWidget(m_frame);
+    m_frame->hide();
+    m_frame->setParent(nullptr);
     m_frame->deleteLater();
   }
   m_lists.clear();
@@ -1145,6 +1159,9 @@ void GuidedCheck::build() {
     auto* swap = new QPushButton(tr("Swap in and out"), v->parentWidget());
     swap->setObjectName("checkSwap");
     v->addWidget(swap);
+    m_planText = text({}, v->parentWidget(), "");  // how OPAD will solve it (the core's check of the openings), before Run
+    m_planText->setObjectName("checkPlan");
+    v->addWidget(m_planText);
     connect(swap, &QPushButton::clicked, this, [this] {
       std::swap(m_setup->inlet, m_setup->outlet);
       for (int i = 0; i < int(m_lists.size()); ++i) showList(i);
@@ -1259,6 +1276,9 @@ void GuidedCheck::build() {
     m_runNote = text({}, page, "");
     m_runNote->setObjectName("checkRunNote");
     v->addWidget(m_runNote);
+    m_runPlan = text({}, page, "");
+    m_runPlan->setObjectName("checkRunPlan");
+    v->addWidget(m_runPlan);
     m_solverButton = new QPushButton(page);
     m_solverButton->setObjectName("checkSolver");
     v->addWidget(m_solverButton);
@@ -1386,6 +1406,61 @@ void GuidedCheck::reload() {
   showResults();
   lightLists();
   propose();
+  m_plan = json(), m_planError.clear();
+  if (st && m_check && m_check->kind == "flow") validateFlow(st->def.value("settings", json::object()));
+  else showPlan();
+}
+
+// The core's check of a flow study's settings and openings (no OpenFOAM needed), on a worker: how it will be meshed, or why
+// it cannot be solved like this.
+void GuidedCheck::validateFlow(const json& settings) {
+  AppDocument* d = m_hooks.document();
+  if (!d || !m_hooks.jobs) return;
+  if (m_validating) m_validating->cancel();
+  auto plan = std::make_shared<json>();
+  auto error = std::make_shared<std::string>();
+  m_validating = d->readAsync(m_hooks.jobs(), tr("Checking the openings"),
+                              [settings, plan, error](const opad::Document& doc, const opad::Scene& s, Progress) {
+                                try {
+                                  *plan = opad::sim::plan_flow(doc, s, opad::sim::flow_settings(settings)).to_json();
+                                } catch (const std::exception& e) {
+                                  *error = e.what();
+                                }
+                              },
+                              [this, self = QPointer<GuidedCheck>(this), plan, error](bool ok, const QString&) {
+                                if (!self || !ok) return;
+                                m_plan = *plan;
+                                m_planError = error->empty() ? QString() : i18n::message(QString::fromStdString(*error));
+                                showPlan();
+                                showRunState();
+                              });
+}
+
+void GuidedCheck::showPlan() {
+  QString t;
+  if (!m_planError.isEmpty()) {
+    t = tr("OPAD cannot solve it like this: %1").arg(m_planError);
+  } else if (m_plan.is_object() && m_plan.contains("mesh")) {
+    const QString cells = QLocale().toString(qlonglong(m_plan.value("cells_estimate", 0)));
+    if (m_plan.value("mesh", std::string()) == "axisymmetric") {
+      t = tr("The part is round, so OPAD solves a thin slice of it and turns it round (about %1 cells): quick.").arg(cells);
+    } else {
+      const QString why = QString::fromStdString(m_plan.value("why_3d", std::string()));
+      t = why.isEmpty() ? tr("OPAD solves the whole part (about %1 cells): this takes longer than a round part.").arg(cells)
+                        : tr("OPAD solves the whole part (about %1 cells), since %2. This takes longer than a round part.").arg(cells, i18n::message(why));
+    }
+    const json in = m_plan.value("inlet", json::object()), out = m_plan.value("outlet", json::object());
+    if (in.contains("diameter_mm") && out.contains("diameter_mm"))
+      t += " " + tr("In %1 across, out %2 across, %3 apart.")
+                     .arg(units::format(units::Kind::Length, in.value("diameter_mm", 0.0)), units::format(units::Kind::Length, out.value("diameter_mm", 0.0)),
+                          units::format(units::Kind::Length, m_plan.value("length_mm", 0.0)));
+  }
+  for (QLabel* l : {m_planText, m_runPlan})
+    if (l) {
+      l->setText(t);
+      l->setVisible(!t.isEmpty());
+      l->setStyleSheet(m_planError.isEmpty() ? QString() : QString("color: %1;").arg(theme::current().amber.name()));
+    }
 }
 
 void GuidedCheck::scheduleWrite() {
@@ -1465,6 +1540,13 @@ void GuidedCheck::write() {
     settings["ambient"] = u.ambient;
     settings["quality"] = u.quality.toStdString();
   }
+  if (kind == "flow" && (u.inlet.empty() || u.outlet.empty())) {
+    // The flow study is checked as it is written (its openings first): saved once both are known.
+    if (m_writeNote) m_writeNote->setText(tr("Say where the air goes in and out: the check is saved then."));
+    m_plan = json(), m_planError.clear();
+    showPlan();
+    return;
+  }
   const std::string key = json({{"settings", settings}, {"guided", u.toJson()}, {"loads", loads}}).dump();
   if (key == m_written && !m_study.empty() && s.study(m_study)) return;
   m_writing = true;
@@ -1483,7 +1565,14 @@ void GuidedCheck::write() {
         const QString stem = simchecks::goalName(m_check->goal) + " · " + m_check->question.left(m_check->question.size() - 1);
         std::string name = stem.toStdString();
         for (int n = 2; taken.count(name); ++n) name = (stem + QString(" (%1)").arg(n)).toStdString();
-        const json out = m_hooks.write("study", {{"kind", kind}, {"name", name}, {"settings", {{"check", id.toStdString()}}}, {"run", false}}, tr("New check"));
+        json first = {{"check", id.toStdString()}};
+        if (kind == "flow") {  // checked as written: made with its openings and airflow at once (a null drops a key only in a change)
+          first = settings;
+          for (auto it = first.begin(); it != first.end();) it = it->is_null() ? first.erase(it) : std::next(it);
+          first["guided"] = next.toJson();
+        }
+        const json out = m_hooks.write("study", {{"kind", kind}, {"name", name}, {"settings", first}, {"run", false}}, tr("New check"));
+        if (out.contains("plan")) m_plan = out["plan"];
         study = out.value("id", std::string());
         caseName = name;
       } else {
@@ -1525,16 +1614,20 @@ void GuidedCheck::write() {
       }
       if (kind == "static" || kind == "modal" || kind == "thermal") settings["case"] = caseName;
       settings["guided"] = next.toJson();
-      m_hooks.write("study", {{"id", study}, {"settings", settings}, {"run", false}}, tr("Check"));
+      const json out = m_hooks.write("study", {{"id", study}, {"settings", settings}, {"run", false}}, tr("Check"));
+      if (out.contains("plan")) m_plan = out["plan"];
     });
     m_study = study;
     m_setup->loads = next.loads;
     settings.erase("guided");
     m_written = json({{"settings", settings}, {"guided", m_setup->toJson()}, {"loads", loads}}).dump();  // as the next write computes it
     if (m_writeNote) m_writeNote->clear();
+    if (kind == "flow") m_planError.clear();
   } catch (const std::exception& e) {
     if (m_writeNote) m_writeNote->setText(tr("Not saved: %1").arg(i18n::message(QString::fromStdString(e.what()))));
+    if (kind == "flow") m_plan = json(), m_planError = i18n::message(QString::fromStdString(e.what()));
   }
+  if (kind == "flow") showPlan();
   showRunState();
   emit changed();
 }
@@ -1745,7 +1838,7 @@ bool GuidedCheck::canRun() const {
   if ((id == "bend" || id == "print") && u.loadFaces.empty() && !u.selfWeight) return false;
   if ((id == "overheat" || id == "heatsink" || id == "warmup") && (u.heat.empty() || u.bodies.empty())) return false;
   if ((id == "clearance" || id == "forces") && u.joint.empty()) return false;
-  if ((id == "fitting" || id == "fan") && (u.inlet.empty() || u.outlet.empty())) return false;
+  if ((id == "fitting" || id == "fan") && (u.inlet.empty() || u.outlet.empty() || !m_planError.isEmpty())) return false;
   return true;
 }
 
@@ -2019,6 +2112,9 @@ void GuidedCheck::setValue(const QString& field, double v) {
   else if (field == "flow") m_setup->flow = v, m_setup->airMode = "flow";
   else if (field == "travel") m_setup->travel = v;
   else if (field == "watts" && !m_setup->heat.empty()) m_setup->heat.front().second = v;
+  else if (field == "freeFlow") m_setup->freeFlow = v, m_setup->airMode = "fan";
+  else if (field == "shutoff") m_setup->shutoff = v, m_setup->airMode = "fan";
+  else if (field == "quick") m_setup->quality = v > 0 ? "quick" : "normal";
   m_loading = true;
   for (auto& f : m_refreshers) f();
   m_loading = false;

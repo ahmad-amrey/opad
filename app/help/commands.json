@@ -3441,7 +3441,7 @@
    "id": "simulate.check.fitting",
    "title": "How much pressure does a fitting lose?",
    "summary": "Opens the guided check of the pressure a duct, reducer, elbow or adapter costs the air going through it.",
-   "details": "OPAD proposes the part's two open ends, the wider one as the way in, and asks how much air goes through it (CFM, m³/h or l/s) or which fan pushes it. The result says the loss in pascals at that airflow in plain words, shows the air's speed, pressure and streamlines, and where it swirls. It runs with the airflow solver (OpenFOAM) and comes with the flow study: until then the card says Coming.",
+   "details": "OPAD proposes the part's two open ends, the wider one as the way in, and asks how much air goes through it (CFM, m³/h or l/s) or which fan pushes it. The result says the loss in pascals at that airflow in plain words, shows the air's speed, pressure and streamlines, and where it swirls. Before Run, OPAD checks the openings and says how it will solve it (a thin slice of a round part, else the whole part); it runs with the airflow solver (OpenFOAM).",
    "keywords": ["duct", "pressure drop", "reducer", "elbow", "adapter", "CFD", "airflow"],
    "requires": "Open or create a document first."
   },
@@ -3449,7 +3449,7 @@
    "id": "simulate.check.fan",
    "title": "How much air will my fan really push?",
    "summary": "Opens the guided check of the airflow a fan really delivers through its duct or box.",
-   "details": "Type the two numbers on the fan's label (its free airflow and its maximum pressure) and say where the air goes in and out. OPAD finds where the fan's curve meets the part's resistance: the airflow you actually get, not the label's. It runs with the airflow solver (OpenFOAM) and comes with the flow study: until then the card says Coming.",
+   "details": "Type the two numbers on the fan's label (its free airflow and its maximum pressure) and say where the air goes in and out. OPAD finds where the fan's curve meets the part's resistance: the airflow you actually get, not the label's. Before Run, OPAD checks the openings and says how it will solve it; it runs with the airflow solver (OpenFOAM).",
    "keywords": ["fan", "airflow", "CFM", "fan curve", "duct", "blower", "ventilation"],
    "requires": "Open or create a document first."
   },

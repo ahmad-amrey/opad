@@ -106,6 +106,7 @@ class Simulate : public AreaController {
   opad::Vec3 askVector(const QString& title, const QString& label, bool* ok);  // "x, y, z" from a dialog
   [[noreturn]] void wantPicks(const char* filter, const char* hint);
   void showResults(bool on);
+  void showFlow(const opad::sim::FeaResult& r);  // a flow study's map: the cut through the fluid by speed or pressure, or streamlines
   void clearMotion();
   std::vector<browser::Item> folderItems() const;
   void folderMenu(const std::string& id, QMenu& menu);

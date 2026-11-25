@@ -412,5 +412,15 @@
  "I know what I want: open the Advanced tools": "أعرف ما أريد: افتح الأدوات المتقدمة",
  "None yet: a check you start is kept here, with its result.": "لا شيء بعد: يُحفظ هنا كل فحص تبدؤه، مع نتيجته.",
  "The part is round, so OPAD solved a thin slice of it and turned it round.": "الجزء دائري، لذا حلّ OPAD شريحة رقيقة منه ثم أدارها.",
- "Loss coefficient K": "معامل الفقد K"
+ "Loss coefficient K": "معامل الفقد K",
+ "Pressure loss %1 Pa at %2 m³/h": "فقد الضغط %1 باسكال عند %2 م³/س",
+ "Pressure (Pa)": "الضغط (باسكال)",
+ "cut through the middle": "مقطع عبر المنتصف",
+ "Checking the openings": "فحص الفتحات",
+ "OPAD cannot solve it like this: %1": "لا يستطيع OPAD حلّه هكذا: %1",
+ "The part is round, so OPAD solves a thin slice of it and turns it round (about %1 cells): quick.": "الجزء دائري، لذا يحلّ OPAD شريحة رقيقة منه ثم يديرها (نحو %1 خلية): سريع.",
+ "OPAD solves the whole part (about %1 cells): this takes longer than a round part.": "يحلّ OPAD الجزء كاملًا (نحو %1 خلية): يستغرق هذا وقتًا أطول من جزء دائري.",
+ "OPAD solves the whole part (about %1 cells), since %2. This takes longer than a round part.": "يحلّ OPAD الجزء كاملًا (نحو %1 خلية)، لأن %2. يستغرق هذا وقتًا أطول من جزء دائري.",
+ "In %1 across, out %2 across, %3 apart.": "المدخل بعرض %1، والمخرج بعرض %2، وبينهما %3.",
+ "Say where the air goes in and out: the check is saved then.": "حدّد أين يدخل الهواء وأين يخرج: يُحفظ الفحص حينها."
 }

@@ -217,6 +217,10 @@ QString summaryText(const json& s) {
     const double o = b.contains("confirmed") ? b["confirmed"].get<double>() : b.value("objective", 0.0);
     lines << Simulate::tr("Best of %1 designs: %2, %3 %4").arg(number(s.value("evaluations", 0.0)), ps.join(", "), QString::fromStdString(s["objective"].value("of", "")), number(o));
   }
+  if (s.value("pressure_drop_pa", json()).is_number())  // a flow study
+    lines << Simulate::tr("Pressure loss %1 Pa at %2 m³/h").arg(number(s["pressure_drop_pa"].get<double>()), number(s.value("flow_m3h", s.value("flow_m3s", 0.0) * 3600)));
+  add(Simulate::tr("Fastest air"), s.value("max_speed_ms", json()), "m/s");
+  add(Simulate::tr("Loss coefficient K"), s.value("loss_coefficient", json()), "");
   add(Simulate::tr("Peak von Mises"), s.value("max_von_mises_MPa", json()), "MPa");
   add(Simulate::tr("Hottest"), s.value("max_temperature_C", json()), "°C");
   if (s.contains("heat_W") && s.contains("to_air_W"))
@@ -620,7 +624,7 @@ void Simulate::ready() {
   hooks.lastRun = [this](const std::string& id) { return id == m_study ? m_run : std::shared_ptr<const opad::sim::StudyRun>(); };
   hooks.showField = [this](const QString& field) {
     if (!m_run || !m_run->fea) return;
-    m_field = field == "speed" || field == "streamlines" ? QStringLiteral("air_speed") : field;
+    m_field = m_run->kind != "flow" && (field == "speed" || field == "streamlines") ? QStringLiteral("air_speed") : field;
     showRun();
     services().guarded([&] { showResults(true); });
   };
@@ -1254,7 +1258,10 @@ void Simulate::showRun() {
   if (structural) {
     SimulatePanel::Entries fields;
     const std::string shownKind = m_run->kind == "sweep" ? m_run->summary.value("study_kind", std::string()) : m_run->kind;  // a sweep: its best design's map
-    if (shownKind == "thermal") {
+    if (shownKind == "flow") {
+      fields = {{"speed", tr("Air speed (m/s)")}, {"pressure", tr("Pressure (Pa)")}};
+      if (!m_run->fea->streamlines.empty()) fields.push_back({"streamlines", tr("Streamlines")});
+    } else if (shownKind == "thermal") {
       fields = {{"temperature", tr("Temperature (°C)")}};
       if (!m_run->fea->streamlines.empty()) fields.push_back({"air_speed", tr("Air speed (m/s)")});
     } else if (shownKind == "static") {
@@ -1469,6 +1476,7 @@ void Simulate::showResults(bool on) {
   const opad::sim::FeaResult& r = *m_run->fea;
   const size_t n = r.nodes.size();
   if (!services().selection().refs.empty()) services().select({});  // a picked part's highlight would cover its colours
+  if (m_run->kind == "flow") return showFlow(r);
   std::vector<double> value(n, 0.0);
   std::vector<opad::Vec3> shape(n, opad::Vec3{0, 0, 0});
   QString title, unit;
@@ -1570,6 +1578,70 @@ void Simulate::showResults(bool on) {
   QString note = scale > 0 ? tr("deformation × %1").arg(number(scale)) : QString();
   if (peak > vhi) note = tr("peak %1 %2 above the scale").arg(number(peak), unit);
   m_legend->setScale(title, vlo, vhi, unit, note);
+  m_legend->show();
+  positionOverlays({});
+  if (m_form) m_form->setResultsShown(true);
+  services().updateCommands();
+}
+
+// A flow study's map. Inside a part the walls would hide the fluid: they are hidden, and the cut through the middle of the
+// fluid is drawn by the air's speed or its pressure (gauge, the outlet's 0), or grey under the streamlines coloured by speed.
+// Without a cut (none was made), the walls' surface takes the colours.
+void Simulate::showFlow(const opad::sim::FeaResult& r) {
+  Viewport* view = services().viewport();
+  const bool lines = (m_field == "streamlines" || m_field == "air_speed") && !r.streamlines.empty();
+  const bool pressure = m_field == "pressure";
+  const bool cut = !r.cut.empty() && r.cut_nodes.size() == r.cut_speed.size() && r.cut_nodes.size() == r.cut_pressure.size();
+  const std::vector<double>& walls = pressure ? r.pressure : r.speed;
+  const std::vector<double>& inner = pressure ? r.cut_pressure : r.cut_speed;
+  double lo = 1e300, hi = -1e300;
+  auto take = [&](const std::vector<double>& v) {
+    for (double x : v) lo = std::min(lo, x), hi = std::max(hi, x);
+  };
+  if (lines) {
+    for (const auto& l : r.streamline_speed) take(l);
+  } else {
+    take(cut ? inner : walls);
+  }
+  if (!pressure) lo = 0;
+  if (!(hi > lo)) hi = lo + 1;
+  auto colour = [&](double v) { return opad::result_color(std::clamp((v - lo) / (hi - lo), 0.0, 1.0)); };
+  const std::array<float, 3> grey{0.72f, 0.72f, 0.75f};
+  Handle(ResultMap) map = new ResultMap();
+  if (cut) {
+    for (size_t i = 0; i < r.cut_nodes.size(); ++i) {
+      map->points.push_back(r.cut_nodes[i]);
+      map->colours.push_back(lines ? grey : colour(inner[i]));
+    }
+    map->triangles = r.cut;
+  } else {
+    for (size_t i = 0; i < r.nodes.size(); ++i) {
+      map->points.push_back(r.nodes[i]);
+      map->colours.push_back(lines || i >= walls.size() ? grey : colour(walls[i]));
+    }
+    map->triangles = r.skin;
+  }
+  if (lines)
+    for (size_t l = 0; l < r.streamlines.size() && l < r.streamline_speed.size(); ++l) {
+      map->lines.push_back(r.streamlines[l]);
+      map->lineColours.emplace_back();
+      for (double v : r.streamline_speed[l]) map->lineColours.back().push_back(colour(v));
+    }
+  m_map = map;
+  m_mapHidden.clear();
+  std::map<std::string, LookDelta> hide;
+  if (cut)
+    for (const auto& b : r.bodies) {
+      LookDelta d;
+      d.visible = false;
+      hide[b] = d;
+    }
+  view->setLookLayer(LookSource::Simulate, hide);
+  view->showOverlay(m_map);
+  m_map->SetZLayer(Graphic3d_ZLayerId_Default);
+  view->updateOverlay(m_map);
+  m_legend->setScale(pressure ? tr("Pressure") : tr("Air speed"), lo, hi, pressure ? QStringLiteral("Pa") : QStringLiteral("m/s"),
+                     cut ? tr("cut through the middle") : QString());
   m_legend->show();
   positionOverlays({});
   if (m_form) m_form->setResultsShown(true);

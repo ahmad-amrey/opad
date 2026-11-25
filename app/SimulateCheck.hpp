@@ -84,10 +84,14 @@ class GuidedCheck : public QWidget {
   QStringList stepNames() const;
   std::vector<opad::Ref> listed(const QString& list) const;  // "supports", "load", "inlet", "outlet", "heat", "bodies"
   bool proposed(const QString& list) const;  // OPAD found something to propose for that list
+  opad::json plan() const { return m_plan; }  // a flow check's mesh plan ({mesh, cells_estimate, inlet, outlet, ...}); null: none yet
+  QString planError() const { return m_planError; }
   void useProposal(const QString& list);
   QPushButton* runButton() const { return m_runButton; }
   QLabel* runNote() const { return m_runNote; }
-  void setValue(const QString& field, double v);  // "weight", "need", "limit", "flow", "travel", "watts" (the first heat row)
+  // "weight", "need", "limit", "flow", "travel", "watts" (the first heat row), "freeFlow" and "shutoff" (a fan's label, CFM and
+  // Pa), "quick" (1: Quick accuracy)
+  void setValue(const QString& field, double v);
   // A check's result in one line ("Safe: holds 3.2 times this load"), from a study's summary and its settings.guided; empty
   // when it has none (not run).
   static QString verdictLine(const QString& check, const opad::json& summary, const opad::json& guided);
@@ -121,6 +125,12 @@ class GuidedCheck : public QWidget {
   std::vector<std::string> shownSolids() const;
   int stepOf(const QString& name) const;
   opad::json summary() const;  // the result shown: the run's, else the study's last
+  void validateFlow(const opad::json& settings);  // a flow study's mesh plan from the core (a worker)
+  void showPlan();
+  opad::json m_plan;      // a flow check's mesh plan, as the core gave it
+  QString m_planError;    // why the core refuses its settings or openings
+  QPointer<Job> m_validating;
+  QLabel *m_planText = nullptr, *m_runPlan = nullptr;
 
   Hooks m_hooks;
   QString m_checkId;

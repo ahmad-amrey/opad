@@ -9,6 +9,7 @@
 #include <QPushButton>
 #include <QTabBar>
 #include <QTimer>
+#include <cmath>
 #include <functional>
 
 #include "AppDocument.hpp"
@@ -46,8 +47,8 @@ void settle(int ms) { until([] { return false; }, ms); }
 // a strength check on a block opened from its card: OPAD proposes the face it rests on and the top face, the load typed in
 // kg, one study with its own case and loads written (once: the same again writes nothing), Run greyed without CalculiX or
 // run with it to a verdict in plain words, a copy kept to compare; a motion check on a hinge (always runs) with its
-// verdict; a heat check that finds the part named like a chip; an airflow check (Coming while the flow study is not in this
-// build: nothing written); the missing-solver window; Thermal setup on the same guided frame; the Advanced tab's panel with
+// verdict; a heat check that finds the part named like a chip; both airflow checks on a reducer, set up and checked by the
+// core (its mesh plan shown before Run), solved when OpenFOAM is here and else the missing-solver path; the missing-solver window; Thermal setup on the same guided frame; the Advanced tab's panel with
 // its Mechanism / Structure / Thermal bar. Shots: <prefix>.start.png, .bend-*.png, .solver.png, .advanced.png.
 OPAD_BENCH(OPAD_BENCH_SIMCHECKS, simchecks) {
   bool all = true;
@@ -215,18 +216,66 @@ OPAD_BENCH(OPAD_BENCH_SIMCHECKS, simchecks) {
     shot(area->checkPanel(), "overheat-results");
   }
 
-  // ---- an airflow check: Coming until the flow study is in this build (nothing written), else set up
-  const size_t before = doc->scene.studies.size();
-  area->openCheck("fitting");
-  require(check->stepNames() == QStringList({"part", "ends", "air", "run", "results"}), "the fitting check: " + check->stepNames().join(", "));
-  check->setValue("flow", 350);
-  check->flush();
-  if (!flowKind) {
-    require(doc->scene.studies.size() == before && !check->runButton()->isEnabled(), "Coming: nothing written, Run greyed");
+  // ---- the airflow checks on a reducer: a truncated cone that is the air itself (its two flat ends the openings, round:
+  // solved as a slice). Set up, checked by the core before Run (its mesh plan); solved when OpenFOAM is here, else the
+  // missing-solver path.
+  const std::string reducer = run("feature", {{"kind", "cone"}, {"name", "Reducer"},
+                                              {"inputs", {{"plane", {{"origin", {0, 400, 0}}, {"normal", {0, 0, 1}}}}, {"diameter", 200}, {"top_diameter", 150}, {"height", 120}}}})["body_ids"][0];
+  settle(300);
+  const bool flowEngine = engines.value("flow", false);
+  for (const QString id : {QString("fitting"), QString("fan")}) {
+    opad::Ref part;
+    part.body = reducer;
+    services.select({part});  // the check takes the part selected
+    const size_t before = doc->scene.studies.size();
+    area->openCheck(id);
+    const QString on = id + ": ";
+    require(check->check() == id && check->stepNames() == QStringList({"part", "ends", "air", "run", "results"}), on + "its steps: " + check->stepNames().join(", "));
+    require(check->listed("bodies").size() == 1 && check->listed("bodies")[0].body == reducer, on + "the part is the reducer");
+    if (!flowKind) {
+      check->setValue("flow", 350);
+      check->flush();
+      require(doc->scene.studies.size() == before && !check->runButton()->isEnabled(), on + "Coming: nothing written, Run greyed");
+      continue;
+    }
+    require(until([check] { return check->proposed("inlet") && check->proposed("outlet"); }, 20000), on + "OPAD proposes where the air goes in and out");
+    require(until([check] { return !check->listed("inlet").empty() && !check->listed("outlet").empty(); }, 5000), on + "a new check takes them at once");
+    if (id == "fitting") check->setValue("flow", 350);
+    else check->setValue("freeFlow", 350), check->setValue("shutoff", 120);
+    check->setValue("quick", 1);
+    check->flush();
+    const opad::Study* st = doc->scene.study(check->study());
+    const opad::json settings = st ? st->def.value("settings", opad::json::object()) : opad::json();
+    require(st && st->kind == "flow" && settings.value("check", "") == id.toStdString(), on + "one flow study, marked as this check");
+    require(id == "fitting" ? settings.contains("flow") && !settings.contains("fan") : settings.contains("fan") && !settings.contains("flow"),
+            on + (id == "fitting" ? "driven by the airflow typed" : "driven by the fan's label"));
+    const opad::json plan = check->plan();
+    require(plan.value("mesh", "") == "axisymmetric", on + "the core's plan: solved as a slice (" + QString::fromStdString(plan.value("mesh", std::string("none"))) +
+                                                         (check->planError().isEmpty() ? QString() : ", " + check->planError()) + ")");
+    require(std::fabs(plan.value("inlet", opad::json::object()).value("diameter_mm", 0.0) - 200) < 1, on + "the wider end is the way in");
+    auto* planText = check->findChild<QLabel*>("checkPlan");
+    check->frame()->setCurrent(check->stepNames().indexOf("ends"));
+    require(planText && planText->isVisibleTo(check) && !planText->text().isEmpty(), on + "the In and out step says how it will be solved: " + (planText ? planText->text() : QString()));
+    shot(area->checkPanel(), id + "-ends");
+    // The core refuses openings that cannot be: the same face in and out says why, before Run, and greys it.
+    check->frame()->setCurrent(check->stepNames().indexOf("run"));
+    require(check->runButton()->isEnabled() == flowEngine, on + (flowEngine ? "Run is ready" : "Run is greyed without OpenFOAM"));
+    if (!flowEngine) {
+      auto* solver = check->findChild<QPushButton*>("checkSolver");
+      require(check->runNote()->isVisible() && solver && solver->isVisibleTo(check) && solver->text().contains("OpenFOAM"),
+              on + "the Run step names the missing solver and offers it: " + check->runNote()->text());
+      require(start->findChild<CheckCard*>("checkCard_" + id)->chip() == simchecks::readiness(*simchecks::find(id), engines).chip, on + "its card says it needs the airflow solver");
+      shot(area->checkPanel(), id + "-run");
+      continue;
+    }
+    check->runButton()->click();
+    require(until([area, check] { return !area->running() && check->hasResult(); }, 1500000), on + "the airflow is solved (OpenFOAM)");
+    require(!check->verdict().isEmpty(), on + "a verdict in plain words: " + check->verdict());
+    if (auto* speed = check->findChild<QPushButton*>("checkField_speed")) speed->click();
+    auto* legend = w.m_viewport->findChild<QWidget*>("simLegend");
+    require(area->resultShown() && legend && legend->isVisible(), on + "the air's speed is drawn with its legend");
+    shot(area->checkPanel(), id + "-results");
   }
-  require(until([check] { return check->proposed("inlet") && check->proposed("outlet"); }, 20000), "OPAD proposes where the air goes in and out");
-  check->frame()->setCurrent(check->stepNames().indexOf("air"));
-  shot(area->checkPanel(), "fitting-air");
 
   // ---- the missing-solver window (never its download: that opens the browser)
   {
