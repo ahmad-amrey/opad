@@ -35,6 +35,22 @@ PROGRAMS=(
   solvers/heatTransfer/buoyantBoussinesqSimpleFoam
   solvers/heatTransfer/chtMultiRegionFoam/chtMultiRegionSimpleFoam
 )
+# Only the libraries they link, in src/Allwmake's order: all of src/ is about three times as much to compile (an hour and
+# more on 16 cores, several on a CI runner). libOpenFOAM and libPstream come first (see the build below). Some are only
+# named on the programs' link lines (the dummy decomposers, fvOptions, regionModels, ...): the linker needs them to
+# exist, but no program imports them, so they stay out of the pack.
+LIBRARIES=(
+  fileFormats surfMesh meshTools finiteArea finiteVolume mesh/blockMesh mesh/extrudeModel dynamicMesh genericPatchFields
+  parallel/decompose/decompositionMethods
+  dummyThirdParty/scotchDecomp dummyThirdParty/ptscotchDecomp dummyThirdParty/metisDecomp dummyThirdParty/kahipDecomp
+  lagrangian/basic parallel/decompose/decompose parallel/reconstruct/reconstruct parallel/distributed dynamicFvMesh sampling
+  transportModels/twoPhaseMixture transportModels/incompressible transportModels/compressible
+  thermophysicalModels/specie thermophysicalModels/solidSpecie thermophysicalModels/thermophysicalProperties
+  thermophysicalModels/basic thermophysicalModels/reactionThermo thermophysicalModels/solidThermo thermophysicalModels/radiation
+  TurbulenceModels/turbulenceModels TurbulenceModels/incompressible TurbulenceModels/compressible
+  overset fvOptions fvMotionSolver mesh/snappyHexMesh thermoTools regionModels/regionModel faOptions regionFaModels
+  atmosphericModels
+)
 
 recipe=$(cd "$(dirname "$0")" && pwd)
 work=$(mkdir -p "$1" && cd "$1" && pwd)
@@ -76,9 +92,12 @@ if [ ! -f "$src/.opad-unpacked" ]; then
 fi
 
 # The build. bashrc reads unset variables, so -u is off while it runs.
+# ccache in front of every compile when it is there (wmake's own "+ccache"): CI keeps its cache between runs.
+control=
+command -v ccache >/dev/null && control=+ccache
 set +u
 # shellcheck disable=SC1091
-source "$src/etc/bashrc" WM_COMPILER=Mingw WM_MPLIB=dummy WM_COMPILE_CONTROL= || true
+source "$src/etc/bashrc" WM_COMPILER=Mingw WM_MPLIB=dummy WM_COMPILE_CONTROL="$control" || true
 set -u
 [ "$WM_COMPILER" = Mingw ] || { echo "error: OpenFOAM's environment did not take WM_COMPILER=Mingw" >&2; exit 1; }
 # A cross gcc ignores LIBRARY_PATH: zlib's folder goes in through the flags wmake adds to every compile and link line.
@@ -88,10 +107,23 @@ export CPATH="$zlib/include" FOAM_EXTRA_CXXFLAGS="-fno-jump-tables -L$zlib/lib" 
 log="$work/build.log"
 echo "building OpenFOAM ${OF_VERSION} for $WM_OPTIONS in $src (log: $log)"
 (
+  set -e
   cd "$src"
   wmake/src/Allmake
-  src/Allwmake -j "$jobs"
-  [ -f "platforms/$WM_OPTIONS/lib/libOpenFOAM.dll" ] || { echo "error: src/Allwmake built no libOpenFOAM.dll" >&2; exit 1; }
+  cd src
+  wmakeLnIncludeAll -j "$jobs"  # every library's headers, as src/Allwmake makes them first
+  OpenFOAM/Alltouch -check 2>/dev/null || true
+  OSspecific/MSwindows/Allwmake
+  # MinGW: libOpenFOAM and libPstream need each other. Pstream's dummy goes into libOpenFOAM as an object first, then is
+  # built as its own DLL against it, then libOpenFOAM is linked again against that DLL (src/Allwmake's Mingw case).
+  WM_MPLIB=dummy Pstream/Allwmake libo
+  FOAM_LINK_DUMMY_PSTREAM=libo wmake -j "$jobs" OpenFOAM
+  Pstream/Allwmake
+  OpenFOAM/Alltouch 2>/dev/null || true
+  wmake -j "$jobs" OpenFOAM
+  for d in "${LIBRARIES[@]}"; do wmake -j "$jobs" "$d"; done
+  cd ..
+  [ -f "platforms/$WM_OPTIONS/lib/libOpenFOAM.dll" ] || { echo "error: no libOpenFOAM.dll was built" >&2; exit 1; }
   for p in "${PROGRAMS[@]}"; do wmake -j "$jobs" "applications/$p"; done
 ) >"$log" 2>&1 || { tail -60 "$log" >&2; exit 1; }
 

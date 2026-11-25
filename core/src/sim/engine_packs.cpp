@@ -138,8 +138,27 @@ fs::path installed_pack(const EnginePack& pack) {
 }
 
 fs::path installed_pack(const std::string& id) {
-  const auto p = engine_pack(id);
-  return p ? installed_pack(*p) : fs::path();
+  try {
+    if (const auto p = engine_pack(id))
+      if (fs::path dir = installed_pack(*p); !dir.empty()) return dir;
+  } catch (const std::exception&) {  // an unreadable OPAD_ENGINE_PACKS
+  }
+  // Else any complete pack of it (checked when it was installed: a build whose table names another version, or none).
+  const fs::path root = engines_dir();
+  if (root.empty()) return {};
+  fs::path best;
+  std::error_code ec;
+  for (const auto& e : fs::directory_iterator(root, ec)) {
+    const std::string n = path_to_utf8(e.path().filename());
+    if (n.rfind(id + "-", 0) != 0 || n.find(".partial") != std::string::npos || !fs::is_regular_file(e.path() / "opad-pack.json", ec)) continue;
+    try {
+      if (json::parse(read_text_file(e.path() / "opad-pack.json")).value("id", "") != id) continue;
+    } catch (const std::exception&) {
+      continue;
+    }
+    if (best.empty() || e.path().filename() > best.filename()) best = e.path();
+  }
+  return best;
 }
 
 fs::path install_pack(const EnginePack& pack, const fs::path& archive, const Progress& progress) {

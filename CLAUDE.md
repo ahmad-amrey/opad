@@ -179,7 +179,9 @@ folder, `opad-pack.json` id/version, unpacked to `<folder>.partial` then renamed
 `OPAD_ENGINES_DIR` (portable: `data/engines`, appdata::use) else `<LOCALAPPDATA>/opad/OPAD/engines`; `openfoam()` and
 `ccx_program()` look there right after OPAD_OPENFOAM / OPAD_CCX; `engines()["packs"]`. OpenFOAM pack: the 10 programs
 OPAD runs + their DLLs (objdump closure) + `etc/`, cross-built on Ubuntu with mingw-w64 (posix threads), `WM_MPLIB=dummy`
-(no MS-MPI), zlib static; traps: wmake `-q` links before compiling, a cross gcc ignores LIBRARY_PATH (`-L` through
+(no MS-MPI), zlib static, only the libraries the programs link (`LIBRARIES`, src/Allwmake's order; some only named on
+link lines: dummy decomposers, fvOptions, regionModels...), wmake's `+ccache` when ccache is there; discovery takes any
+complete `<id>-*` folder (`installed_pack(id)`), so a pack works before its pin; traps: wmake `-q` links before compiling, a cross gcc ignores LIBRARY_PATH (`-L` through
 FOAM_EXTRA_CXXFLAGS), GCC 13 jump tables of COMDAT functions break `ld -r` ("relocation truncated": `-fno-jump-tables`).
 ccx pack: one static exe (SPOOLES serial, ARPACK-NG, OpenBLAS from MSYS2 MINGW64), built by `engines/calculix/CMakeLists.txt`
 from the upstream makefiles' lists (no make in MSYS2 here; `mafillmm.c` is listed but only the .f exists); patch 0001 drops

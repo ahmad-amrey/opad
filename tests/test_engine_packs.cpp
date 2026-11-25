@@ -129,6 +129,14 @@ TEST(a_pack_whose_hash_matches_is_unpacked_with_names_as_written) {
   CHECK(opad::sim::installed_pack(p) == dir);
   CHECK(box.folders() == std::vector<std::string>{"calculix-2.22-9"});  // no .partial left behind
   CHECK(!seen.empty() && seen.back() == 1.0);
+  // Found whatever this build's table names (an installed pack was checked when it was unpacked); a half-unpacked folder
+  // or one that is not a pack is never taken.
+  fs::create_directories(box.root / "engines" / "calculix-2.22-99.partial" / "bin");
+  std::ofstream(box.root / "engines" / "calculix-2.22-99.partial" / "opad-pack.json") << meta("calculix", "2.22-99");
+  fs::create_directories(box.root / "engines" / "calculix-zz");
+  CHECK(opad::sim::installed_pack("calculix") == dir);
+  fs::remove_all(box.root / "engines" / "calculix-2.22-99.partial");
+  fs::remove_all(box.root / "engines" / "calculix-zz");
   // OPAD's discovery takes it once OPAD_CCX is not set.
   set_env("OPAD_ENGINE_PACKS", opad::path_to_utf8(box.root / "table.json"));
   std::ofstream(box.root / "table.json") << R"([{"id": "calculix", "name": "CalculiX 2.22", "version": "2.22-9", "url": "http://127.0.0.1:1/x.zip", "size": )"

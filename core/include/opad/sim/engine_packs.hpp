@@ -38,6 +38,8 @@ bool engine_pack_url_allowed(const std::string& url);
 std::filesystem::path engines_dir();
 // Where the pack is unpacked (engines_dir()/<id>-<version>), or empty when it is not installed.
 std::filesystem::path installed_pack(const EnginePack& pack);
+// The pack of `id` this build names when it is installed, else any complete one of it in engines_dir() (the highest
+// folder name): what discovery (openfoam(), ccx_program()) uses.
 std::filesystem::path installed_pack(const std::string& id);
 
 // Checks the downloaded `archive` against the pack's size and SHA-256 and unpacks it into engines_dir(): first into
