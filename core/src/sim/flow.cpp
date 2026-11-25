@@ -673,8 +673,11 @@ void write_case(const Geometry& g, const FlowSettings& s, const fs::path& dir) {
   foam::put(dir / "system" / "fvSolution", "dictionary", "fvSolution",
             "solvers {\n  p { solver GAMG; smoother GaussSeidel; tolerance 1e-7; relTol 0.05; }\n"
             "  \"(U|k|omega)\" { solver smoothSolver; smoother symGaussSeidel; tolerance 1e-8; relTol 0.1; }\n}\n"
-            "SIMPLE { nNonOrthogonalCorrectors " + std::string(skewed ? "1" : "0") + "; consistent yes; residualControl { p 1e-4; U 1e-5; \"(k|omega)\" 1e-5; } }\n"
+            "SIMPLE { nNonOrthogonalCorrectors " + std::string(skewed ? "1" : "0") + "; consistent yes; residualControl { p 1e-4; " +
+                std::string(wedge ? "" : "U 1e-5; ") + "\"(k|omega)\" 1e-5; } }\n"
             "relaxationFactors { equations { U 0.8; \".*\" 0.7; } }\n");
+  // A wedge's velocity across it (Uz) is zero to round-off, so its normalised residual is noise that never falls below any
+  // tolerance: U is left out of residualControl there (run_flow checks Ux and Uy itself), else every wedge ran to the end.
   // Both spellings: openfoam.com (transportProperties, turbulenceProperties) and openfoam.org (physicalProperties, momentumTransport).
   const std::string transport = "transportModel Newtonian;\nviscosityModel constant;\nnu " + num(s.nu) + ";\n";
   foam::put(dir / "constant" / "transportProperties", "dictionary", "transportProperties", transport);
@@ -1068,7 +1071,10 @@ StudyRun run_flow(const Document& doc, const Scene& scene, const json& st, const
   if (!wedge) foam::run(foam, "snappyHexMesh", {"-overwrite"}, dir.p, 0.06, 0.3, timeout, progress);
   const double solve_from = wedge ? 0.06 : 0.3;
   const std::string log = foam::run(foam, "simpleFoam", {}, dir.p, solve_from, 0.9, timeout, progress);
-  const bool converged = log.find("solution converged") != std::string::npos;
+  bool converged = log.find("solution converged") != std::string::npos;
+  if (converged && wedge)  // the velocity in the wedge's plane settled too (its last iteration's initial residuals)
+    for (const char* c : {"Solving for Ux, Initial residual = ", "Solving for Uy, Initial residual = "})
+      if (const size_t at = log.rfind(c); at != std::string::npos && std::atof(log.c_str() + at + std::strlen(c)) > 1e-4) converged = false;
   const std::string last = foam::latest_time(dir.p);
   if (last.empty() || last == "0") throw Error("flow: simpleFoam wrote no result");
   report(0.92, "Reading the flow");
