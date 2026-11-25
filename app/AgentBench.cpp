@@ -64,8 +64,8 @@ void AgentBridge::bench(){
       }
       else if(action=="delay")m_benchDelay=std::clamp(data.value("ms",0),0,5000);
       else if(action=="settings"){
-        // tab: 0 Access and activity, 1 Client setup (as before), 2 Connect an AI client.
-        const auto tab=data.value("tab",0);settings(tab==1?2:tab==2?0:1);
+        // tab: 2 the main screen (Connect), 0 and 1 its Details page (who is connected, the setup to copy).
+        const auto tab=data.value("tab",0);settings(tab==2?0:1);
         QTimer::singleShot(300,this,[this,directory,tab]{for(auto* dialog:m_window->findChildren<QDialog*>("agentSettings")){dialog->grab().save(directory+(tab==1?"/settings-client.png":tab==2?"/settings-connect.png":"/settings.png"));dialog->close();}});
       }
       else if(action=="new")m_doc->newDocument();

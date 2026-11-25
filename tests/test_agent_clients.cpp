@@ -129,4 +129,18 @@ TEST(opad_itself_is_never_a_clients_program) {
   CHECK(!isOpadProgram("/usr/local/bin/codex"));
 }
 
+TEST(setup_message_names_the_server_and_the_document) {
+  const QString exe = "C:/Program Files/OPAD/opad-cli.exe", dir = "D:/Data/opad/OPAD/agent";
+  const QString m = setupMessage(exe, dir, "duct adapter.opad");
+  CHECK(m.contains("\"opad\""));
+  CHECK(m.contains("stdio"));
+  CHECK(m.contains('"' + QDir::toNativeSeparators(exe) + '"'));  // a path with spaces is quoted
+  CHECK(m.contains("mcp --live --discovery " + QDir::toNativeSeparators(dir)));
+  CHECK(m.contains("open \"duct adapter.opad\" in OPAD"));
+  CHECK(!setupMessage(exe, dir, {}).contains("open \"\""));
+  const auto j = nlohmann::json::parse(setupJson(exe, dir).toStdString());
+  CHECK(j["mcpServers"]["opad"]["command"] == QDir::toNativeSeparators(exe).toStdString());
+  CHECK(j["mcpServers"]["opad"]["args"].size() == 4 && j["mcpServers"]["opad"]["args"][3] == QDir::toNativeSeparators(dir).toStdString());
+}
+
 CHECK_MAIN()
