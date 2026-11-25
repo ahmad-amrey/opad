@@ -866,9 +866,13 @@ QString keepTracked(const QString& existing, const QString& docRel, const QStrin
   rest.linked.clear();
   const std::vector<IgnoreRule> rules = ignoreRules(ignoreLines(rest));
   QStringList keep;
+  // A Windows drive path ("C:/x", "C:x") is outside the top on every system: a document saved on Windows can carry one.
+  auto drivePath = [](const QString& p) { return p.size() >= 2 && p[1] == QLatin1Char(':') && p[0].isLetter(); };
   for (const QString& rel : linkedRels) {
     const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(rel));
-    if (clean.isEmpty() || clean == "." || clean == ".." || clean.startsWith(QLatin1String("../")) || QDir::isAbsolutePath(clean)) continue;
+    if (clean.isEmpty() || clean == "." || clean == ".." || clean.startsWith(QLatin1String("../")) || QDir::isAbsolutePath(clean) ||
+        drivePath(clean))
+      continue;
     if (ignoredByRules(rules, clean)) keep << QStringLiteral("!/") + escapeIgnore(clean);
   }
   keep.removeDuplicates();

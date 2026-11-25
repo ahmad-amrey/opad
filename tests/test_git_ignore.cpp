@@ -55,7 +55,10 @@ TEST(template_has_the_groups_on_by_default) {
   CHECK(git::ignoreText("", {}).isEmpty());  // nothing chosen: no file at all
   // The documents and their linked files' kinds the template leaves alone.
   CHECK(!git::ignoredBy(text, "model.opad") && !git::ignoredBy(text, "sub/model.opad"));
-  CHECK(git::ignoredBy(text, "model.opad.tmp") && git::ignoredBy(text, "out/part.STEP") && git::ignoredBy(text, "a/b/Thumbs.db"));
+  CHECK(git::ignoredBy(text, "model.opad.tmp") && git::ignoredBy(text, "out/part.step") && git::ignoredBy(text, "a/b/Thumbs.db"));
+#if defined(_WIN32) || defined(__APPLE__)
+  CHECK(git::ignoredBy(text, "out/part.STEP"));  // git ignores case there (core.ignorecase); on Linux, as git, it does not
+#endif
   CHECK(!git::ignoredBy(text, "board.kicad_pcb") && !git::ignoredBy(text, "photo.jpg"));
 }
 
