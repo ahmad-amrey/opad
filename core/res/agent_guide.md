@@ -416,6 +416,27 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
     no fans (or `cfd.buoyancy`): warm air rising; `cfd.radiation` (default on: view factors by rays; `"calculix"`: CalculiX's cavity, slow), `radiated_W`;
     `cfd.quality` quick | normal | fine. Boards: `materials: {id: {"pcb": {layers, copper_oz, coverage, thickness}}}` or
     `{"k": along, "k_through": across, "normal": [..]}` (default: its thinnest way).
+  - `flow` (OpenFOAM, `engines.flow`; `unavailable.flow` says why not): steady, isothermal air or water through a part
+    (a duct fitting, an adapter, a nozzle), k-omega SST with wall functions (laminar below Re 2000). Settings: `inlet`,
+    `outlet` (one flat face each: a duct's end rim, whose hole is the opening, or the end face of a body that is the fluid
+    itself; both ends the same way), `flow: {value, unit: cfm | m3/h | l/s}` or `fan: {curve: [[q, p], ...] |
+    free_flow, shutoff_pressure; unit (of q, m3/h default), pressure_unit (Pa | inH2O | mmH2O), speed %}` (or a fan
+    library id) where the fan finds its operating point, `fluid` air | water, `ambient` degC (20), `quality` quick |
+    normal | fine, `mesh` auto | axisymmetric | 3d, `extend: {inlet, outlet}` (diameters of straight pipe added before and
+    after, 2 and 6 by default; 0 for none), `iterations`, `turbulence` auto | sst | laminar, `streamlines` (seeds across).
+    A part round about the line between its openings' centres is solved as a 5-degree wedge (seconds to a minute);
+    otherwise the full part (snappyHexMesh, minutes); `plan.why_3d` says why not round. `run: false` checks the settings
+    and openings and returns `plan` (mesh, mode, axis, openings, cells) without OpenFOAM. Summary: `pressure_drop_pa`
+    (total pressure at the inlet face less that far down the outlet stub, the stub's own friction taken out: the
+    fitting's loss as a handbook gives it), `pressure_drop_faces_pa`, `static_drop_pa`, `flow_m3s` (`flow_cfm`,
+    `flow_m3h`; with a fan its operating point, `fan.operating_point`), `max_speed_ms` (and where), `loss_coefficient`
+    (on the faster end's speed), `reynolds`, `recirculation: [{at, size_mm, length_mm, ring}]` (reversed flow touching
+    a wall: a ring all round in a wedge), `converged`, `pressure_drop_change_pa`, `warnings`. Series along the flow
+    (`t` = mm from the inlet face): Static/Total pressure (Pa), Mean/Max speed (m/s). `probes` give `velocity_ms`,
+    `speed_ms`, `pressure_pa` at points in the fluid; `render` with `study: {id, field: speed | pressure}` draws a cut
+    through the middle, the walls see-through (`walls: "hide"`), streamlines. `domain: "around"` puts the parts
+    (`bodies`, default every shown solid) in a box with `direction` [x, y, z] and `speed` (m/s or {value, unit: m/s |
+    km/h | mph}): `drag_n`, `pressure_drag_n`, `drag_coefficient_box` (on the parts' box seen along the stream).
   - `sweep`: another study (`study`: id or name) again over parameter values on copies of the document: `params:
     [{name, values: [numbers in its unit or expressions]} | {name, from, to, steps}]` (several: a grid), `objective:
     {of: summary key (max_temperature_C default), bodies: [ids] (their worst), goal: min | max}`, `refine` (one
