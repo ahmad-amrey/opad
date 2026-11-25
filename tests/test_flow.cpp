@@ -145,6 +145,17 @@ sim::StudyRun flow(Fitting& f, json settings) { return sim::run_study(f.doc, res
 
 std::string text(const std::filesystem::path& p) { return read_text_file(p); }
 
+// The fvSchemes a fitting's case is written with.
+std::string text_of_case(Fitting& f, const sim::FlowSettings& s) {
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() / ("opad-test-flow-" + new_uuid().substr(0, 8));
+  const Scene sc = resolve(f.doc);
+  sim::write_flow_case(f.doc, sc, s, sim::plan_flow(f.doc, sc, s), dir);
+  const std::string out = text(dir / "system" / "fvSchemes");
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+  return out;
+}
+
 }  // namespace
 
 TEST(flow_settings_read) {
@@ -292,6 +303,8 @@ TEST(flow_round_fitting_is_a_wedge) {
   const double cone = kIn / std::tan(35 * kPi / 180);
   CHECK_NEAR(r_at(60 + cone / 2), 3.5 * kIn, 0.3);
   // Stubs: 2 diameters before, 6 after.
+  CHECK_NEAR(p.steepest_deg, 35, 0.5);
+  CHECK(text_of_case(f, s).find("limited corrected 0.33") != std::string::npos);  // skewed past 30 degrees: corrected
   CHECK_NEAR(p.inlet_extension_mm, 2 * 8 * kIn, 0.1);
   CHECK_NEAR(p.outlet_extension_mm, 6 * 6 * kIn, 0.1);
   CHECK(p.cells > 3000 && p.cells < 60000);
@@ -303,6 +316,24 @@ TEST(flow_round_fitting_is_a_wedge) {
   CHECK_NEAR(back.profile.back()[1], 4 * kIn, 1e-3);
   // Asked for the full part, it gets it.
   CHECK_EQ(sim::plan_flow(f.doc, sc, sim::flow_settings({{"inlet", f.big}, {"outlet", f.small}, {"flow", cfm(350)}, {"mesh", "3d"}})).mesh, std::string("3d"));
+}
+
+TEST(flow_sudden_step_is_3d) {
+  // An 8" bore stepping straight down to 6" (a 90 degree cone): no wedge of single blocks holds it.
+  Fitting f = fitting(89.99);
+  const auto s = sim::flow_settings({{"inlet", f.big}, {"outlet", f.small}, {"flow", cfm(350)}});
+  const auto p = sim::plan_flow(f.doc, resolve(f.doc), s);
+  CHECK_EQ(p.mesh, std::string("3d"));
+  CHECK(p.why_3d.find("sudden step") != std::string::npos);
+  std::printf("  %s\n", p.why_3d.c_str());
+  const size_t along = p.why_3d.rfind(") ");
+  CHECK(along != std::string::npos);
+  CHECK_NEAR(std::atof(p.why_3d.c_str() + along + 2), 60, 0.5);  // where the step is
+  // A gentle cone keeps the plain schemes.
+  Fitting g = fitting(12);
+  const auto q = sim::flow_settings({{"inlet", g.big}, {"outlet", g.small}, {"flow", cfm(350)}});
+  CHECK_NEAR(sim::plan_flow(g.doc, resolve(g.doc), q).steepest_deg, 12, 0.3);
+  CHECK(text_of_case(g, q).find("limited") == std::string::npos);
 }
 
 TEST(flow_fluid_body_is_a_wedge) {
@@ -410,9 +441,15 @@ TEST(flow_case_written) {
     sim::write_flow_case(f.doc, sc, s, p, dir / "full");
     CHECK(text(dir / "full" / "system" / "snappyHexMeshDict").find("locationInMesh") != std::string::npos);
     for (const char* stl : {"wall.stl", "inlet.stl", "outlet.stl"}) CHECK(std::filesystem::file_size(dir / "full" / "constant" / "triSurface" / stl) > 200);
-    CHECK(text(dir / "full" / "0" / "p").find("fanPressure") != std::string::npos);
-    const std::string curve = text(dir / "full" / "constant" / "fanCurve");
-    CHECK(curve.find("(0 ") != std::string::npos);
+    // The curve inline (both OpenFOAMs read a Function1 table), flow in m3/s and kinematic pressure: 300 Pa at no flow.
+    const std::string p0 = text(dir / "full" / "0" / "p");
+    CHECK(p0.find("fanPressure; fanCurve table ( (0 ") != std::string::npos);
+    CHECK(p0.find("file") == std::string::npos);
+    CHECK_NEAR(std::atof(p0.c_str() + p0.find("table ( (0 ") + 11), 300 / s.rho, 1e-6);
+    // Five writes, the last at the end.
+    const std::string control = text(dir / "full" / "system" / "controlDict");
+    const int end = std::atoi(control.c_str() + control.find("endTime ") + 8), every = std::atoi(control.c_str() + control.find("writeInterval ") + 14);
+    CHECK(every > 0 && end % every == 0 && end >= p.iterations);
     // The inlet's stub reaches 2 diameters out: the inlet's STL lies there (z = -406.4 mm).
     CHECK(text(dir / "full" / "constant" / "triSurface" / "inlet.stl").find("-0.4064") != std::string::npos);
   }

@@ -308,17 +308,24 @@ std::string round_profile(Geometry& g) {
       const auto &a = prof[i - 1], &b = prof[i], &c = prof[i + 1], &d = prof[i + 2];
       if (c[0] - b[0] > 3 * spacing) continue;
       const double s1 = (b[1] - a[1]) / std::max(1e-12, b[0] - a[0]), s2 = (d[1] - c[1]) / std::max(1e-12, d[0] - c[0]);
-      std::array<double, 2> corner{0.5 * (b[0] + c[0]), 0.5 * (b[1] + c[1])};
-      if (std::fabs(s1 - s2) > 1e-9) {
-        const double z = (c[1] - b[1] + s1 * b[0] - s2 * c[0]) / (s1 - s2);
-        if (z >= b[0] - spacing && z <= c[0] + spacing) corner = {z, b[1] + s1 * (z - b[0])};
-      }
-      prof[i] = corner;
+      // Lines that do not meet near the stretch (parallel ones: a sudden step) keep it as it is (refused below).
+      if (std::fabs(s1 - s2) < 1e-9) continue;
+      const double z = (c[1] - b[1] + s1 * b[0] - s2 * c[0]) / (s1 - s2);
+      if (z < b[0] - spacing || z > c[0] + spacing) continue;
+      prof[i] = {z, b[1] + s1 * (z - b[0])};
       prof.erase(prof.begin() + long(i) + 1);
       changed = true;
       break;
     }
   }
+  // A wall square to the axis or nearly (a sudden step): one block per stretch would be a sliver of cells sheared flat.
+  double steepest = 0;
+  for (size_t i = 1; i < prof.size(); ++i) {
+    const double ang = std::atan2(std::fabs(prof[i][1] - prof[i - 1][1]), prof[i][0] - prof[i - 1][0]) * 180 / kPi;
+    if (ang > 60) return "a sudden step (the wall at " + num(std::round(ang)) + " degrees to the axis) " + num(std::round(prof[i - 1][0] * 10) / 10) + " mm along";
+    steepest = std::max(steepest, ang);
+  }
+  plan.steepest_deg = steepest;
   plan.profile = prof;
   plan.length_mm = L;
   return {};
@@ -648,12 +655,16 @@ void write_case(const Geometry& g, const FlowSettings& s, const fs::path& dir) {
   if (wedge) write_wedge_mesh(plan, dir);
   else write_3d_mesh(g, s, dir);
   const Turbulence tb = turbulence_of(s, plan);
-  const int iters = plan.iterations;
+  // Five writes, the last at the end (OpenFOAM writes only on the interval): the end rounded up to a multiple of it.
+  const int every = std::max(10, (plan.iterations + 4) / 5), iters = 5 * every;
   foam::put(dir / "system" / "controlDict", "dictionary", "controlDict",
             "application simpleFoam; startFrom startTime; startTime 0; stopAt endTime; endTime " + std::to_string(iters) +
-                "; deltaT 1; writeControl timeStep; writeInterval " + std::to_string(std::max(50, iters / 5)) +
+                "; deltaT 1; writeControl timeStep; writeInterval " + std::to_string(every) +
                 "; purgeWrite 2; writeFormat ascii; writePrecision 10; writeCompression off; timeFormat general; timePrecision 8; runTimeModifiable false;\n");
-  const std::string corrected = wedge ? "corrected" : "limited corrected 0.33";
+  // The wedge's faces across the axis meet a sloping wall at its angle: above 30 degrees its cells are skewed enough to
+  // need the correction the full part's mesh has.
+  const bool skewed = !wedge || plan.steepest_deg > 30;
+  const std::string corrected = skewed ? "limited corrected 0.33" : "corrected";
   foam::put(dir / "system" / "fvSchemes", "dictionary", "fvSchemes",
             "ddtSchemes { default steadyState; }\ngradSchemes { default Gauss linear; grad(U) cellLimited Gauss linear 1; }\n"
             "divSchemes { default none; div(phi,U) bounded Gauss linearUpwind grad(U); div(phi,k) bounded Gauss upwind; div(phi,omega) bounded Gauss upwind; "
@@ -662,7 +673,7 @@ void write_case(const Geometry& g, const FlowSettings& s, const fs::path& dir) {
   foam::put(dir / "system" / "fvSolution", "dictionary", "fvSolution",
             "solvers {\n  p { solver GAMG; smoother GaussSeidel; tolerance 1e-7; relTol 0.05; }\n"
             "  \"(U|k|omega)\" { solver smoothSolver; smoother symGaussSeidel; tolerance 1e-8; relTol 0.1; }\n}\n"
-            "SIMPLE { nNonOrthogonalCorrectors " + std::string(wedge ? "0" : "1") + "; consistent yes; residualControl { p 1e-4; U 1e-5; \"(k|omega)\" 1e-5; } }\n"
+            "SIMPLE { nNonOrthogonalCorrectors " + std::string(skewed ? "1" : "0") + "; consistent yes; residualControl { p 1e-4; U 1e-5; \"(k|omega)\" 1e-5; } }\n"
             "relaxationFactors { equations { U 0.8; \".*\" 0.7; } }\n");
   // Both spellings: openfoam.com (transportProperties, turbulenceProperties) and openfoam.org (physicalProperties, momentumTransport).
   const std::string transport = "transportModel Newtonian;\nviscosityModel constant;\nnu " + num(s.nu) + ";\n";
@@ -688,7 +699,9 @@ void write_case(const Geometry& g, const FlowSettings& s, const fs::path& dir) {
     u_in = "\"inlet.*\" { type flowRateInletVelocity; volumetricFlowRate constant " + num(s.flow_m3s * share) + "; extrapolateProfile false; value uniform (0 0 0); }";
     p_in = "\"inlet.*\" { type zeroGradient; }";
   } else {
-    // The fan's curve (static pressure against flow) as the inlet's total pressure: it finds its own operating point.
+    // The fan's curve (static pressure against flow) as the inlet's total pressure: it finds its own operating point (a fan's
+    // static curve taken as total pressure: the usual approximation, a little on the safe side). Inline as a Function1 table:
+    // openfoam.org reads no curve file; past its ends the table clamps.
     std::ostringstream curve;
     curve << "(";
     const int n = s.fan.curve.size() >= 2 ? int(s.fan.curve.size()) : 2;
@@ -696,10 +709,9 @@ void write_case(const Geometry& g, const FlowSettings& s, const fs::path& dir) {
       const double Q = s.fan.curve.size() >= 2 ? s.fan.curve[size_t(i)][0] : s.fan.Qmax * i / (n - 1);
       curve << " (" << num(Q * share) << " " << num(s.fan.pressure(Q) / s.rho) << ")";
     }
-    curve << " )\n";
-    write_text_file(dir / "constant" / "fanCurve", curve.str());
+    curve << " )";
     u_in = "\"inlet.*\" { type pressureInletOutletVelocity; value uniform (0 0 0); }";
-    p_in = "\"inlet.*\" { type fanPressure; file \"$FOAM_CASE/constant/fanCurve\"; outOfBounds clamp; direction in; p0 uniform 0; value uniform 0; }";
+    p_in = "\"inlet.*\" { type fanPressure; fanCurve table " + curve.str() + "; direction in; p0 uniform 0; value uniform 0; }";
   }
   const std::string sides_u = around ? "\n  sides { type slip; }" : "", sides_s = around ? "\n  sides { type slip; }" : "";
   const std::string out_name = around ? "outlet" : "\"outlet.*\"", in_name = around ? "inlet" : "\"inlet.*\"";
@@ -1062,6 +1074,9 @@ StudyRun run_flow(const Document& doc, const Scene& scene, const json& st, const
   report(0.92, "Reading the flow");
   const auto m = read_flow(dir.p, last, g, s.rho);
   if (m->c.empty()) throw Error("flow: the mesh has no cells in the fluid");
+  for (const auto& pt : m->patches)  // the box's own faces left: the walls leak (a gap the cells went through)
+    if (pt.name == "box" && pt.faces > 0)
+      run.warnings.push_back("the fluid reached the edge of the mesh's box (" + std::to_string(pt.faces) + " faces): the walls are not closed between the inlet and the outlet");
 
   // ---- what went through, what it lost
   json summary = json::object();
@@ -1070,7 +1085,9 @@ StudyRun run_flow(const Document& doc, const Scene& scene, const json& st, const
     double Q = 0;
     for (const auto& pt : m->patches)
       if (pt.name.rfind(prefix, 0) == 0)
-        for (double v : foam::read_patch(phi, pt.name)) Q += v;
+        if (const auto v = foam::read_patch(phi, pt.name); v.size() == 1 && pt.faces > 1) Q += v[0] * double(pt.faces);  // written uniform
+        else
+          for (double x : v) Q += x;
     return Q / m->share();
   };
   double vmax = 0;
@@ -1099,7 +1116,20 @@ StudyRun run_flow(const Document& doc, const Scene& scene, const json& st, const
     const auto downstream = far_at > 0 ? m->section(far_s, out_n, reach_out) : out;
     if (!in.cells || !out.cells || !downstream.cells) run.warnings.push_back("the pressure was not measured across every opening (no cells found there)");
     const double Vout = Q / (plan.outlet.area_mm2 * 1e-6), Re_out = Vout * plan.outlet.diameter_mm * 1e-3 / s.nu;
-    const double friction = far_at > 0 ? friction_factor(Re_out) * far_at / plan.outlet.diameter_mm * 0.5 * s.rho * Vout * Vout : 0.0;
+    // The stub's own friction between the outlet face and the far plane: the solved stub's total-pressure slope where its
+    // flow has settled (0.6 to 0.9 of it), carried back to the outlet face, so the model's own wall friction is the one taken
+    // out; a stub under 4 diameters (or a slope that is no loss) takes the smooth-pipe friction factor instead.
+    const double haaland = far_at > 0 ? friction_factor(Re_out) * far_at / plan.outlet.diameter_mm * 0.5 * s.rho * Vout * Vout : 0.0;
+    double friction = haaland;
+    std::string friction_from = far_at > 0 ? "smooth pipe (Haaland)" : "none";
+    if (plan.outlet_extension_mm >= 4 * plan.outlet.diameter_mm) {
+      const double mid_at = 0.6 * plan.outlet_extension_mm;
+      const auto mid = m->section(wedge ? V{L + mid_at, 0, 0} : add(g.out.centre, mul(out_n, mid_at)), out_n, reach_out);
+      const double slope = mid.cells && downstream.cells ? (mid.total - downstream.total) / (far_at - mid_at) : -1;  // Pa/mm
+      if (slope > 0) friction = slope * far_at, friction_from = "the stub's own slope";
+    }
+    summary["friction_from"] = friction_from;
+    summary["friction_smooth_pipe_pa"] = haaland;
     const double drop = in.total - downstream.total - friction;
     summary["pressure_drop_pa"] = drop;
     summary["flow_m3s"] = Q;

@@ -68,6 +68,7 @@ struct FlowPlan {
   double length_mm = 0;  // inlet face to outlet face along the axis (axisymmetric), or between their centres
   double inlet_extension_mm = 0, outlet_extension_mm = 0;
   std::vector<std::array<double, 2>> profile;  // axisymmetric: (distance along the axis, radius of the wall) mm, inlet to outlet
+  double steepest_deg = 0;  // axisymmetric: the wall's steepest angle to the axis (above 30: the wedge corrects for skew)
   double cell_mm = 0;    // the mesh's cells along the flow (axisymmetric) or the background cells (3d)
   int radial_cells = 0;  // axisymmetric
   size_t cells = 0;      // an estimate of the mesh's size
