@@ -1,10 +1,13 @@
 #include "AgentClients.hpp"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QCoreApplication>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QGridLayout>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -15,6 +18,7 @@
 #include <QStandardPaths>
 #include <QTimer>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <memory>
 
@@ -23,102 +27,168 @@
 
 using namespace agentclients;
 
+namespace {
+// A step after Connect: its number in a disc, then the words.
+QLabel* stepNumber(int n, bool current) {
+  const Tokens& t = theme::current();
+  auto* l = new QLabel(QString::number(n));
+  l->setFixedSize(22, 22);
+  l->setAlignment(Qt::AlignCenter);
+  l->setStyleSheet(QStringLiteral("border-radius:11px;font-size:12px;font-weight:600;background:%1;color:%2")
+                       .arg(theme::css(current ? t.sel : t.bg4), theme::css(current ? t.onsel : t.fg)));
+  return l;
+}
+}  // namespace
+
 AgentClientRow::AgentClientRow(Client client, QString executable, QString discovery, QWidget* parent)
     : QWidget(parent), m_client(client), m_executable(std::move(executable)), m_discovery(std::move(discovery)) {
   setObjectName(client == Client::ClaudeCode ? "agentClientClaudeCode" : client == Client::ClaudeDesktop ? "agentClientClaudeDesktop" : "agentClientCodex");
-  // A card: the app's name, its state as a word or two, the one action that fits; the technical line under Details.
+  // A card: the app's initials, its name, its state in plain words, the one button that fits.
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
-  auto* card = new QFrame;
-  card->setObjectName("card");
-  outer->addWidget(card);
-  auto* layout = new QVBoxLayout(card);
-  layout->setContentsMargins(12, 8, 12, 8);
-  layout->setSpacing(4);
+  m_card = new QFrame;
+  m_card->setObjectName("agentClientCard");
+  outer->addWidget(m_card);
+  auto* layout = new QVBoxLayout(m_card);
+  layout->setContentsMargins(14, 12, 14, 12);
+  layout->setSpacing(10);
   auto* head = new QHBoxLayout;
-  head->setSpacing(8);
+  head->setSpacing(14);
   layout->addLayout(head);
+  m_badge = new QLabel(client == Client::ClaudeCode ? "CC" : client == Client::ClaudeDesktop ? "CD" : "CX");
+  m_badge->setFixedSize(36, 36);
+  m_badge->setAlignment(Qt::AlignCenter);
+  head->addWidget(m_badge);
+  auto* words = new QVBoxLayout;
+  words->setSpacing(2);
+  head->addLayout(words, 1);
   m_title = new QLabel(name());
-  m_title->setStyleSheet(QStringLiteral("font-weight:500"));
-  head->addWidget(m_title, 1);
-  m_pill = new QLabel;
-  m_pill->setObjectName("agentClientPill");
-  head->addWidget(m_pill);
-  m_status = new QLabel;
+  words->addWidget(m_title);
+  m_headline = new QLabel;
+  m_headline->setObjectName("agentClientPill");
+  m_headline->setWordWrap(true);
+  words->addWidget(m_headline);
+  m_get = new QToolButton;
+  m_get->setObjectName("toastAction");
+  m_get->setAutoRaise(true);
+  m_get->setCursor(Qt::PointingHandCursor);
+  m_get->setText(tr("Get %1").arg(name()));
+  connect(m_get, &QToolButton::clicked, this, [this] { QDesktopServices::openUrl(QUrl(getUrl())); });
+  head->addWidget(m_get);
+  m_action = new QPushButton;
+  m_action->setObjectName("agentClientAction");
+  m_action->setMinimumHeight(30);
+  connect(m_action, &QPushButton::clicked, this, &AgentClientRow::act);
+  head->addWidget(m_action);
+  m_note = new QLabel;
+  m_note->setObjectName("agentClientNote");
+  m_note->setWordWrap(true);
+  m_note->hide();
+  layout->addWidget(m_note);
+
+  // After Connect: only what is left. 1 restart the app, 2 ask it something about this design.
+  m_next = new QWidget;
+  m_next->setObjectName("agentClientNext");
+  auto* next = new QVBoxLayout(m_next);
+  next->setContentsMargins(50, 0, 0, 0);
+  next->setSpacing(10);
+  auto* one = new QHBoxLayout;
+  one->setSpacing(12);
+  one->addWidget(stepNumber(1, true), 0, Qt::AlignTop);
+  m_restart = new QLabel;
+  m_restart->setObjectName("agentClientRestart");
+  m_restart->setWordWrap(true);
+  m_restart->setTextFormat(Qt::RichText);
+  one->addWidget(m_restart, 1);
+  next->addLayout(one);
+  auto* two = new QHBoxLayout;
+  two->setSpacing(12);
+  two->addWidget(stepNumber(2, false), 0, Qt::AlignTop);
+  auto* ask = new QVBoxLayout;
+  ask->setSpacing(8);
+  ask->addWidget(new QLabel(tr("Ask it something about this design, for example:")));
+  auto* askRow = new QHBoxLayout;
+  m_prompt = new QLineEdit;
+  m_prompt->setObjectName("agentConnectPrompt");
+  m_prompt->setReadOnly(true);
+  askRow->addWidget(m_prompt, 1);
+  auto* copy = new QPushButton(tr("Copy"));
+  connect(copy, &QPushButton::clicked, this, [this, copy] {
+    QApplication::clipboard()->setText(m_prompt->text());
+    copy->setText(tr("Copied"));
+    QTimer::singleShot(1500, copy, [copy] { copy->setText(tr("Copy")); });
+  });
+  askRow->addWidget(copy);
+  ask->addLayout(askRow);
+  two->addLayout(ask, 1);
+  next->addLayout(two);
+  m_next->hide();
+  layout->addWidget(m_next);
+
+  // Details (laid out by the dialog's Details page): the technical line, the program, Browse, Check again.
+  m_status = new QLabel(this);
   m_status->setObjectName("agentClientState");
   m_status->setWordWrap(true);
   m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
   m_status->hide();
   if (usesProgram()) {
-    // Shown only when OPAD did not find the program by itself (or the user chose one): a line that says so, the path, Browse.
-    m_pathRow = new QWidget;
-    auto* box = new QVBoxLayout(m_pathRow);
-    box->setContentsMargins(0, 0, 0, 0);
-    box->setSpacing(4);
-    m_pathLabel = new QLabel;
-    m_pathLabel->setObjectName("secondary");
-    m_pathLabel->setWordWrap(true);
-    box->addWidget(m_pathLabel);
-    auto* row = new QHBoxLayout;
-    row->setContentsMargins(0, 0, 0, 0);
-    box->addLayout(row);
-    layout->addWidget(m_pathRow);
     const char* key = client == Client::ClaudeCode ? "agent/claudeExecutable" : "agent/codexExecutable";
     QString saved = QSettings().value(key).toString();
     if (isOpadProgram(saved)) {  // OPAD's own opad-cli chosen by mistake (the box once read like it asked for it)
       QSettings().remove(key);
       saved.clear();
     }
-    m_path = new QLineEdit(saved);
+    m_path = new QLineEdit(saved, this);
     m_path->setObjectName(client == Client::ClaudeCode ? "claudeExecutable" : "codexExecutable");
-    m_path->setPlaceholderText(tr("Path to %1").arg(programName()));
-    row->addWidget(m_path, 1);
-    m_browse = new QPushButton(tr("Browse..."));
-    row->addWidget(m_browse);
+    m_path->setPlaceholderText(tr("Found by OPAD; or the path to %1").arg(programName()));
+    m_path->hide();
+    m_browse = new QPushButton(tr("Browse..."), this);
+    m_browse->hide();
     connect(m_browse, &QPushButton::clicked, this, [this] {
       if (m_running) return;
       const QString path = QFileDialog::getOpenFileName(this, tr("Select the %1 program (%2)").arg(name(), programName()));
       if (path.isEmpty()) return;
-      if (isOpadProgram(path)) return message(tr("That is OPAD's own program. Choose %1's program (%2).").arg(name(), programName()));
+      if (isOpadProgram(path)) return message(tr("That is OPAD's own program. Choose %1's program (%2).").arg(name(), programName()), true);
       message({});
       setProgram(path);
     });
     connect(m_path, &QLineEdit::editingFinished, this, &AgentClientRow::refresh);
   }
-  auto* buttons = new QHBoxLayout;
-  layout->addLayout(buttons);
-  m_connect = new QPushButton(tr("Set up"));
-  m_connect->setObjectName("agentClientConnect");
-  m_point = new QPushButton(tr("Use this OPAD"));
-  m_point->setObjectName("agentClientPoint");
-  m_remove = new QPushButton(tr("Remove"));
-  m_remove->setObjectName("agentClientRemove");
-  m_check = new QPushButton(tr("Check again"));
-  m_check->setObjectName("tertiary");
-  m_details = new QToolButton;
-  m_details->setObjectName("toastAction");
-  m_details->setText(tr("Details"));
-  m_details->setAutoRaise(true);
-  m_details->setCheckable(true);
-  connect(m_details, &QToolButton::toggled, this, [this](bool on) {
-    m_status->setVisible(on);
-    m_details->setText(on ? tr("Hide details") : tr("Details"));
-  });
-  for (auto* b : {m_connect, m_point, m_remove}) buttons->addWidget(b);
-  buttons->addStretch();
-  buttons->addWidget(m_check);
-  buttons->addWidget(m_details);
-  layout->addWidget(m_status);
-  connect(m_connect, &QPushButton::clicked, this, &AgentClientRow::connectClient);
-  connect(m_point, &QPushButton::clicked, this, &AgentClientRow::pointHere);
-  connect(m_remove, &QPushButton::clicked, this, &AgentClientRow::removeClient);
+  m_check = new QPushButton(tr("Check again"), this);
+  m_check->hide();
   connect(m_check, &QPushButton::clicked, this, &AgentClientRow::refresh);
-  m_note = new QLabel;
-  m_note->setObjectName("secondary");
-  m_note->setWordWrap(true);
-  m_note->hide();
-  layout->addWidget(m_note);
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this] { show(m_state); });
   show(State::Unchecked);
+}
+
+QWidget* AgentClientRow::details() {
+  if (m_details) return m_details;
+  m_details = new QWidget;
+  m_details->setObjectName(objectName() + "Details");
+  auto* box = new QVBoxLayout(m_details);
+  box->setContentsMargins(0, 0, 0, 0);
+  box->setSpacing(4);
+  auto* head = new QHBoxLayout;
+  auto* title = new QLabel(name());
+  title->setStyleSheet(QStringLiteral("font-weight:600"));
+  head->addWidget(title, 1);
+  head->addWidget(m_check);
+  box->addLayout(head);
+  box->addWidget(m_status);
+  if (m_path) {
+    auto* row = new QHBoxLayout;
+    auto* label = new QLabel(tr("Program:"));
+    label->setObjectName("secondary");
+    row->addWidget(label);
+    row->addWidget(m_path, 1);
+    row->addWidget(m_browse);
+    box->addLayout(row);
+    m_path->setVisible(true);
+    m_browse->setVisible(true);
+  }
+  m_status->setVisible(true);
+  m_check->setVisible(true);
+  return m_details;
 }
 
 QString AgentClientRow::name() const {
@@ -131,8 +201,13 @@ QString AgentClientRow::name() const {
 }
 
 QString AgentClientRow::report() const { return m_status->text() + (m_note->text().isEmpty() ? QString() : "\n" + m_note->text()); }
-void AgentClientRow::message(const QString& text) {
+QString AgentClientRow::headline() const { return m_headline->text(); }
+void AgentClientRow::setPrompt(const QString& text) { m_prompt->setText(text); }
+
+void AgentClientRow::message(const QString& text, bool problem) {
+  const Tokens& t = theme::current();
   m_note->setText(text);
+  m_note->setStyleSheet(QStringLiteral("font-size:12px;color:%1").arg(theme::css(problem ? t.amber : t.fg2)));
   m_note->setVisible(!text.isEmpty());
   if (layout()) layout()->activate();  // a wrapped note's height changes the row's
 }
@@ -161,31 +236,47 @@ QString AgentClientRow::programName() const {
 #endif
 }
 
-QString AgentClientRow::restartHint() const {
+QString AgentClientRow::restartStep() const {
   switch (m_client) {
-    case Client::ClaudeCode: return tr("Start a new Claude Code session to use it.");
-    case Client::ClaudeDesktop: return tr("Quit Claude Desktop (also from the tray) and open it again.");
-    case Client::Codex: return tr("Restart Codex to use it.");
+    case Client::ClaudeCode: return tr("Start a new Claude Code session.");
+    case Client::ClaudeDesktop: return tr("Quit Claude Desktop and open it again.");
+    case Client::Codex: return tr("Restart Codex.");
+  }
+  return {};
+}
+
+QString AgentClientRow::restartWhy() const {
+  switch (m_client) {
+    case Client::ClaudeDesktop: return tr("Quit it from the tray too, or it keeps the old settings.");
+    default: return tr("A session that is already running does not see OPAD yet.");
+  }
+}
+
+QString AgentClientRow::getUrl() const {
+  switch (m_client) {
+    case Client::ClaudeCode: return QStringLiteral("https://claude.com/product/claude-code");
+    case Client::ClaudeDesktop: return QStringLiteral("https://claude.ai/download");
+    case Client::Codex: return QStringLiteral("https://openai.com/codex/");
   }
   return {};
 }
 
 void AgentClientRow::show(State state, const QString& detail) {
   m_state = state;
+  const bool justAdded = m_added && state == State::Registered;
   const Tokens& t = theme::current();
+  // The technical line (Details): what was found, and the files OPAD uses.
   QString text;
-  QColor colour = t.fg2;
   switch (state) {
     case State::Unchecked: text = tr("Not checked yet"); break;
     case State::NotFound: text = usesProgram() ? tr("%1 was not found on this computer: install it, or Browse to its program").arg(name()) : tr("%1 was not found on this computer").arg(name()); break;
     case State::NotRegistered: text = tr("Not connected"); break;
-    case State::Registered: text = tr("Connected to this OPAD"); colour = t.green; break;
-    case State::Disabled: text = tr("Connected to this OPAD, but switched off in %1").arg(name()); colour = t.amber; break;
-    case State::Missing: text = tr("Registered, but its program is missing: %1").arg(detail); colour = t.amber; break;
-    case State::Stale: text = tr("Registered for another OPAD or an old data folder: %1").arg(detail); colour = t.amber; break;
-    case State::Failed: text = tr("Could not read its settings: %1").arg(detail); colour = t.red; break;
+    case State::Registered: text = tr("Connected to this OPAD"); break;
+    case State::Disabled: text = tr("Connected to this OPAD, but switched off in %1").arg(name()); break;
+    case State::Missing: text = tr("Registered, but its program is missing: %1").arg(detail); break;
+    case State::Stale: text = tr("Registered for another OPAD or an old data folder: %1").arg(detail); break;
+    case State::Failed: text = tr("Could not read its settings: %1").arg(detail); break;
   }
-  // Details also names the files OPAD uses: the program it found (or was given), Claude Desktop's settings file.
   if (usesProgram()) {
     if (const QString p = program(); !p.isEmpty()) text += "\n" + tr("Program: %1").arg(QDir::toNativeSeparators(p));
   } else if (state != State::NotFound) {
@@ -193,42 +284,64 @@ void AgentClientRow::show(State state, const QString& detail) {
   }
   m_status->setText(text);
   m_status->setStyleSheet(QString("color: %1; font-size: 12px;").arg(theme::css(t.fg2)));
-  // The state in a word or two, with its glyph (a state is never told by colour alone).
-  QString pill;
+
+  // The card: the state in plain words (with a glyph where colour says something: never by colour alone), one button.
+  QString line;
+  QColor colour = t.fg2;
   switch (state) {
-    case State::Unchecked: pill = tr("Checking…"); colour = t.fg3; break;
-    case State::NotFound: pill = tr("Not installed on this computer"); colour = t.fg3; break;
-    case State::NotRegistered: pill = tr("Not set up"); colour = t.fg2; break;
-    case State::Registered: pill = QStringLiteral("✓ ") + tr("Ready"); break;
-    case State::Disabled: pill = QStringLiteral("⚠ ") + tr("Turned off in %1").arg(name()); break;
-    case State::Missing: pill = QStringLiteral("⚠ ") + tr("Set up, but the app's program has moved"); break;
-    case State::Stale: pill = QStringLiteral("⚠ ") + tr("Set up for another copy of OPAD"); break;
-    case State::Failed: pill = QStringLiteral("⚠ ") + tr("Couldn't read its settings"); break;
+    case State::Unchecked: line = tr("Checking…"); colour = t.fg3; break;
+    case State::NotFound: line = tr("Not on this computer"); colour = t.fg3; break;
+    case State::NotRegistered: line = tr("Not connected yet"); break;
+    case State::Registered: line = justAdded ? QStringLiteral("✓ ") + tr("Added to %1").arg(name()) : tr("Connected"); colour = t.green; break;
+    case State::Disabled: line = QStringLiteral("⚠ ") + tr("Connected, but turned off in %1").arg(name()); colour = t.amber; break;
+    case State::Missing: line = QStringLiteral("⚠ ") + tr("Set up for an OPAD that has moved: Connect sets it up again"); colour = t.amber; break;
+    case State::Stale: line = QStringLiteral("⚠ ") + tr("Set up for another copy of OPAD: Connect uses this one"); colour = t.amber; break;
+    case State::Failed: line = QStringLiteral("⚠ ") + tr("Couldn't read its settings"); colour = t.red; break;
   }
-  m_pill->setText(pill);
-  m_pill->setToolTip(text);
-  m_pill->setStyleSheet(QString("color: %1; font-size: 12px;").arg(theme::css(colour)));
-  if (m_pathRow) {
-    const bool chosen = m_path && !m_path->text().trimmed().isEmpty();
-    m_pathRow->setVisible(state == State::NotFound || chosen);
-    m_pathLabel->setText(state == State::NotFound ? tr("OPAD looked for %1 and didn't find it. If it is installed, choose its program (%2).").arg(name(), programName())
-                                                  : tr("%1's program, chosen by you (empty it to let OPAD find it):").arg(name()));
-  }
+  m_headline->setText(line);
+  m_headline->setToolTip(text);
+  m_headline->setStyleSheet(QString("color: %1; font-size: 12px;").arg(theme::css(colour)));
+  const bool absent = state == State::NotFound;
+  m_title->setStyleSheet(QStringLiteral("font-weight:600;font-size:14px;color:%1").arg(theme::css(absent ? t.fg2 : t.fg)));
+  m_badge->setStyleSheet(QStringLiteral("border-radius:8px;font-weight:700;background:%1;color:%2").arg(theme::css(absent ? t.bg3 : t.bg4), theme::css(absent ? t.fg2 : t.fg)));
+  const QColor tint(t.green.red(), t.green.green(), t.green.blue(), 26), rim(t.green.red(), t.green.green(), t.green.blue(), 128);
+  m_card->setStyleSheet(justAdded  ? QStringLiteral("QFrame#agentClientCard{background:%1;border:1px solid %2;border-radius:10px}").arg(theme::css(tint), theme::css(rim))
+                        : absent   ? QStringLiteral("QFrame#agentClientCard{background:transparent;border:1px dashed %1;border-radius:10px}").arg(theme::css(t.line))
+                                   : QStringLiteral("QFrame#agentClientCard{background:%1;border:1px solid %2;border-radius:10px}").arg(theme::css(t.bg3), theme::css(t.line)));
   const bool program = !usesProgram() || !this->program().isEmpty();
-  m_connect->setVisible(state == State::NotRegistered);
-  m_connect->setEnabled(program && !m_running);
-  m_point->setVisible(state == State::Missing || state == State::Stale);
-  m_point->setEnabled(program && !m_running);
-  m_remove->setVisible(state == State::Registered || state == State::Disabled || state == State::Missing);
-  m_remove->setEnabled(program && !m_running);
+  const bool connects = state == State::NotRegistered || state == State::Missing || state == State::Stale;
+  const bool disconnects = state == State::Registered || state == State::Disabled;
+  m_get->setVisible(absent);
+  m_action->setVisible(connects || disconnects || state == State::Failed);
+  m_action->setText(connects ? tr("Connect") : disconnects ? tr("Disconnect") : tr("Try again"));
+  m_action->setToolTip(state == State::Stale ? tr("%1 has an \"opad\" entry for another copy of OPAD: Connect replaces it with this one.").arg(name()) : QString());
+  m_action->setEnabled((program || state == State::Failed) && !m_running);
+  m_action->setStyleSheet(connects ? QStringLiteral("QPushButton{background:%1;border:1px solid %1;color:%2;font-weight:600;padding:0 18px;border-radius:6px}"
+                                                    "QPushButton:hover{background:%3}QPushButton:disabled{background:%4;border-color:%4}")
+                                         .arg(theme::css(t.sel), theme::css(t.onsel), theme::css(t.sel.lighter(115)), theme::css(t.bg4))
+                                   : QStringLiteral("QPushButton{padding:0 14px;border-radius:6px}"));
+  m_next->setVisible(justAdded);
+  m_restart->setText(QStringLiteral("<b>%1</b> %2").arg(restartStep().toHtmlEscaped(), restartWhy().toHtmlEscaped()));
   m_check->setEnabled(!m_running);
   if (m_path) m_path->setEnabled(!m_running);
   if (m_browse) m_browse->setEnabled(!m_running);
-  // Registered, but this client's own program is not here: the buttons wait for it, and say so.
-  if (!program && state != State::NotFound && state != State::Unchecked && m_note->text().isEmpty())
-    message(tr("%1's program was not found on this computer: Browse to it to change this registration.").arg(name()));
+  // Registered, but this client's own program is not here: the button waits for it, and says where to choose it.
+  if (!program && state != State::NotFound && state != State::Unchecked && state != State::Failed && m_note->text().isEmpty())
+    message(tr("%1's program was not found on this computer: choose it under Details.").arg(name()), true);
   if (layout()) layout()->activate();
   emit stateChanged();
+}
+
+void AgentClientRow::act() {
+  switch (m_state) {
+    case State::NotRegistered:
+    case State::Missing:
+    case State::Stale: return connectClient();
+    case State::Registered:
+    case State::Disabled: return removeClient();
+    case State::Failed: message({}); return refresh();
+    default: return;
+  }
 }
 
 // The client's command, asynchronous and without a shell. The process belongs to the application, so closing Settings
@@ -349,39 +462,40 @@ void AgentClientRow::drop(std::function<void(bool, QString)> done) {
   run(m_client == Client::ClaudeCode ? QStringList{"mcp", "remove", "opad", "--scope", "user"} : QStringList{"mcp", "remove", "opad"}, done);
 }
 
+// Connect worked: the card shows the next steps (restart, a first question); it failed: why, on the card.
+void AgentClientRow::added(bool success, const QString& error) {
+  if (success) {
+    message({});
+    m_added = true;  // kept by refresh while the state stays Registered
+  }
+  refresh();
+  if (!success) message(tr("%1 couldn't be connected: %2").arg(name(), error), true);
+  else emit connected();
+}
+
 void AgentClientRow::connectClient() {
-  if (!QFileInfo::exists(m_executable)) return message(tr("opad-cli was not found beside OPAD: install the matching opad-cli before connecting a client."));
+  if (!QFileInfo::exists(m_executable)) return message(tr("opad-cli was not found beside OPAD: install the matching opad-cli before connecting an AI app."), true);
+  message({});
   inspect([this](bool ok, std::optional<Entry> entry) {
     if (!ok) return;
     if (entry) {
-      if (classify(entry, m_executable, m_discovery) == State::Registered) {
-        refresh();
-        return message(tr("Already set up. %1").arg(restartHint()));
-      }
+      if (classify(entry, m_executable, m_discovery) == State::Registered) return added(true, {});  // already here: the next steps
       return pointHere();  // something else is registered as "opad": replaced by this copy
     }
-    add([this](bool success, QString error) {
-      refresh();
-      message(success ? tr("Done. %1").arg(restartHint()) : tr("%1 couldn't be set up: %2").arg(name(), error));
-    });
+    add([this](bool success, QString error) { added(success, error); });
   });
 }
 
 void AgentClientRow::pointHere() {
-  if (!QFileInfo::exists(m_executable)) return message(tr("opad-cli was not found beside OPAD: install the matching opad-cli before connecting a client."));
+  if (!QFileInfo::exists(m_executable)) return message(tr("opad-cli was not found beside OPAD: install the matching opad-cli before connecting an AI app."), true);
   inspect([this](bool ok, std::optional<Entry> entry) {
     if (!ok) return;
-    auto then = [this] {
-      add([this](bool success, QString error) {
-        refresh();
-        message(success ? tr("Done: it now uses this OPAD. %1").arg(restartHint()) : tr("%1 couldn't be set up: %2").arg(name(), error));
-      });
-    };
+    auto then = [this] { add([this](bool success, QString error) { added(success, error); }); };
     if (!entry) return then();
     drop([this, then](bool success, QString error) {
       if (!success) {
         refresh();
-        return message(tr("%1 refused: %2").arg(name(), error));
+        return message(tr("%1 refused: %2").arg(name(), error), true);
       }
       then();
     });
@@ -389,6 +503,7 @@ void AgentClientRow::pointHere() {
 }
 
 void AgentClientRow::removeClient() {
+  m_added = false;
   inspect([this](bool ok, std::optional<Entry> entry) {
     if (!ok) return;
     const State state = classify(entry, m_executable, m_discovery);
@@ -396,14 +511,14 @@ void AgentClientRow::removeClient() {
       refresh();
       return message(tr("Not connected: nothing to remove."));
     }
-    if (state == State::Stale) {
+    if (state == State::Stale) {  // another OPAD's entry is never removed
       refresh();
-      return message(tr("This registration belongs to another OPAD; it was not removed. Point it at this OPAD, or manage it in %1.").arg(name()));
+      return message(tr("This registration belongs to another OPAD; it was not removed. Connect points it at this OPAD, or manage it in %1.").arg(name()), true);
     }
     drop([this](bool success, QString error) {
       refresh();
-      message(success ? tr("Removed. %1 keeps its other servers. Disconnect clients (Access and activity) ends a running connection at once.").arg(name())
-                      : tr("%1 refused: %2").arg(name(), error));
+      message(success ? tr("Disconnected. %1 keeps its other tools; a session already running stays connected until it ends.").arg(name())
+                      : tr("%1 refused: %2").arg(name(), error), !success);
     });
   });
 }

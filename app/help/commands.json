@@ -2582,8 +2582,8 @@
   {
    "id": "tools.ai",
    "title": "AI assistants",
-   "summary": "Sets up an AI app such as Claude Code, Claude Desktop or Codex to work on your designs, and chooses what it may do.",
-   "details": "Connect sets up an AI app with one click and shows whether each one is ready. Choose whether assistants may only look at your designs or also change them; every change is a normal step you can undo. Access lists who is connected now, and Other AI apps has the setup to copy into any other app; the AI chip in the status bar opens it too.",
+   "summary": "Connects an AI app such as Claude Desktop, Claude Code or Codex to your designs with one button, and chooses what it may do.",
+   "details": "Each AI app on this computer shows whether it is connected; after Connect its card says what is left: restart the app, then a first question to ask, and the status line turns green by itself once it connects. For any other AI app, Copy setup message copies one message to paste into its chat, and its assistant adds OPAD by itself. What it may do is one choice, Nothing, Look only or Look and edit, as on the AI chip; every change is a normal step you can undo. Details has the program paths, the raw settings and who is connected now.",
    "keywords": ["AI", "assistant", "Claude", "Claude Code", "Claude Desktop", "Codex", "MCP", "agent", "connect"]
   },
   {
