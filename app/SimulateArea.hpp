@@ -70,6 +70,7 @@ class Simulate : public AreaController {
   const opad::json& engines() const { return m_engines; }  // sim::engines() as last read on a worker
   void refreshEngines();  // read again (a solver found by hand)
   void askSolver(const QString& solver);  // the missing-solver window
+  void installSolver(const QString& solver);  // OPAD's pack of it (EngineInstall.hpp), progress in the status bar
   // What the Simulation folder's rows picked in the browser light in the view (SimulateLit.cpp): each target with its nature
   // ("heat", "fan", "heatsink", "board", "box", a load's kind), drawn in its colour with its badge when it is shown.
   struct Lit {
@@ -137,6 +138,7 @@ class Simulate : public AreaController {
   ToolPanel* m_checkPanel = nullptr;
   opad::json m_engines = opad::json::object();
   QPointer<Job> m_enginesJob;
+  bool m_enginesAgain = false;  // refreshEngines asked while a read ran
 
   SimulatePanel* m_form = nullptr;
   bool m_modeShown = false;

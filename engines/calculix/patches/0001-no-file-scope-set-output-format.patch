@@ -1,0 +1,31 @@
+ccx 2.22 calls _set_output_format at file scope under __WIN32, which no compiler accepts. The recipe builds with
+__USE_MINGW_ANSI_STDIO=1 instead, which gives printf the two-digit exponents of Linux (the .frd file's fixed columns).
+
+diff -ru a/CalculiX/ccx_2.22/src/ccx_2.22.c b/CalculiX/ccx_2.22/src/ccx_2.22.c
+--- a/CalculiX/ccx_2.22/src/ccx_2.22.c	2024-08-05 20:15:25.268542300 +0300
++++ b/CalculiX/ccx_2.22/src/ccx_2.22.c	2026-11-26 00:59:13.669767600 +0300
+@@ -15,10 +15,6 @@
+ /*     along with this program; if not, write to the Free Software       */
+ /*     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.         */
+ 
+-#ifdef __WIN32
+-_set_output_format(_TWO_DIGIT_EXPONENT);
+-#endif
+-
+ #ifdef CALCULIX_MPI
+ #include <spoolesMPI.h>
+ #endif
+diff -ru a/CalculiX/ccx_2.22/src/ccx_2.22step.c b/CalculiX/ccx_2.22/src/ccx_2.22step.c
+--- a/CalculiX/ccx_2.22/src/ccx_2.22step.c	2024-08-05 20:15:25.268542300 +0300
++++ b/CalculiX/ccx_2.22/src/ccx_2.22step.c	2026-11-26 00:59:13.742990100 +0300
+@@ -15,10 +15,6 @@
+ /*     along with this program; if not, write to the Free Software       */
+ /*     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.         */
+ 
+-#ifdef __WIN32
+-_set_output_format(_TWO_DIGIT_EXPONENT);
+-#endif
+-
+ #ifdef CALCULIX_MPI
+ #include <spoolesMPI.h>
+ #endif

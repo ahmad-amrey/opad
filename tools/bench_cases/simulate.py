@@ -1,7 +1,7 @@
 """gui_benches cases of the Simulate workspace: joints from picked edges, the slider, dynamic and motion studies played back,
 loads on picked faces, static and modal studies with their result maps, each checked against its textbook value, and the
 beam as a printed part (the Printed part dialog), flat and standing on its end, with its failure-index map. The
-bench is app/SimulateBench.cpp."""
+bench is app/SimulateBench.cpp; the guided checks, Thermal setup and the solver install have benches of their own."""
 
 from pathlib import Path
 
@@ -29,4 +29,10 @@ CASES = [
     ("cooling-walls", "empty", {"OPAD_BENCH_COOLING_WALLS": "{prefix}"}),  # a tray and its cover: an enclosure of two bodies
     ("simulate-lit", "empty", {"OPAD_BENCH_SIMLIT": "{prefix}"}),  # Thermal setup's rows in the browser as it goes; rows light their targets (app/SimulateLitBench.cpp)
     ("cooling-perf-engine", lambda root, document: engine(), {"OPAD_BENCH_COOLING_PERF": "{prefix}"}),  # opening Thermal setup never holds the UI
+    # Installing OpenFOAM from the check's Run step against a fake release the bench serves on 127.0.0.1: a tampered download
+    # refused, the right one downloaded, checked and unpacked (app/SimulateEnginesBench.cpp). The case's own APPDATA,
+    # LOCALAPPDATA and engines folder hide any OpenFOAM of this computer and keep the user's engines folder out of it.
+    ("engine-install", "empty", {"OPAD_BENCH_ENGINE_INSTALL": "{prefix}", "APPDATA": "{root}/engine-install/appdata",
+                                 "LOCALAPPDATA": "{root}/engine-install/localappdata", "OPAD_ENGINES_DIR": "{root}/engine-install/engines",
+                                 "OPAD_OPENFOAM": "", "OPAD_ENGINE_PACKS": ""}),
 ]

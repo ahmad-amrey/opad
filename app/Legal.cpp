@@ -13,6 +13,7 @@
 #include <QVBoxLayout>
 
 #include "opad/drawing_io.hpp"
+#include "opad/sim/engine_packs.hpp"
 #include "opad/util.hpp"
 
 namespace legal {
@@ -21,7 +22,11 @@ QString aboutText() {
   return QObject::tr("<b>OPAD %1</b><br>Git-native CAD and review: 3D models, meshes and 2D drawings in one append-only "
                      "document that diffs and merges in git.<br><br>Copyright (c) 2026 Ahmad Amrey. MIT licence. Built on "
                      "Open CASCADE Technology (LGPL 2.1 with exception) and Qt (LGPL 3) among other libraries: see Help &gt; "
-                     "Third-party licences.<br><br>Headless twin: <code>opad-cli</code>; Python: <code>import opad</code>."
+                     "Third-party licences.<br><br>Simulate can install two solvers that OPAD runs as separate programs: OpenFOAM (GNU GPL 3) "
+                     "and CalculiX (GNU GPL 2 or later), built by OPAD from their official sources, which are published next to them on OPAD's "
+                     "releases. This offering is not approved or endorsed by OpenCFD Limited, producer and distributor of the "
+                     "OpenFOAM software via www.openfoam.com, and owner of the OPENFOAM® and OpenCFD® trade marks."
+                     "<br><br>Headless twin: <code>opad-cli</code>; Python: <code>import opad</code>."
                      "<br><br><small>Autodesk, AutoCAD, DWG, Fusion and ViewCube are trademarks of Autodesk, Inc.; SOLIDWORKS "
                      "of Dassault Systèmes; Onshape of PTC; Blender of the Blender Foundation. They are named only to describe "
                      "compatibility; OPAD is not affiliated with or endorsed by them.</small>")
@@ -47,7 +52,10 @@ void showNotices(QWidget* parent) {
   text->setLayoutDirection(Qt::LeftToRight);  // licence texts are English, also in a right-to-left UI
   // Fixed pitch (licence texts are laid out for it); a style sheet, since the theme's sets every widget's font.
   text->setStyleSheet(QString("QPlainTextEdit { font-family: \"%1\"; }").arg(QFontDatabase::systemFont(QFontDatabase::FixedFont).family()));
-  text->setPlainText(QString::fromStdString(opad::third_party_notices()));
+  // Then the solver packs Simulate installs (separate programs, not linked: their licences, sources and OpenCFD's
+  // trade mark statement, and each installed pack's own NOTICE.txt).
+  text->setPlainText(QString::fromStdString(opad::third_party_notices() + "\n\nSolvers OPAD can install (Simulate)\n" +
+                                            "===================================\n\n" + opad::sim::engine_pack_notices()));
   layout->addWidget(text, 1);
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
   QObject::connect(buttons->addButton(QObject::tr("About Qt"), QDialogButtonBox::ActionRole), &QPushButton::clicked, dialog,

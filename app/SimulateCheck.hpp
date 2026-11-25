@@ -52,6 +52,8 @@ class GuidedCheck : public QWidget {
     std::function<void(const QString&)> showField;     // the result map with that field ("von_mises", "temperature", "mode:0")
     std::function<void(const QString&)> command;       // runs an app command (simulate.play, simulate.cooling, inspect.material)
     std::function<void(const QString&)> solverNeeded;  // the solver window for that solver
+    std::function<void(const QString&)> installSolver;  // installs OPAD's pack of it (Simulate::installSolver)
+    std::function<bool(const QString&)> installing;     // that pack is being installed now
     std::function<opad::json()> engines;               // sim::engines() as last read (on a worker)
     std::function<QString(const QString&)> filter;     // the view's selection filter set to that action (empty: kept); the one before
     std::function<void(bool)> accumulate;              // the view's clicks add and take out (picking) or select

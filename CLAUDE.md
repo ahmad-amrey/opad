@@ -164,8 +164,29 @@ curve scaled by 5/360; past 30 degrees of wall the non-orthogonal correction), e
 wall/inlet/outlet, 3 layers). The fan curve is written inline (`fanCurve table`): openfoam.org reads no curve file. Settings, plan (`plan_flow`) and case files
 (`write_flow_case`) need no OpenFOAM: `study` with `run: false` returns `plan`. Recirculation = reversed cells (against
 the local bulk way) in face-connected groups touching a wall. Shared OpenFOAM readers and the program runner:
-`core/src/sim/foam_case.hpp` (moved out of cfd.cpp). `openfoam()` also finds OpenCFD's Windows installer (per user `%APPDATA%\ESI-OpenCFD\OpenFOAM\v<N>`, programs and DLLs in `msys64/home/ofuser/OpenFOAM/OpenFOAM-v<N>/platforms/<build>/bin`; OPAD_OPENFOAM may name either folder); its Pstream needs MS-MPI (`thirdParty/msmpisetup.exe`, admin), else `problem` says so and found() is false. `ctest -R flow`; the solves: `flow-solve` (label slow,
+`core/src/sim/foam_case.hpp` (moved out of cfd.cpp). `openfoam()` also finds OpenCFD's Windows installer (per user `%APPDATA%\ESI-OpenCFD\OpenFOAM\v<N>`, programs and DLLs in `msys64/home/ofuser/OpenFOAM/OpenFOAM-v<N>/platforms/<build>/bin`; OPAD_OPENFOAM may name either folder); its Pstream needs MS-MPI (`thirdParty/msmpisetup.exe`, admin), else `problem` says so and found() is false (OPAD's own pack, next section, has none). `ctest -R flow`; the solves: `flow-solve` (label slow,
 `OPAD_TEST_FLOW_3D=1` adds the full-part check); `OPAD_KEEP_CFD=1` keeps a case's folder.
+
+## Solver packs (`engines/`, `core/src/sim/engine_packs.cpp`, `app/EngineInstall.*`)
+
+OpenFOAM v2512 and CalculiX 2.22 for Windows, built from pinned upstream sources by `engines/<id>/make-pack.sh` (CI:
+`.github/workflows/engines.yml`, artifacts only; publishing is by hand, docs/releasing.md "Solver packs"), released as
+`engines-<id>-<ver>-<rev>` (not latest), their size + SHA-256 pinned in `engine_packs.cpp` (no hash = not offered).
+Install (check's Run step "Install OpenFOAM (37 MB)", `SolverWindow`'s Install): `engineinstall::Installer` downloads in a
+`Downloading` job (only `engine_pack_url_allowed` URLs: github.com/ahmad-amrey/opad/releases/download/, or 127.0.0.1 when
+`OPAD_ENGINE_PACKS=<json>` replaces the table), then `install_pack` on a worker: size, hash, every member inside the
+folder, `opad-pack.json` id/version, unpacked to `<folder>.partial` then renamed, other versions removed. Folder:
+`OPAD_ENGINES_DIR` (portable: `data/engines`, appdata::use) else `<LOCALAPPDATA>/opad/OPAD/engines`; `openfoam()` and
+`ccx_program()` look there right after OPAD_OPENFOAM / OPAD_CCX; `engines()["packs"]`. OpenFOAM pack: the 10 programs
+OPAD runs + their DLLs (objdump closure) + `etc/`, cross-built on Ubuntu with mingw-w64 (posix threads), `WM_MPLIB=dummy`
+(no MS-MPI), zlib static; traps: wmake `-q` links before compiling, a cross gcc ignores LIBRARY_PATH (`-L` through
+FOAM_EXTRA_CXXFLAGS), GCC 13 jump tables of COMDAT functions break `ld -r` ("relocation truncated": `-fno-jump-tables`).
+ccx pack: one static exe (SPOOLES serial, ARPACK-NG, OpenBLAS from MSYS2 MINGW64), built by `engines/calculix/CMakeLists.txt`
+from the upstream makefiles' lists (no make in MSYS2 here; `mafillmm.c` is listed but only the .f exists); patch 0001 drops
+a file-scope `_set_output_format` and `__USE_MINGW_ANSI_STDIO` keeps two-digit exponents (the .frd columns). MSYS2's
+`usr/bin` on PATH under Git Bash breaks gcc's TEMP: call pacman by path. Notices: Help > Third-party licences appends
+`engine_pack_notices()` (OpenCFD's trade mark statement, sources), About names both. `ctest -R engine-packs`, gui case
+`engine-install` (a fake release on a local socket: a tampered zip refused, the right one installed through the button).
 
 ## Floating tool panels (no right dock)
 
@@ -400,8 +421,9 @@ wait for it); heat sources by name on the UI thread. Readiness from `sim::engine
 `sim::study_kinds()` is Coming and writes nothing. Airflow checks: core's `flow_settings` accepts `check`/`guided`; a flow
 study is validated on every `study` write, so a check is saved only once inlet and outlet are known (made with its whole
 settings, nulls dropped) and shows core's mesh plan (`plan`, or `validateFlow` on a worker after a reload) before Run;
-`Simulate::showFlow` draws the cut through the fluid by speed or pressure, or streamlines. `SolverWindow` opens the official page or takes a
-folder/program (`simulate/solvers/<id>` + OPAD_OPENFOAM / OPAD_CCX, `applySaved` in Simulate::ready); it never downloads. Thermal
+`Simulate::showFlow` draws the cut through the fluid by speed or pressure, or streamlines. `SolverWindow` installs OPAD's
+pack where there is one (next section), opens the official page, or takes a folder/program (`simulate/solvers/<id>` +
+OPAD_OPENFOAM / OPAD_CCX, `applySaved` in Simulate::ready). Thermal
 setup's frame is `GuidedSteps`. A run's done callback calls `followStudy` before `refresh` (refresh drops a study of another
 panel subject). Clip element `simpic` draws a check's picture. Bench `simulate-checks(-rtl)` (OPAD_BENCH_SIMCHECKS), test
 `sim-checks` (`OPAD_SIMPIC_OUT=<png>` saves the pictures in three themes).
