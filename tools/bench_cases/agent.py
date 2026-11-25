@@ -1,8 +1,9 @@
 """gui_benches cases of the AI integration's settings (app/AgentSettings.cpp, app/AgentClients.cpp)."""
 
-# Claude Desktop's and Claude Code's settings in folders of the case's own (APPDATA on Windows, HOME on macOS,
+# Claude Desktop's and Claude Code's settings in folders of the case's own (APPDATA and LOCALAPPDATA on Windows: the packaged
+# Claude keeps them in LOCALAPPDATA's Claude-Data; HOME on macOS,
 # XDG_CONFIG_HOME on Linux; CLAUDE_CONFIG_DIR): the bench writes and rewrites them, never a real configuration.
-ISOLATED = {"APPDATA": "{root}/agent-connect/appdata", "XDG_CONFIG_HOME": "{root}/agent-connect/xdg", "HOME": "{root}/agent-connect/home",
+ISOLATED = {"APPDATA": "{root}/agent-connect/appdata", "LOCALAPPDATA": "{root}/agent-connect/localappdata", "XDG_CONFIG_HOME": "{root}/agent-connect/xdg", "HOME": "{root}/agent-connect/home",
             "CLAUDE_CONFIG_DIR": "{root}/agent-connect/claude"}
 
 CASES = [
@@ -16,7 +17,9 @@ CASES = [
     # with Undo on the newest step only, "Claude: ..." as the undo step, ai_client on the op; the viewport's preview chip and
     # its Discard; Properties' "Claude (AI) · hh:mm"; the timeline marker's Show in AI activity; Show / Back with the camera;
     # "AI" in the Annotations author filter; Stop's divider and toast with no row left running; undo / redo reply labels as
-    # before; failure rows naming their own call; a failed commit's row.
+    # before; the user's hides and colours keep the revision (live_state's view_edits, the last command's changes only, all
+    # with change_history), a staged preview survives a show and its commit keeps it; features and ops as pages of compact
+    # items; joint_set preview without an id or an op; failure rows naming their own call; a failed commit's row.
     ("agent-activity", "empty", {"OPAD_BENCH_AGENT_ACTIVITY": "{prefix}", "OPAD_BENCH_AGENT": "{root}/activity-agent"}),
     ("agent-activity-ar", "empty", {"OPAD_BENCH_AGENT_ACTIVITY": "{prefix}", "OPAD_BENCH_AGENT": "{root}/activity-agent-ar", "OPAD_LANG": "ar"}),
 ]

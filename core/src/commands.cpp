@@ -100,6 +100,17 @@ bool is_foreign_path(const std::filesystem::path& p) {
 
 }  // namespace
 
+json page_list(json items, const json& a) {
+  if (!a.contains("offset") && !a.contains("limit")) return items;
+  const size_t total = items.size();
+  const size_t offset = std::min(total, size_t(std::max(0, a.value("offset", 0))));
+  const size_t limit = a.contains("limit") ? size_t(std::max(1, a["limit"].get<int>())) : total;
+  const size_t end = std::min(total, offset + limit);
+  json page = json::array();
+  for (size_t i = offset; i < end; ++i) page.push_back(std::move(items[i]));
+  return {{"items", std::move(page)}, {"total", total}, {"offset", offset}, {"next_offset", end < total ? json(end) : json(nullptr)}};
+}
+
 // The screenshot options render and viewport_image share (TODO 10 B9), all off unless asked for.
 void apply_picture_options(RenderOptions& o, const json& a) {
   o.edge_lines = a.value("edge_lines", false);
@@ -300,9 +311,11 @@ void register_builtins() {
   reg("info", "Header, units, op count, bodies, bounding box", {{"doc", "path - .opad or .step"}}, false,
       [](Document* d, const json&) { return document_info(need(d), resolve(need(d))); });
 
-  reg("ops", "The op log, optionally filtered",
+  reg("ops", "The op log, optionally filtered; offset/limit page it",
       {{"doc", "path"}, {"type", "string|array - op types to include"}, {"since", "uuid - only ops after this op"},
-       {"live_only", "bool - drop tombstoned ops"}, {"target", "uuid - only ops touching this node/op"}},
+       {"live_only", "bool - drop tombstoned ops"}, {"target", "uuid - only ops touching this node/op"},
+       {"offset", "int - first op of the page (default 0)"}, {"limit", "int - ops per page (default all)"},
+       {"detail", {{"type", "string"}, {"enum", {"full", "compact"}}, {"description", "compact: id, op, name, target, state"}}}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
         Scene s = resolve(doc);
@@ -323,11 +336,18 @@ void register_builtins() {
             if (!hit && o.type == "import") hit = o.data.dump().find(target) != std::string::npos;
             if (!hit) continue;
           }
+          if (a.value("detail", "full") == "compact") {
+            json j = {{"id", o.id}, {"op", o.type}, {"state", deleted ? "deleted" : "live"}};
+            if (const auto name = o.data.find("name"); name != o.data.end() && name->is_string()) j["name"] = *name;
+            if (const auto t = o.data.find("target"); t != o.data.end() && t->is_string()) j["target"] = *t;
+            out.push_back(std::move(j));
+            continue;
+          }
           json j = o.data;
           if (deleted) j["deleted"] = true;
           out.push_back(j);
         }
-        return out;
+        return page_list(std::move(out), a);
       });
 
   // Paged (an agent's reply stays small on a 76-part board): node lists that component's children instead of the roots,

@@ -189,6 +189,67 @@ json ref_hint(const TopoDS_Shape& body_world, const TopoDS_Shape& sub) {
 }
 
 namespace {
+// A mirror's name_map: {"R": "L", "Right": "Left"} or the text "R=L, Right=Left" (";" separates too).
+std::vector<std::pair<std::string, std::string>> name_pairs(const json& v) {
+  std::vector<std::pair<std::string, std::string>> out;
+  auto trim = [](std::string s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+    return s;
+  };
+  const char* form = "name_map takes words to swap in the copies' names: {\"R\": \"L\"} or \"R=L, Right=Left\"";
+  if (v.is_null() || (v.is_string() && trim(v.get<std::string>()).empty())) return out;
+  if (v.is_object()) {
+    for (const auto& [from, to] : v.items()) {
+      if (!to.is_string() || trim(from).empty()) throw Error(form);
+      out.push_back({trim(from), trim(to.get<std::string>())});
+    }
+  } else if (v.is_string()) {
+    std::string text = v.get<std::string>();
+    std::replace(text.begin(), text.end(), ';', ',');
+    size_t at = 0;
+    while (at <= text.size()) {
+      const size_t end = std::min(text.find(',', at), text.size());
+      const std::string item = trim(text.substr(at, end - at));
+      at = end + 1;
+      if (item.empty()) continue;
+      const size_t eq = item.find('=');
+      if (eq == std::string::npos || trim(item.substr(0, eq)).empty()) throw Error(form);
+      out.push_back({trim(item.substr(0, eq)), trim(item.substr(eq + 1))});
+    }
+  } else {
+    throw Error(form);
+  }
+  return out;
+}
+
+// `name` with every whole-word occurrence of a pair's first word swapped for its second, all at once (so R=L, L=R
+// swaps both ways); the longest word wins where several start at one place. Letters and digits make words: "R" is
+// swapped in "Bracket R" and "Bracket_R", not in "Rim".
+std::string swap_words(const std::string& name, const std::vector<std::pair<std::string, std::string>>& pairs) {
+  auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || static_cast<unsigned char>(c) >= 0x80; };
+  std::string out;
+  size_t i = 0;
+  while (i < name.size()) {
+    const std::pair<std::string, std::string>* best = nullptr;
+    for (const auto& p : pairs) {
+      const std::string& w = p.first;
+      if (name.compare(i, w.size(), w) != 0) continue;
+      const size_t end = i + w.size();
+      if (word(w.front()) && i > 0 && word(name[i - 1])) continue;
+      if (word(w.back()) && end < name.size() && word(name[end])) continue;
+      if (!best || w.size() > best->first.size()) best = &p;
+    }
+    if (best) {
+      out += best->second;
+      i += best->first.size();
+    } else {
+      out += name[i++];
+    }
+  }
+  return out;
+}
+
 Ref::Kind entity_kind(const json& j) {
   const std::string kind = j.value("kind", "");
   if (kind == "face") return Ref::Kind::Face;
@@ -197,6 +258,39 @@ Ref::Kind entity_kind(const json& j) {
   throw Error("a rule selector picks faces, edges or vertices: give kind \"face\", \"edge\" or \"vertex\"");
 }
 }  // namespace
+
+json evaluate_rule_filters(const ParamTable& params, const json& filters) {
+  if (!filters.is_object()) return filters;
+  json out = filters;
+  auto length = [&](json& v, const std::string& what) {
+    if (!v.is_string()) return;
+    try {
+      v = params.length(v.get<std::string>());
+    } catch (const std::exception& e) {
+      throw Error("the rule's " + what + ": " + e.what());
+    }
+  };
+  for (const char* key : {"radius_min", "radius_max", "length_min", "length_max"})
+    if (out.contains(key)) length(out[key], key);
+  for (const char* key : {"area_min", "area_max"})
+    if (out.contains(key) && out[key].is_string()) {
+      const std::string text = out[key].get<std::string>();
+      Quantity q;
+      try {
+        q = params.eval(text);
+      } catch (const std::exception& e) {
+        throw Error(std::string("the rule's ") + key + ": " + e.what());
+      }
+      if (q.angle || (q.len != 0 && q.len != 2)) throw Error(std::string("the rule's ") + key + ": \"" + text + "\" is not an area");
+      out[key] = q.value;  // mm² (a plain number is taken as mm²)
+    }
+  if (out.contains("at_plane") && out["at_plane"].is_object() && out["at_plane"].contains("value")) length(out["at_plane"]["value"], "at_plane value");
+  if (out.contains("bounds") && out["bounds"].is_object())
+    for (const char* side : {"min", "max"})
+      if (out["bounds"].contains(side) && out["bounds"][side].is_array())
+        for (auto& v : out["bounds"][side]) length(v, std::string("bounds ") + side);
+  return out;
+}
 
 // A rule selector: every face, edge or vertex of the body (as it is just before the feature) that passes the
 // query_entities filters in "select". "expect" and "ambiguity": "unique" make a different count fail visibly.
@@ -210,7 +304,10 @@ std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
   const json& filters = j.at("select");
   const double tolerance = j.value("tolerance_mm", 1e-5);
   // TODO 11 UI-97: {"recognized":"hole","diameter":6}: the faces of the matching recognised groups, then the filters.
-  const auto [recognition, rest] = split_recognized(filters);
+  const auto [recognition, given] = split_recognized(filters);
+  const json rest = evaluate_rule_filters(ctx.params, given);  // expressions follow the parameters
+  if (rest.contains("loop") && kind != Ref::Kind::Edge) throw Error("a \"loop\" rule picks edges: give kind \"edge\"");
+  const auto describe = entity_describer(shape, rest);
   std::vector<int> candidates;
   if (!recognition.is_null()) {
     if (kind != Ref::Kind::Face) throw Error("a \"recognized\" rule picks faces: give kind \"face\"");
@@ -221,7 +318,7 @@ std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
   std::vector<ResolvedRef> out;
   for (int i : candidates) {
     ctx.check_cancel();
-    if (entity_matches(describe_entity(map(i + 1)), rest, tolerance)) out.push_back({body, map(i + 1), i});
+    if (entity_matches(describe(map(i + 1)), rest, tolerance)) out.push_back({body, map(i + 1), i});
   }
   const std::string what = std::string(Ref::kind_name(kind)) + (out.size() == 1 ? "" : "s");
   if (out.empty()) throw Error("the rule " + filters.dump() + " matches no " + Ref::kind_name(kind) + " of the body");
@@ -595,6 +692,21 @@ struct Walk {
           s += in.name + "!" + e.what() + ";";
         }
       }
+    // Rule selectors whose values are expressions (at_plane "height", bounds ["w / 2", ...]): what they come to, so a
+    // parameter change matches again. Rules with plain numbers add nothing, keeping the fingerprints they had.
+    std::function<void(const json&)> rules = [&](const json& v) {
+      if (v.is_array())
+        for (const auto& x : v) rules(x);
+      else if (v.is_object() && v.contains("select") && v["select"].is_object()) {
+        const json given = split_recognized(v["select"]).second;
+        try {
+          if (const json value = evaluate_rule_filters(params, given); value != given) s += "rule=" + value.dump() + ";";
+        } catch (const std::exception& e) {
+          s += std::string("rule!") + e.what() + ";";
+        }
+      }
+    };
+    for (const auto& [name, value] : inputs.items()) rules(value);
     std::set<std::string> nodes, sketches, features;
     feature_refs(scene, kind, inputs, nodes, sketches, features);
     for (const auto& n : nodes) s += node_state(scene, n);
@@ -621,7 +733,13 @@ struct Walk {
   // "Screw 7" -> "Screw 8".
   std::string copy_name(const Scene& scene, const json& pending, const std::string& source) {
     const Node* s = scene.node(source);
-    std::string base = s ? s->name : "Body";
+    return numbered_copy(scene, pending, s ? s->name : "Body", false);
+  }
+
+  // `base` itself when no body has that name and `free` is set, else `base` (its own number dropped) with the next number
+  // no body has.
+  std::string numbered_copy(const Scene& scene, const json& pending, std::string base, bool free) {
+    const std::string whole = base;
     int from = 1;
     const size_t space = base.find_last_of(' ');
     if (space != std::string::npos && space + 1 < base.size() && base.size() - space <= 7 &&
@@ -646,6 +764,7 @@ struct Walk {
     std::set<std::string> used = history_names ? *history_names : std::set<std::string>();
     for (const auto& [id, n] : scene.nodes) used.insert(n.name);
     for (const auto& b : pending) used.insert(b.value("name", ""));
+    if (free && !used.count(whole)) return whole;
     for (int i = from + 1;; ++i) {
       std::string name = base + " " + std::to_string(i);
       if (!used.count(name)) return name;
@@ -702,7 +821,22 @@ struct Walk {
   }
 
   json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name,
-                   const std::string& component) {
+                   const std::string& component, const json& name_map = json()) {
+    // A mirror's name_map: its copies take their source's name with the words swapped ("Bracket R" -> "Bracket L", numbered
+    // only when that name is taken), and go into the source's sibling component whose name swaps so ("Right side" ->
+    // "Left side") when there is exactly one.
+    const auto swaps = name_pairs(name_map);
+    auto mapped_parent = [&](const Node& source) -> std::string {
+      const Node* in = source.parent.empty() ? nullptr : ctx.scene.node(source.parent);
+      if (!in || swaps.empty()) return source.parent;
+      const std::string want = swap_words(in->name, swaps);
+      if (want == in->name) return source.parent;
+      std::string found;
+      int count = 0;
+      for (const auto& [id, n] : ctx.scene.nodes)
+        if (n.kind == Node::Kind::Component && n.parent == in->parent && n.name == want) found = id, ++count;
+      return count == 1 ? found : source.parent;
+    };
     json result = json::object();
     json bodies = json::array();
     std::vector<json> prev_new;
@@ -724,6 +858,8 @@ struct Walk {
         ++next_new;
         entry["id"] = prev ? (*prev)["id"] : json(new_uuid());
         if (prev && prev->contains("name")) entry["name"] = (*prev)["name"];
+        else if (const Node* s = b.source.empty() || swaps.empty() ? nullptr : ctx.scene.node(b.source); s && swap_words(s->name, swaps) != s->name)
+          entry["name"] = numbered_copy(ctx.scene, bodies, swap_words(s->name, swaps), true);
         else if (!b.source.empty()) entry["name"] = copy_name(ctx.scene, bodies, b.source);
         else if (!feature_name.empty()) entry["name"] = numbered_name(feature_name, made + 1, made_count);
         else entry["name"] = next_body_name(ctx.scene, bodies, "Body");
@@ -733,7 +869,7 @@ struct Walk {
             if (prev->contains(k)) entry[k] = (*prev)[k];
           if (!prev->contains("parent") && b.source.empty() && !component.empty()) entry["parent"] = component;  // back in it
         } else if (const Node* s = b.source.empty() ? nullptr : ctx.scene.node(b.source)) {
-          if (!s->parent.empty()) entry["parent"] = s->parent;
+          if (const std::string parent = mapped_parent(*s); !parent.empty()) entry["parent"] = parent;
           if (s->has_color) entry["color"] = s->color;
         } else if (b.source.empty() && !component.empty()) {
           entry["parent"] = component;
@@ -1068,7 +1204,7 @@ struct Walk {
                 fp = fingerprint();
               }
             }
-            result = materialize(ctx, out, stored, id, data.value("name", ""), component);
+            result = materialize(ctx, out, stored, id, data.value("name", ""), component, kind == "mirror" ? inputs.value("name_map", json()) : json());
           } catch (const Standard_Failure&) {  // worded per kind: the kernel's own text helps nobody (mcp-eval 2026-10-06)
             result = {{"error", kernel_failure_text(kind, data.value("name", ""))}};
           } catch (const std::exception& ex) {
@@ -1343,12 +1479,21 @@ json map_expressions(const std::string& type, const json& data, const std::funct
     const json original = solved_geometry(data);
     json geometry = original;
     bool changed = false;
-    if (geometry.contains("constraints"))
-      for (auto& c : geometry["constraints"])
-        if (c.contains("expr") && c["expr"].is_string()) {
-          const std::string e = c["expr"].get<std::string>();
-          if (fn(e) != e) { c["expr"] = fn(e); changed = true; }
-        }
+    auto text = [&](json& value) {
+      if (!value.is_string()) return;
+      const std::string e = value.get<std::string>();
+      if (fn(e) != e) { value = fn(e); changed = true; }
+    };
+    // Dimensions (the offset relationship's among the joins kept apart for older builds) and equation curves' x, y, t0, t1.
+    for (const char* key : {"constraints", "more_constraints"})
+      if (geometry.contains(key) && geometry[key].is_array())
+        for (auto& c : geometry[key])
+          if (c.contains("expr")) text(c["expr"]);
+    if (geometry.contains("entities") && geometry["entities"].is_array())
+      for (auto& e : geometry["entities"])
+        if (e.contains("equation") && e["equation"].is_object())
+          for (const char* key : {"x", "y", "t0", "t1"})
+            if (e["equation"].contains(key)) text(e["equation"][key]);
     if(geometry.contains("patterns"))for(auto& pattern:geometry["patterns"])for(auto& value:pattern["inputs"])
       if(value.is_string()){const std::string e=value.get<std::string>();if(fn(e)!=e){value=fn(e);changed=true;}}
     if (changed) set["geometry_delta"] = sketch_delta(original,geometry);

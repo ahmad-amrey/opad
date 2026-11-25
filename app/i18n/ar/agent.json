@@ -468,5 +468,17 @@
  "Drop the preview. Your design doesn't change.": "تجاهل المعاينة. لن يتغير تصميمك.",
  "%1's preview · not applied": "معاينة %1 · لم تُطبَّق",
  "No steps yet.": "لا خطوات بعد.",
- "Replaced by a new task. Nothing changed.": "حلّت محلها مهمة جديدة. لم يتغير شيء."
+ "Replaced by a new task. Nothing changed.": "حلّت محلها مهمة جديدة. لم يتغير شيء.",
+ "Path to %1": "مسار %1",
+ "Select the %1 program (%2)": "اختر برنامج %1 ‏(%2)",
+ "That is OPAD's own program. Choose %1's program (%2).": "هذا برنامج OPAD نفسه. اختر برنامج %1 ‏(%2).",
+ "Program: %1": "البرنامج: %1",
+ "Settings file: %1": "ملف الإعدادات: %1",
+ "OPAD looked for %1 and didn't find it. If it is installed, choose its program (%2).": "بحث OPAD عن %1 ولم يجده. إن كان مثبّتًا، فاختر برنامجه (%2).",
+ "%1's program, chosen by you (empty it to let OPAD find it):": "برنامج %1 الذي اخترته (أفرغ الحقل ليبحث عنه OPAD بنفسه):",
+ "%1 is working on %2": "%1 يعمل على %2",
+ "In %1's words": "بكلمات %1",
+ "%1 finished its phase": "أنهى %1 مرحلته",
+ "%1's phase: %2": "مرحلة %1: %2",
+ "%1 · %2": "%1 · %2"
 }

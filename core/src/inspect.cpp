@@ -47,6 +47,8 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <queue>
+#include <memory>
 #include <set>
 
 #include "opad/assets.hpp"
@@ -356,10 +358,48 @@ json describe_entity(const TopoDS_Shape& sub) {
   return j;
 }
 
+json describe_entity(const TopoDS_Shape& sub, const json& filters) {
+  json j = describe_entity(sub);
+  auto asks = [&](const char* lo, const char* hi) { return filters.is_object() && (filters.contains(lo) || filters.contains(hi)); };
+  if (sub.ShapeType() == TopAbs_EDGE && asks("length_min", "length_max")) j["length"] = GCPnts_AbscissaPoint::Length(BRepAdaptor_Curve(TopoDS::Edge(sub)));
+  if (sub.ShapeType() == TopAbs_FACE && asks("area_min", "area_max")) j["area"] = area_properties(sub).mass;
+  return j;
+}
+
+std::function<json(const TopoDS_Shape&)> entity_describer(const TopoDS_Shape& body, const json& filters) {
+  // The edges on a hole of some face: every wire of a face but its outer one.
+  auto inner = std::make_shared<TopTools_IndexedMapOfShape>();
+  const bool loops = filters.is_object() && filters.contains("loop");
+  if (loops)
+    for (TopExp_Explorer f(body, TopAbs_FACE); f.More(); f.Next()) {
+      const TopoDS_Face& face = TopoDS::Face(f.Current());
+      const TopoDS_Wire outer = BRepTools::OuterWire(face);
+      for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next())
+        if (!w.Current().IsSame(outer)) TopExp::MapShapes(w.Current(), TopAbs_EDGE, *inner);
+    }
+  return [inner, loops, filters](const TopoDS_Shape& sub) {
+    json j = describe_entity(sub, filters);
+    if (loops && sub.ShapeType() == TopAbs_EDGE) j["loop"] = inner->Contains(sub) ? "inner" : "outer";
+    return j;
+  };
+}
+
 bool entity_matches(const json& detail, const json& filters, double tolerance) {
-  static const std::set<std::string> known = {"curve", "surface", "radius_min", "radius_max", "parallel_to", "normal", "at_plane", "bounds"};
+  static const std::set<std::string> known = {"curve", "surface", "radius_min", "radius_max", "length_min", "length_max", "area_min", "area_max",
+                                              "parallel_to", "normal", "at_plane", "bounds", "bounds_mode", "loop"};
   for (const auto& [key, value] : filters.items())
-    if (!known.count(key)) throw Error("unknown filter \"" + key + "\" (curve, surface, radius_min, radius_max, parallel_to, normal, at_plane, bounds)");
+    if (!known.count(key))
+      throw Error("unknown filter \"" + key + "\" (curve, surface, radius_min, radius_max, length_min, length_max, area_min, area_max, parallel_to, normal, "
+                  "at_plane, bounds, bounds_mode, loop)");
+  for (const auto& [key, value] : filters.items())  // an expression a rule selector did not evaluate (query_entities does)
+    if (value.is_string() && key != "curve" && key != "surface" && key != "parallel_to" && key != "normal" && key != "bounds_mode" && key != "loop")
+      throw Error("filter \"" + key + "\" takes a number here, not \"" + value.get<std::string>() + "\"");
+  const std::string bounds_mode = filters.value("bounds_mode", "inside");
+  if (bounds_mode != "inside" && bounds_mode != "intersects" && bounds_mode != "outside")
+    throw Error("bounds_mode is \"inside\" (the whole entity in the box, the default), \"intersects\" (any part of it) or \"outside\" (none of it)");
+  if (filters.contains("bounds_mode") && !filters.contains("bounds")) throw Error("bounds_mode needs bounds {min, max}");
+  if (filters.contains("loop") && filters["loop"] != "inner" && filters["loop"] != "outer")
+    throw Error("loop is \"inner\" (edges on a hole of one of the body's faces) or \"outer\" (every other edge)");
   auto axis = [](const std::string& a) { return a == "x" ? 0 : a == "y" ? 1 : 2; };
   // A direction filter as a unit vector: "x" / "+x" / "-z" or [x, y, z].
   auto direction = [&](const json& v, bool signed_axis) {
@@ -384,6 +424,16 @@ bool entity_matches(const json& detail, const json& filters, double tolerance) {
   if (filters.contains("surface") && detail.value("surface", "") != filters["surface"].get<std::string>()) return false;
   if (filters.contains("radius_min") && (!detail.contains("radius") || detail["radius"].get<double>() < filters["radius_min"].get<double>() - tolerance)) return false;
   if (filters.contains("radius_max") && (!detail.contains("radius") || detail["radius"].get<double>() > filters["radius_max"].get<double>() + tolerance)) return false;
+  // Edge lengths and face areas (measured by describe_entity when these are asked): the longer or the shorter of two loops.
+  auto in_range = [&](const char* field, const char* lo, const char* hi, double slack) {
+    if (!filters.contains(lo) && !filters.contains(hi)) return true;
+    if (!detail.contains(field) || !detail[field].is_number()) return false;
+    const double v = detail[field].get<double>();
+    return !(filters.contains(lo) && v < filters[lo].get<double>() - slack) && !(filters.contains(hi) && v > filters[hi].get<double>() + slack);
+  };
+  if (!in_range("length", "length_min", "length_max", tolerance)) return false;
+  if (!in_range("area", "area_min", "area_max", tolerance * tolerance)) return false;
+  if (filters.contains("loop") && detail.value("loop", "") != filters["loop"].get<std::string>()) return false;
   if (filters.contains("parallel_to")) {
     if (!detail.contains("direction")) return false;
     if (std::fabs(vec_of(detail["direction"]).Dot(direction(filters["parallel_to"], false))) < 1 - 1e-8) return false;
@@ -401,11 +451,19 @@ bool entity_matches(const json& detail, const json& filters, double tolerance) {
       const double at = plane["value"].get<double>();
       if (std::fabs(box["min"][k].get<double>() - at) > tolerance || std::fabs(box["max"][k].get<double>() - at) > tolerance) return false;
     }
-    if (filters.contains("bounds"))
-      for (int k = 0; k < 3; ++k)
-        if (box["min"][k].get<double>() < filters["bounds"]["min"][k].get<double>() - tolerance ||
-            box["max"][k].get<double>() > filters["bounds"]["max"][k].get<double>() + tolerance)
-          return false;
+    if (filters.contains("bounds")) {
+      // A null bound leaves that side open ([null, null, 100] as min: everything from z = 100 up).
+      const auto& region = filters["bounds"];
+      auto bound = [&](const char* side, int k, double open) { const json& v = region[side][k]; return v.is_null() ? open : v.get<double>(); };
+      bool inside = true, touches = true;
+      for (int k = 0; k < 3; ++k) {
+        const double lo = bound("min", k, -1e300), hi = bound("max", k, 1e300);
+        const double b0 = box["min"][k].get<double>(), b1 = box["max"][k].get<double>();
+        if (b0 < lo - tolerance || b1 > hi + tolerance) inside = false;
+        if (b1 < lo - tolerance || b0 > hi + tolerance) touches = false;
+      }
+      if (bounds_mode == "inside" ? !inside : bounds_mode == "intersects" ? !touches : touches) return false;
+    }
   }
   return true;
 }
@@ -1096,6 +1154,134 @@ json shape_distance(const TopoDS_Shape& s1, const TopoDS_Shape& s2, const std::f
     j["tolerance_mm"] = 2 * deflection;
   }
   return j;
+}
+
+struct MeshSet {
+  Handle(BRepExtrema_TriangleSet) set;
+};
+
+std::shared_ptr<const MeshSet> mesh_set(const TopoDS_Shape& shape) {
+  // The faces that have a mesh: one the mesher left bare (a sliver on a big casting) is left out rather than the whole
+  // body falling back to exact distances, which took minutes per pair on the Engine's cylinder head.
+  BRepExtrema_ShapeList faces;
+  for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
+    TopLoc_Location loc;
+    const Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(TopoDS::Face(ex.Current()), loc);
+    if (tri.IsNull() || tri->NbTriangles() == 0) continue;
+    faces.Append(ex.Current());
+  }
+  if (faces.Size() == 0) return nullptr;
+  auto out = std::make_shared<MeshSet>();
+  out->set = new BRepExtrema_TriangleSet(faces);
+  if (out->set->Size() == 0 || out->set->BVH().IsNull()) return nullptr;  // the tree built now: read-only from here on
+  return out;
+}
+
+// Both trees walked together, nearest pair of boxes first (a heap), b's boxes and triangles moved into a's frame as
+// they are met; it ends when no pair of boxes left is nearer than the best so far.
+MeshGap mesh_distance(const MeshSet& a, const MeshSet& b, const Mat4& b_to_a, double relative, double exact_below, double stop_above,
+                      double enough) {
+  const double enough_sq = enough * enough;  // as near as that is near enough: faces lying on each other tie everywhere
+  const auto& ta = a.set->BVH();
+  const auto& tb = b.set->BVH();
+  auto map = [&](const BVH_Vec3d& p) {
+    const Vec3 q = b_to_a.apply({p.x(), p.y(), p.z()});
+    return BVH_Vec3d(q[0], q[1], q[2]);
+  };
+  auto box_b = [&](int node, BVH_Vec3d& lo, BVH_Vec3d& hi) {
+    const BVH_Vec3d& mn = tb->MinPoint(node);
+    const BVH_Vec3d& mx = tb->MaxPoint(node);
+    const double inf = std::numeric_limits<double>::infinity();
+    lo = BVH_Vec3d(inf, inf, inf), hi = BVH_Vec3d(-inf, -inf, -inf);
+    for (int c = 0; c < 8; ++c) {
+      const BVH_Vec3d p = map(BVH_Vec3d(c & 1 ? mx.x() : mn.x(), c & 2 ? mx.y() : mn.y(), c & 4 ? mx.z() : mn.z()));
+      lo = lo.cwiseMin(p), hi = hi.cwiseMax(p);
+    }
+  };
+  auto gap = [&](int na, const BVH_Vec3d& lo, const BVH_Vec3d& hi) {
+    const BVH_Vec3d& mn = ta->MinPoint(na);
+    const BVH_Vec3d& mx = ta->MaxPoint(na);
+    double s = 0;
+    for (int k = 0; k < 3; ++k) {
+      const double g = std::max({0.0, mn[k] - hi[k], lo[k] - mx[k]});
+      s += g * g;
+    }
+    return s;
+  };
+  double best = std::numeric_limits<double>::max();
+  // What a pair of boxes must come under to be opened: the best so far less what may be given away, `enough` (the meshes
+  // are no truer than that) and, above exact_below, the relative part.
+  const double stop_sq = stop_above * stop_above;
+  auto bar = [&] {
+    const double d = std::sqrt(best);
+    const double give = std::max(enough, d > exact_below ? d * relative / (1 + relative) : 0.0);
+    const double open = std::max(0.0, d - give);
+    return std::min(stop_sq, open * open);
+  };
+  BVH_Vec3d pa, pb;
+  struct Visit {
+    double sq;
+    int na, nb;
+  };
+  auto further = [](const Visit& x, const Visit& y) { return x.sq > y.sq; };
+  std::priority_queue<Visit, std::vector<Visit>, decltype(further)> stack(further);  // nearest boxes first
+  {
+    BVH_Vec3d lo, hi;
+    box_b(0, lo, hi);
+    stack.push({gap(0, lo, hi), 0, 0});
+  }
+  std::vector<BVH_Vec3d> moved;
+  while (!stack.empty() && best > enough_sq) {
+    const Visit v = stack.top();
+    stack.pop();
+    if (v.sq >= bar()) break;  // nothing near enough is left
+    const bool leaf_a = ta->IsOuter(v.na), leaf_b = tb->IsOuter(v.nb);
+    if (leaf_a && leaf_b) {
+      moved.clear();
+      for (int j = tb->BegPrimitive(v.nb); j <= tb->EndPrimitive(v.nb); ++j) {
+        BVH_Vec3d p[3];
+        b.set->GetVertices(j, p[0], p[1], p[2]);
+        for (const auto& q : p) moved.push_back(map(q));
+      }
+      for (int i = ta->BegPrimitive(v.na); i <= ta->EndPrimitive(v.na) && best > enough_sq; ++i) {
+        BVH_Vec3d p[3];
+        a.set->GetVertices(i, p[0], p[1], p[2]);
+        for (size_t j = 0; j + 2 < moved.size() && best > enough_sq; j += 3) {
+          BVH_Vec3d x, y;
+          const double d = triTri(p, &moved[j], x, y);
+          if (d < best) best = d, pa = x, pb = y;
+        }
+      }
+      continue;
+    }
+    // Split the side that is not a leaf (the larger box when neither is).
+    auto extent = [](const BVH_Vec3d& lo, const BVH_Vec3d& hi) { return (hi - lo).SquareModulus(); };
+    BVH_Vec3d lo, hi;
+    box_b(v.nb, lo, hi);
+    const bool split_a = leaf_b || (!leaf_a && extent(ta->MinPoint(v.na), ta->MaxPoint(v.na)) >= extent(lo, hi));
+    Visit c[2];
+    if (split_a) {
+      for (int k = 0; k < 2; ++k) {
+        const int child = k ? ta->Child<1>(v.na) : ta->Child<0>(v.na);
+        c[k] = {gap(child, lo, hi), child, v.nb};
+      }
+    } else {
+      for (int k = 0; k < 2; ++k) {
+        const int child = k ? tb->Child<1>(v.nb) : tb->Child<0>(v.nb);
+        BVH_Vec3d clo, chi;
+        box_b(child, clo, chi);
+        c[k] = {gap(v.na, clo, chi), v.na, child};
+      }
+    }
+    for (const auto& x : c)
+      if (x.sq < bar()) stack.push(x);
+  }
+  MeshGap out;
+  out.value = std::sqrt(best);
+  if (best > stop_sq) out.value = stop_above, out.above = true;  // no nearer than that: not looked for further
+  out.a = {pa.x(), pa.y(), pa.z()};
+  out.b = {pb.x(), pb.y(), pb.z()};
+  return out;
 }
 
 json measure_edge_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b,

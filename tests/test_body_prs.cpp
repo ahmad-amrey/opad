@@ -46,6 +46,10 @@ class CountingVolume : public SelectMgr_SelectingVolumeManager {
 };
 }
 
+// A mesh's Face, Edge and Vertex modes are one worker-built group each (BodyPrs::meshGroups), never a sensitive per
+// triangle, side or node (a 3.3M-triangle scan's Edge filter took 217 s on the UI thread that way): a box takes every
+// triangle, side or node by its ordinal, owners made as taken and without geometry until prepared; a point takes the one
+// under the pointer, nearest the ray.
 TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
   struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
   Handle(Poly_Triangulation) mesh=new Poly_Triangulation(4,2,false);
@@ -54,14 +58,22 @@ TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
   mesh->SetTriangle(1,Poly_Triangle(1,2,3)); mesh->SetTriangle(2,Poly_Triangle(2,4,3));
   TopoDS_Face face; BRep_Builder().MakeFace(face,mesh);
   Handle(TestBody) body=new TestBody(face,BodyPrs::build(face,Bnd_Box()));
+  CHECK(body->meshPicked());
   Handle(Graphic3d_Camera) camera=new Graphic3d_Camera();
   camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
   camera->SetEyeAndCenter(gp_Pnt(5,5,100),gp_Pnt(5,5,0)); camera->SetUp(gp::DY()); camera->SetScale(20);
+  // A point of the plane z = 0 on the 1000 x 1000 window: 50 px a unit, (5, 5) in the middle.
+  auto pixel=[](double x,double y){return gp_Pnt2d(500+(x-5)*50,500-(y-5)*50);};
+  struct Point { double x, y; int ordinal; };
+  const std::vector<std::pair<TopAbs_ShapeEnum,std::vector<Point>>> points={
+    {TopAbs_FACE,{{2,2,0},{8,8,1}}},                // inside each triangle
+    {TopAbs_EDGE,{{5,0.02,0},{10,5,3},{0.02,5,2}}},  // the bottom (1-2), the right (2-4) and the left (3-1) sides
+    {TopAbs_VERTEX,{{0.05,0.05,0},{9.9,9.9,3}}}};    // nodes 1 and 4
   for(const auto [type,count]:{std::pair{TopAbs_FACE,2},std::pair{TopAbs_EDGE,6},std::pair{TopAbs_VERTEX,4}}) {
     Handle(SelectMgr_Selection) selection=new SelectMgr_Selection(AIS_Shape::SelectionMode(type));
     body->ComputeSelection(selection,AIS_Shape::SelectionMode(type));
     const int occluding=type==TopAbs_FACE?0:1;  // UI-31: the Edge and Vertex modes hold the faces too
-    CHECK_EQ(selection->Entities().Size(),count+occluding);
+    CHECK_EQ(selection->Entities().Size(),1+occluding);
     SelectMgr_SelectingVolumeManager volume;
     volume.InitBoxSelectingVolume(gp_Pnt2d(0,0),gp_Pnt2d(1000,1000));
     volume.SetCamera(camera); volume.SetWindowSize(1000,1000); volume.AllowOverlapDetection(true); volume.BuildSelectingVolume();
@@ -80,16 +92,55 @@ TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
         ++occluders;continue;
       }
       CHECK(matched);
-      auto owner=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
-      CHECK(!owner.IsNull());
-      CHECK(!owner->HasShape()); // A box candidate must not construct analytic geometry.
-      owner->prepare();
-      CHECK(owner->HasShape());
-      CHECK_EQ(owner->Shape().ShapeType(),type); owners.insert(owner->index());
+      auto group=Handle(GroupSensitive)::DownCast(entity->BaseSensitive());
+      CHECK(!group.IsNull());
+      for(const int index:group->hits()) {
+        auto owner=group->owner(index);
+        CHECK(!owner.IsNull());
+        CHECK(owner==body->groupOwner(type,index));  // the same owner every time: a second click takes it out
+        CHECK(!owner->HasShape()); // A box candidate must not construct analytic geometry.
+        owner->prepare();
+        CHECK(owner->HasShape());
+        CHECK_EQ(owner->Shape().ShapeType(),type); CHECK_EQ(owner->index(),index); owners.insert(owner->index());
+      }
+      for(const auto& p:std::find_if(points.begin(),points.end(),[type](const auto& e){return e.first==type;})->second) {
+        SelectMgr_SelectingVolumeManager point;
+        point.InitPointSelectingVolume(pixel(p.x,p.y));
+        point.SetCamera(camera); point.SetWindowSize(1000,1000); point.SetPixelTolerance(int(entity->BaseSensitive()->SensitivityFactor())); point.BuildSelectingVolume();
+        SelectBasics_PickResult at;
+        CHECK(entity->BaseSensitive()->Matches(point,at));
+        auto owner=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+        CHECK(!owner.IsNull());
+        CHECK_EQ(owner->index(),p.ordinal);
+      }
     }
     CHECK_EQ(owners.size(),size_t(count));
     CHECK_EQ(occluders,occluding);
   }
+  CHECK(body->groupOwner(TopAbs_EDGE,6).IsNull());  // past the last side
+}
+
+// A big mesh still has one sensitive per mode: the selection built when a filter is activated does not grow with it.
+TEST(big_mesh_modes_hold_one_group) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  const int n=200;
+  Handle(Poly_Triangulation) mesh=new Poly_Triangulation((n+1)*(n+1),2*n*n,false);
+  for(int j=0;j<=n;++j) for(int i=0;i<=n;++i) mesh->SetNode(j*(n+1)+i+1,gp_Pnt(i,j,0.1*std::sin(i*0.3)));
+  int t=0;
+  for(int j=0;j<n;++j) for(int i=0;i<n;++i) {
+    const int a=j*(n+1)+i+1,b=a+1,c=a+n+1,d=c+1;
+    mesh->SetTriangle(++t,Poly_Triangle(a,b,d)); mesh->SetTriangle(++t,Poly_Triangle(a,d,c));
+  }
+  TopoDS_Face face; BRep_Builder().MakeFace(face,mesh);
+  Handle(TestBody) body=new TestBody(face,BodyPrs::build(face,Bnd_Box()));
+  for(const auto type:{TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) {
+    Handle(SelectMgr_Selection) selection=new SelectMgr_Selection(AIS_Shape::SelectionMode(type));
+    body->ComputeSelection(selection,AIS_Shape::SelectionMode(type));
+    CHECK_EQ(selection->Entities().Size(),type==TopAbs_FACE?1:2);
+  }
+  CHECK(!body->groupOwner(TopAbs_FACE,2*n*n-1).IsNull());
+  CHECK(!body->groupOwner(TopAbs_EDGE,6*n*n-1).IsNull());
+  CHECK(!body->groupOwner(TopAbs_VERTEX,(n+1)*(n+1)-1).IsNull());
 }
 
 // UI-31: a BRep body's faces stand in front of its edges and vertices under one owner that is never highlighted, and only

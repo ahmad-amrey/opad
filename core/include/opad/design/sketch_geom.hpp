@@ -45,8 +45,10 @@ struct Region {
 std::vector<Region> sketch_regions(const Sketch& sk, const Frame& frame);
 // Index of the region containing (u, v), or -1.
 int region_at(const std::vector<Region>& regions, const Frame& frame, double u, double v);
-// The curves (all non-construction ones, or the listed entities) as one connected wire. Throws when they do
-// not chain up.
+// How far apart two curve ends of a path may be and still be one joint: 1e-5 of the path's size, 1e-6 to 0.01 mm.
+double path_snap_tolerance(double size);
+// The curves (all non-construction ones, or the listed entities) as one connected wire, ends within
+// path_snap_tolerance snapped together. Throws when they do not chain up, naming the ends that meet no other curve.
 TopoDS_Wire sketch_wire(const Sketch& sk, const Frame& frame, const std::vector<int>& entities = {});
 // Bounding box of the points in sketch coordinates; false when empty.
 bool sketch_bounds(const Sketch& sk, double& u0, double& v0, double& u1, double& v1);

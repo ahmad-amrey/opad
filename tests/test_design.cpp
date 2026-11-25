@@ -562,6 +562,40 @@ TEST(construction_sweep_loft_pipe) {
   CHECK(resolve(doc).unresolved.empty());
 }
 
+// A path's curves whose ends were given to a few decimals (tangent points rounded to 1e-6) meet within a hair, not
+// exactly: ends within path_snap_tolerance (1e-5 of the path's size) are snapped; a real gap is refused naming the ends.
+TEST(sweep_path_snaps_near_ends_and_names_gaps) {
+  CHECK_NEAR(design::path_snap_tolerance(30), 3e-4, 1e-12);
+  CHECK_NEAR(design::path_snap_tolerance(1e-3), 1e-6, 1e-15);
+  CHECK_NEAR(design::path_snap_tolerance(1e6), 1e-2, 1e-12);
+  Sketch disc;
+  disc.add_circle(disc.add_point(0, 0), 2);
+  // A line along x, then a quarter arc turning up from its end; the arc starts `gap` mm above the line's end.
+  auto path = [](double gap, int& line, int& arc) {
+    Sketch sk;
+    const int a = sk.add_point(0, 0), b = sk.add_point(20, 0), c = sk.add_point(20, 10), s = sk.add_point(20, gap), e = sk.add_point(30 - gap, 10);
+    line = sk.add_line(a, b);
+    arc = sk.add_arc(c, s, e);
+    return sk;
+  };
+  Document doc = Document::create();
+  const std::string profile = run_id(sketch_cmd(doc, disc, {{"base", "yz"}}));
+  int line = 0, arc = 0;
+  const std::string joined = run_id(sketch_cmd(doc, path(4e-6, line, arc)));
+  feature_cmd(doc, "sweep", {{"profiles", json::array({json{{"sketch", profile}, {"all", true}}})}, {"path", {{"sketch", joined}}}});
+  const double length = 20 + M_PI / 2 * 10;
+  CHECK_NEAR(total_volume(doc), M_PI * 4 * length, M_PI * 4 * length * 0.01);
+  const std::string open = run_id(sketch_cmd(doc, path(0.5, line, arc)));
+  std::string error;
+  try {
+    feature_cmd(doc, "sweep", {{"profiles", json::array({json{{"sketch", profile}, {"all", true}}})}, {"path", {{"sketch", open}}}});
+  } catch (const std::exception& e) {
+    error = e.what();
+  }
+  CHECK(error.find("one connected chain") != std::string::npos);
+  CHECK(error.find("entity " + std::to_string(line) + "'s end is 0.5 mm from entity " + std::to_string(arc) + "'s start") != std::string::npos);
+}
+
 TEST(coil_and_thicken) {
   Document doc = Document::create();
   feature_cmd(doc, "coil", {{"diameter", "20 mm"}, {"pitch", "5 mm"}, {"turns", "4"}, {"size", "2 mm"}});
@@ -678,6 +712,73 @@ TEST(a_failing_features_bodies_keep_their_names_and_references) {
   CHECK(s.node(disc) && s.node(copy));
   if (s.node(copy)) CHECK_EQ(s.node(copy)->name, name);
   CHECK(s.node(other) && s.node(other)->name != name);
+}
+
+// Shell after a pocket near a rim fillet: the pocket's wall comes within the thickness of the fillet,
+// a face it does not touch, which the kernel's neighbour-only join could not close; the join over every face does. Where
+// that fails too, the error names the faces that come too close.
+TEST(shell_after_a_pocket_near_a_rim_fillet) {
+  auto cup = [](double a, double b, std::string* error) {
+    Document doc = Document::create();
+    auto ellipse = [](double x, double y) {
+      return json{{"entities", json::array({{{"id", 10}, {"type", "spline"},
+                                             {"equation", {{"x", std::to_string(x) + " mm * cos(t)"}, {"y", std::to_string(y) + " mm * sin(t)"}, {"t0", "0 deg"}, {"t1", "360 deg"}, {"tolerance", 0.005}}}}})}};
+    };
+    const std::string outline = commands::run("sketch", {{"geometry", ellipse(40, 25)}}, &doc)["sketch_id"];
+    const std::string body = feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", outline}}})}, {"distance", "20 mm"}})["body_ids"][0];
+    feature_cmd(doc, "fillet", {{"edges", json::array({{{"body", body}, {"kind", "edge"}, {"select", {{"at_plane", {{"axis", "z"}, {"value", 20}}}}}}})}, {"radius", "6 mm"}});
+    const std::string pocket = commands::run("sketch", {{"plane", {{"origin", {0, 0, 20}}, {"normal", {0, 0, 1}}}}, {"geometry", ellipse(a, b)}}, &doc)["sketch_id"];
+    feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", pocket}}})}, {"distance", "3 mm"}, {"flip", true}, {"operation", "cut"}, {"targets", json::array({body_ref(body)})}});
+    const double solid = total_volume(doc);
+    try {
+      feature_cmd(doc, "shell", {{"faces", json::array({{{"body", body}, {"kind", "face"}, {"select", {{"normal", "-z"}, {"at_plane", {{"axis", "z"}, {"value", 0}}}}}}})}, {"thickness", "2 mm"}});
+    } catch (const Error& e) {
+      *error = e.what();
+      return 0.0;
+    }
+    return solid - total_volume(doc);  // what the shell took out
+  };
+  std::string error;
+  const double close = cup(33, 18, &error), roomy = cup(30, 15, &error);
+  CHECK(error.empty());
+  // Both hollowed: the cavity a little smaller with the bigger pocket (its walls' 2 mm skin takes room from it).
+  CHECK(roomy > 35000 && close > 35000 && close < roomy);
+  error.clear();
+  // The join over every face leaves no valid solid here (OCCT 7.9): the faces are named instead, the fillet and the wall.
+  if (cup(32, 17, &error) == 0.0) CHECK(error.find("mm apart, closer than the thickness") != std::string::npos);
+}
+
+// A mirror's name_map names the copies after their sources with words swapped, and puts each in the sibling component whose
+// name swaps so: a right-hand assembly mirrored into the left one with no renames or reparenting.
+TEST(mirror_name_map_names_and_places_the_copies) {
+  Document doc = Document::create();
+  const std::string right = commands::run("component", {{"name", "Right side"}}, &doc)["component_id"];
+  const std::string left = commands::run("component", {{"name", "Left side"}}, &doc)["component_id"];
+  auto box = [&](const char* name, double x, const std::string& parent) {
+    return commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", std::to_string(x) + " mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "5 mm"}}},
+                                     {"body_name", name}, {"parent", parent}}, &doc)["body_ids"][0].get<std::string>();
+  };
+  const std::string cup = box("Bracket R", 40, right), arm = box("Arm_R", 60, right), rim = box("Rim", 80, right);
+  const json made = feature_cmd(doc, "mirror", {{"bodies", json::array({body_ref(cup), body_ref(arm), body_ref(rim)})}, {"plane", {{"base", "yz"}}},
+                                                {"name_map", "R=L, Right=Left"}, {"operation", "new"}});
+  Scene s = resolve(doc);
+  std::map<std::string, std::string> parents;
+  for (const auto& id : made["body_ids"]) {
+    const Node* n = s.node(id.get<std::string>());
+    CHECK(n);
+    if (n) parents[n->name] = n->parent;
+  }
+  CHECK(parents.count("Bracket L") && parents["Bracket L"] == left);
+  CHECK(parents.count("Arm_L") && parents["Arm_L"] == left);
+  CHECK(parents.count("Rim 2") && parents["Rim 2"] == left);  // nothing to swap in "Rim": numbered, in the swapped component
+  // Mirrored again: "Bracket L" is taken, so the next copy is numbered after it; an object map works as the text does.
+  const json again = feature_cmd(doc, "mirror", {{"bodies", json::array({body_ref(cup)})}, {"plane", {{"base", "yz"}}}, {"name_map", {{"R", "L"}}}, {"operation", "new"}});
+  CHECK_EQ(resolve(doc).node(again["body_ids"][0].get<std::string>())->name, std::string("Bracket L 2"));
+  // The names stay through a regeneration (they are the result's), and a malformed map says what it takes.
+  commands::run("feature_edit", {{"target", made["feature_id"]}, {"inputs", {{"plane", {{"base", "xz"}}}}}}, &doc);
+  s = resolve(doc);
+  CHECK(s.node(made["body_ids"][0].get<std::string>()) && s.node(made["body_ids"][0].get<std::string>())->name == "Bracket L");
+  CHECK_THROWS(feature_cmd(doc, "mirror", {{"bodies", json::array({body_ref(cup)})}, {"plane", {{"base", "yz"}}}, {"name_map", "R to L"}, {"operation", "new"}}));
 }
 
 CHECK_MAIN()
@@ -1492,6 +1593,62 @@ TEST(rule_selectors_pick_the_same_edges_after_an_earlier_edit) {
   s = resolve(doc);
   CHECK(s.features.back().error.empty());
   CHECK(s.unresolved.empty());
+}
+
+// A rule's values follow the parameters (at_plane "h"), and rules tell a ring's two rims apart: by loop, by length, by
+// a box an edge reaches into (bounds_mode).
+TEST(rule_selectors_take_expressions_loops_lengths_and_bounds_modes) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "h"}, {"expr", "10 mm"}}, &doc);
+  const std::string body = feature_cmd(doc, "cylinder", {{"diameter", "20 mm"}, {"height", "h"}})["body_ids"][0];
+  feature_cmd(doc, "cylinder", {{"plane", {{"origin", {0, 0, -1}}, {"normal", {0, 0, 1}}}}, {"diameter", "10 mm"}, {"height", "h + 2 mm"},
+                                {"operation", "cut"}, {"targets", json::array({body})}});
+  auto edges = [&](const json& select) {
+    const json found = agent::query_entities(doc, resolve(doc), {{"body", body}, {"kind", "edge"}, {"filters", select}});
+    return found["total"].get<int>();
+  };
+  const json top = {{"curve", "circle"}, {"at_plane", {{"axis", "z"}, {"value", "h"}}}};
+  CHECK_EQ(edges(top), 2);
+  json inner = top, outer = top, longer = top, reaching = top, away = top;
+  inner["loop"] = "inner";
+  outer["loop"] = "outer";
+  CHECK_EQ(edges(inner), 1);
+  CHECK_EQ(edges(outer), 1);
+  longer["length_min"] = "2 * pi * 7 mm";  // between the rims' 31.4 and 62.8 mm
+  CHECK_EQ(edges(longer), 1);
+  // The box x >= 8: only the outer rim (radius 10) reaches into it; the inner one (radius 5) stays out.
+  reaching["bounds"] = {{"min", {8, nullptr, nullptr}}, {"max", {nullptr, nullptr, nullptr}}};
+  reaching["bounds_mode"] = "intersects";
+  CHECK_EQ(edges(reaching), 1);
+  away["bounds"] = reaching["bounds"];
+  away["bounds_mode"] = "outside";
+  CHECK_EQ(edges(away), 1);
+  CHECK_THROWS(edges({{"loop", "middle"}}));
+  // A rule whose at_plane is an expression follows the parameter alone, the body unchanged: the fingerprint sees its value.
+  {
+    Document d = Document::create();
+    commands::run("param", {{"name", "lid"}, {"expr", "20 mm"}}, &d);
+    const std::string b = feature_cmd(d, "box", {{"length", "40 mm"}, {"width", "30 mm"}, {"height", "20 mm"}})["body_ids"][0];
+    const json rule = {{"body", b}, {"kind", "edge"}, {"select", {{"curve", "line"}, {"at_plane", {{"axis", "z"}, {"value", "lid"}}}}}, {"expect", 4}};
+    const std::string f = feature_cmd(d, "fillet", {{"edges", json::array({rule})}, {"radius", "2 mm"}})["feature_id"];
+    commands::run("param", {{"name", "lid"}, {"expr", "0 mm"}}, &d);  // now the bottom edges
+    Scene ds = resolve(d);
+    CHECK(ds.feature(f)->error.empty());
+    double low = 1e9;
+    for (const auto& h : ds.feature(f)->result["selected"][0]["hints"]) low = std::min(low, h["c"][2].get<double>());
+    CHECK_NEAR(low, 0, 1e-6);
+  }
+  // A chamfer on the inner top rim by rule; the height changes and the rule still finds it at the new top.
+  const json rim = {{"body", body}, {"kind", "edge"}, {"select", inner}, {"expect", 1}};
+  const std::string chamfer = feature_cmd(doc, "chamfer", {{"edges", json::array({rim})}, {"distance", "1 mm"}})["feature_id"];
+  CHECK(resolve(doc).feature(chamfer)->error.empty());
+  const double before = total_volume(doc);
+  commands::run("param", {{"name", "h"}, {"expr", "14 mm"}}, &doc);
+  Scene s = resolve(doc);
+  CHECK(s.feature(chamfer)->error.empty());
+  CHECK_EQ(s.feature(chamfer)->result["selected"][0]["ordinals"].size(), 1u);
+  CHECK_NEAR(total_volume(doc) - before, M_PI * (100 - 25) * 4, 1e-6);  // 4 mm more ring, the same chamfer
+  CHECK(plan_regenerate(doc).ops.empty());  // nothing left out of date
 }
 
 // TODO 10 B8: extrude up to a face (a plane: its whole plane, also tilted) or up to a body.
@@ -2395,6 +2552,36 @@ TEST(an_equation_curve_follows_its_parameters_within_its_tolerance) {
   // A plain t added to an angle is refused rather than read as degrees.
   const json mixed = {{"entities", {{{"id", 30}, {"type", "spline"}, {"equation", {{"x", "10 mm * cos(t + 1 deg)"}, {"y", "10 mm * sin(t)"}, {"t0", 0}, {"t1", "2 * pi"}}}}}}};
   CHECK_THROWS(commands::run("sketch", {{"geometry", mixed}}, &doc));
+}
+
+// MCP stress test #23: parameters that only an equation curve names (an ellipse's half axes) were listed with used_by
+// [] and could be deleted; a rename left the equation naming the old name.
+TEST(params_used_by_sees_equation_curves) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "cup_a"}, {"expr", "30 mm"}}, &doc);
+  commands::run("param", {{"name", "cup_b"}, {"expr", "18 mm"}}, &doc);
+  commands::run("param", {{"name", "spare"}, {"expr", "1 mm"}}, &doc);
+  const json ellipse = {{"id", 10}, {"type", "spline"},
+                        {"equation", {{"x", "cup_a * cos(t)"}, {"y", "cup_b * sin(t)"}, {"t0", "0 deg"}, {"t1", "360 deg"}, {"tolerance", 0.01}}}};
+  const json made = commands::run("sketch", {{"name", "Cup outline"}, {"geometry", {{"entities", json::array({ellipse})}}}}, &doc);
+  const std::string sk = made["sketch_id"];
+  feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", sk}}})}, {"distance", "4 mm"}});
+  auto users = [&](const std::string& name) {
+    for (const auto& p : commands::run("params", json::object(), &doc))
+      if (p["name"] == name) return p["used_by"];
+    return json();
+  };
+  CHECK(users("cup_a") == json::array({"Cup outline"}));
+  CHECK(users("cup_b") == json::array({"Cup outline"}));
+  CHECK(users("spare") == json::array());
+  CHECK_THROWS(commands::run("param_delete", {{"name", "cup_a"}}, &doc));
+  // A rename follows into the equation, and the outline still regenerates from it.
+  commands::run("param", {{"name", "cup_a"}, {"rename", "cup_width"}}, &doc);
+  CHECK(users("cup_width") == json::array({"Cup outline"}));
+  commands::run("param", {{"name", "cup_width"}, {"expr", "32 mm"}}, &doc);
+  const Scene s = resolve(doc);
+  CHECK(s.unresolved.empty());
+  CHECK_EQ(s.sketch(sk)->geometry["entities"][0]["equation"]["x"].get<std::string>(), std::string("cup_width * cos(t)"));
 }
 
 // Gap log #14: an axis through two free points; combine with several targets; a sketch pattern given only its seeds

@@ -431,7 +431,7 @@ void RecoveryManager::restore(const Entry& entry,bool keepPath,std::function<voi
 void RecoveryManager::mergeInto(const Entry& entry,std::function<void(bool,QString)> done) {
   if(!sameDocument(entry)){done(false,tr("Open the document this snapshot was taken of to merge it there."));return;}
   if(m_doc->loading || m_doc->designBusy || m_design->sketchActive() || m_design->featureActive()){done(false,tr("Finish the current operation before recovery."));return;}
-  const auto generation=m_doc->generation,revision=m_doc->revision;QPointer<RecoveryManager> self(this);
+  const auto generation=m_doc->generation,revision=m_doc->docRevision;QPointer<RecoveryManager> self(this);
   const bool started=m_doc->captureSnapshot(m_jobs,[=,this](std::shared_ptr<opad::Document> current,const QString& error){
     if(!self)return;
     if(!current){done(false,error.isEmpty()?tr("Document changed during recovery. Retry when ready."):error);return;}
@@ -453,9 +453,9 @@ void RecoveryManager::mergeInto(const Entry& entry,std::function<void(bool,QStri
     },[=,this](bool ok,const QString& error){
       if(!self)return;
       if(!ok){done(false,error);return;}
-      if(m_doc->generation!=generation || m_doc->revision!=revision){done(false,tr("Document changed during recovery. Retry when ready."));return;}
+      if(m_doc->generation!=generation || m_doc->docRevision!=revision){done(false,tr("Document changed during recovery. Retry when ready."));return;}
       try {
-        m_doc->commitSnapshot(result->document,result->scene,revision,tr("merge recovered changes"));
+        m_doc->commitSnapshot(result->document,result->scene,revision,tr("merge recovered changes"),"recover");
         dispose(std::make_shared<std::pair<opad::Document,opad::Scene>>(std::move(result->document),std::move(result->scene)));  // what it replaced
         m_recoveredFiles<<entry.file;
         QString text=tr("Recovered changes merged into the open document: %n, one step to undo.",nullptr,int(result->mine));

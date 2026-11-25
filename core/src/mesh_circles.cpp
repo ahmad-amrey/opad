@@ -9,36 +9,95 @@
 #include <set>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <unordered_map>
+#include <map>
 
 namespace opad {
+namespace {
+struct KeyHash {
+  size_t operator()(const std::array<long long, 3>& k) const {
+    uint64_t h = 1469598103934665603ull;
+    for (long long v : k) h = (h ^ uint64_t(v)) * 1099511628211ull, h ^= h >> 29;
+    return size_t(h);
+  }
+};
+}  // namespace
+
+// Rims of a mesh: closed loops of its boundary and sharp-crease edges that lie on a circle. A 3D scan is millions of
+// triangles: the nodes are welded through a hash (once per node, then numbered in the order the triangles first use them,
+// as a weld per corner numbered them) and the sides sorted by their two ends, where maps of vectors took 13 s on a
+// 3.3M-triangle scan.
 std::vector<MeshCircle> mesh_circles(const TopoDS_Shape& shape) {
   if (!is_mesh_shape(shape)) return {};
   Bnd_Box box; BRepBndLib::Add(shape,box); if(box.IsVoid()) return {};
   const double tolerance=std::max(1e-7,box.CornerMin().Distance(box.CornerMax())*1e-7);
-  std::map<std::array<long long,3>,int> welded;
-  std::vector<gp_Pnt> points;
-  auto vertex=[&](const gp_Pnt& p) {
-    const std::array<long long,3> key{std::llround(p.X()/tolerance),std::llround(p.Y()/tolerance),std::llround(p.Z()/tolerance)};
-    auto [it,added]=welded.emplace(key,int(points.size())); if(added) points.push_back(p); return it->second;
-  };
-  struct Edge { std::vector<int> ordinals; std::vector<gp_Vec> normals; };
-  std::map<std::pair<int,int>,Edge> edges;
-  int ordinal=0;
-  for(TopExp_Explorer f(shape,TopAbs_FACE);f.More();f.Next()) {
-    TopLoc_Location loc; const auto mesh=BRep_Tool::Triangulation(TopoDS::Face(f.Current()),loc);
-    if(mesh.IsNull()) continue;
-    for(int i=1;i<=mesh->NbTriangles();++i) {
-      int a,b,c; mesh->Triangle(i).Get(a,b,c);
-      const int v[]{vertex(mesh->Node(a).Transformed(loc.Transformation())),vertex(mesh->Node(b).Transformed(loc.Transformation())),vertex(mesh->Node(c).Transformed(loc.Transformation()))};
-      gp_Vec n=gp_Vec(points[v[0]],points[v[1]]).Crossed(gp_Vec(points[v[0]],points[v[2]]));
-      if(n.SquareMagnitude()<1e-24) { ordinal+=3; continue; } n.Normalize();
-      for(int k=0;k<3;++k) { auto& e=edges[std::minmax(v[k],v[(k+1)%3])]; e.ordinals.push_back(ordinal++); e.normals.push_back(n); }
-    }
+  struct Part { Handle(Poly_Triangulation) mesh; gp_Trsf trsf; bool moved; int firstNode; };
+  std::vector<Part> parts;
+  size_t nodes = 0, triangles = 0;
+  for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
+    TopLoc_Location loc; const auto mesh = BRep_Tool::Triangulation(TopoDS::Face(f.Current()), loc);
+    if (mesh.IsNull()) continue;
+    parts.push_back({mesh, loc.Transformation(), !loc.IsIdentity(), int(nodes)});
+    nodes += size_t(mesh->NbNodes());
+    triangles += size_t(mesh->NbTriangles());
   }
+  // Each node to a weld class (first node of its key), then the classes numbered by first use.
+  std::vector<int> klass(nodes);
+  std::vector<gp_Pnt> at(nodes);
+  {
+    std::unordered_map<std::array<long long, 3>, int, KeyHash> welded;
+    welded.reserve(nodes);
+    for (const Part& part : parts)
+      for (int i = 1; i <= part.mesh->NbNodes(); ++i) {
+        const gp_Pnt p = part.moved ? part.mesh->Node(i).Transformed(part.trsf) : part.mesh->Node(i);
+        const size_t n = size_t(part.firstNode + i - 1);
+        at[n] = p;
+        const std::array<long long, 3> key{std::llround(p.X() / tolerance), std::llround(p.Y() / tolerance), std::llround(p.Z() / tolerance)};
+        klass[n] = welded.emplace(key, int(n)).first->second;
+      }
+  }
+  std::vector<int> id(nodes, -1);  // weld class (its first node) -> vertex number by first use
+  std::vector<gp_Pnt> points;
+  auto vertex = [&](size_t n) {
+    int& v = id[size_t(klass[n])];
+    if (v < 0) v = int(points.size()), points.push_back(at[n]);
+    return v;
+  };
+  // Every side once per triangle: its ends (lower first), its ordinal, its triangle's normal.
+  struct Side { uint64_t key; int ordinal; int normal; };
+  std::vector<Side> sides;
+  sides.reserve(triangles * 3);
+  std::vector<gp_Vec> normals;
+  normals.reserve(triangles);
+  int ordinal = 0;
+  for (const Part& part : parts)
+    for (int i = 1; i <= part.mesh->NbTriangles(); ++i) {
+      int a, b, c; part.mesh->Triangle(i).Get(a, b, c);
+      const int v[]{vertex(size_t(part.firstNode + a - 1)), vertex(size_t(part.firstNode + b - 1)), vertex(size_t(part.firstNode + c - 1))};
+      gp_Vec n = gp_Vec(points[size_t(v[0])], points[size_t(v[1])]).Crossed(gp_Vec(points[size_t(v[0])], points[size_t(v[2])]));
+      if (n.SquareMagnitude() < 1e-24) { ordinal += 3; continue; }
+      n.Normalize();
+      normals.push_back(n);
+      for (int k = 0; k < 3; ++k) {
+        const auto [lo, hi] = std::minmax(v[k], v[(k + 1) % 3]);
+        sides.push_back({uint64_t(uint32_t(lo)) << 32 | uint32_t(hi), ordinal++, int(normals.size() - 1)});
+      }
+    }
+  std::sort(sides.begin(), sides.end(), [](const Side& x, const Side& y) { return x.key != y.key ? x.key < y.key : x.ordinal < y.ordinal; });
   // Boundary and sharp crease loops, excluding the internal triangulation diagonals.
   std::map<int,std::vector<int>> graph;
-  for(const auto& [pair,e]:edges) if(e.normals.size()==1 || (e.normals.size()==2 && std::abs(e.normals[0].Dot(e.normals[1]))<0.866)) {
-    graph[pair.first].push_back(pair.second); graph[pair.second].push_back(pair.first);
+  std::unordered_map<uint64_t, std::pair<size_t, size_t>> rims;  // a loop side's run in `sides`
+  for (size_t s = 0; s < sides.size();) {
+    size_t e = s;
+    while (e < sides.size() && sides[e].key == sides[s].key) ++e;
+    const size_t count = e - s;
+    if (count == 1 || (count == 2 && std::abs(normals[size_t(sides[s].normal)].Dot(normals[size_t(sides[s + 1].normal)])) < 0.866)) {
+      const int lo = int(sides[s].key >> 32), hi = int(sides[s].key & 0xffffffffu);
+      graph[lo].push_back(hi); graph[hi].push_back(lo);
+      rims.emplace(sides[s].key, std::make_pair(s, e));
+    }
+    s = e;
   }
   std::set<int> visited; std::vector<MeshCircle> out;
   for(const auto& [start,neighbors]:graph) {
@@ -65,7 +124,9 @@ std::vector<MeshCircle> mesh_circles(const TopoDS_Shape& shape) {
     MeshCircle result; result.circle=circle; result.segments=int(ring.size());
     for(size_t i=0;i<ring.size();++i) {
       result.rim.push_back(points[ring[i]]);
-      const auto& e=edges.at(std::minmax(ring[i],ring[(i+1)%ring.size()])); result.edges.insert(result.edges.end(),e.ordinals.begin(),e.ordinals.end());
+      const auto [lo, hi] = std::minmax(ring[i], ring[(i + 1) % ring.size()]);
+      const auto [first, last] = rims.at(uint64_t(uint32_t(lo)) << 32 | uint32_t(hi));
+      for (size_t s = first; s < last; ++s) result.edges.push_back(sides[s].ordinal);
     }
     result.index=*std::min_element(result.edges.begin(),result.edges.end()); out.push_back(std::move(result));
   }

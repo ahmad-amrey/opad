@@ -541,6 +541,12 @@ struct System {
       }
       case CType::Radius: emit(ci, radius(ent(c.refs[0])) - c.value); break;
       case CType::Diameter: emit(ci, radius(ent(c.refs[0])) * 2.0 - c.value); break;
+      case CType::MajorRadius: {
+        const auto& e = ent(c.refs[0]);
+        emit(ci, norm(pt(e.p[1]) - pt(e.p[0])) - c.value);
+        break;
+      }
+      case CType::MinorRadius: emit(ci, radius(ent(c.refs[0])) - c.value); break;
       case CType::ArcLength: {
         const auto& e = ent(c.refs[0]);
         const P2 a = pt(e.p[1]) - pt(e.p[0]), b = pt(e.p[2]) - pt(e.p[0]);

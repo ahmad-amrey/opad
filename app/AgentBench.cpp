@@ -87,7 +87,7 @@ void AgentBridge::bench(){
       else if(action=="cancel_edit"){if(m_design->sketchActive())m_design->cancelSketch();else m_design->escape();}
       else if(action=="quit"){stop();QTimer::singleShot(0,this,[]{QCoreApplication::exit(0);});}
       else throw opad::Error("Unknown bench action");
-      if(result.is_null())result={{"ok",true},{"revision",m_doc->revision}};
+      if(result.is_null())result={{"ok",true},{"revision",m_doc->contentRevision}};
     }catch(const std::exception& e){result={{"error",e.what()}};}
     QSaveFile output(directory+"/result.json");if(output.open(QIODevice::WriteOnly)){output.write(QByteArray::fromStdString(result.dump()));output.commit();}
     publish();

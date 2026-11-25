@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <set>
 #include "opad/agent.hpp"
 #include "opad/live.hpp"
 #include "opad/core.hpp"
@@ -122,8 +123,18 @@ int main(){try {
   // Offset relationship (measured 158654 live, 89500 headless): sketch_tool's offset holds its copy by an editable offset
   // dimension (inputs.relation).
   // git_init's own_folder (measured 158967 live): a shared folder refused unless it says move or stay.
-  CHECK(live<159100);  // 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
-  CHECK(headless<89950);  // 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
+  // 2026-11-24, the agent guide by section (live-MCP stress test: include_guide returned ~54 KB): live_diagnostics'
+  // guide_section input and its description (measured 159115 live).
+  // set_phase (+0.8 KB live; live only): the assistant's few words for what it is working on, shown in the AI chip and
+  // as a heading in the activity panel (both merged: measured 160021).
+  // Rules, mirror names and ellipse dimensions (measured 159596 live, 90277 headless): query_entities' length/area/loop/bounds_mode filters and
+  // expressions, the mirror's name_map, the major_radius/minor_radius ellipse dimensions.
+  // Joint re-anchoring (joint's id says at/part/base re-anchor it): measured 160816 live, 90304 headless, within the limits.
+  // Second MCP stress test (#17, #25, #26; measured 161670 live, 90918 headless): features and ops take offset, limit and
+  // detail (compact pages by default live: replies of 52 KB and 67 KB before), live_state's change_history, joint_set's
+  // preview said to have no id. With joint re-anchoring merged: measured 161693 live, 90946 headless.
+  CHECK(live<161800);  // 160900 before paging; all three merged: measured 160762; 160200 before rules, mirror names and ellipse radii; 159300 before set_phase; 159100 before the guide by section; 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  CHECK(headless<91050);  // 90450 before paging; 89950 before rules, mirror names and ellipse radii; 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});
@@ -132,6 +143,29 @@ int main(){try {
   CHECK_THROWS(agent::validate_input(agent::live_output_schema("sketch"),{{"result",{{"sketch_id",12}}}}));
   CHECK_EQ(agent::transaction_policy()["scope"],"connection");
   CHECK(agent::live_guide().at("example").size()>4);
+  // The guide by section (live-MCP stress test 2026-11-24: include_guide returned ~54 KB). The index is small, every section
+  // reads back as itself, together they are the whole guide, and the resource takes the section after '#'.
+  {
+    const auto index=agent::guide_index();
+    CHECK(index.dump().size()<6000);CHECK(index["sections"].size()>=10);CHECK_EQ(index["total_bytes"],agent::guide().size());
+    std::string whole=agent::guide_section("overview")["text"];std::set<std::string> ids;
+    for(const auto& s:index["sections"]){
+      const auto id=s["id"].get<std::string>();CHECK(ids.insert(id).second);CHECK(id.find(' ')==std::string::npos);
+      const auto section=agent::guide_section(id);CHECK_EQ(section["text"].get<std::string>().size(),s["bytes"].get<size_t>());
+      CHECK(section["text"].get<std::string>().rfind("## "+section["title"].get<std::string>(),0)==0);
+      whole+=section["text"].get<std::string>();
+      CHECK_EQ(agent::read_resource("opad://guide/agent#"+id)["contents"][0]["text"],section["text"]);
+    }
+    CHECK(whole==agent::guide());CHECK(ids.count("units-and-expressions"));
+    CHECK_EQ(agent::guide_section("all")["text"],agent::guide());
+    CHECK_EQ(agent::read_resource("opad://guide/agent")["contents"][0]["text"],agent::guide());
+    CHECK_THROWS(agent::guide_section("nothing"));CHECK_THROWS(agent::read_resource("opad://guide/agent#nothing"));
+    CHECK_EQ(agent::resources()["resources"].size(),index["sections"].size()+2);  // the guide, its overview and sections
+    json out=json::object();agent::add_guide(out,{{"include_guide",true},{"guide_section","nothing"}});
+    CHECK(out["agent_guide"].contains("sections") && out["agent_guide_section"].contains("error") && !out["agent_guide_section"]["sections"].empty());
+    out=json::object();agent::add_guide(out,{{"guide_section","references"}});CHECK_EQ(out["agent_guide_section"]["title"],"References");
+    agent::validate_input(agent::live_schema("live_diagnostics"),{{"include_guide",true},{"guide_section","references"}});
+  }
   CHECK_THROWS(agent::validate_input(agent::live_schema("request_status"),{{"request_id",""}}));
   CHECK(agent::live_mutation("save"));
   // Gap log #4: measure is a read unless pinned; then it needs the revision and a request id like any write.
@@ -173,5 +207,49 @@ int main(){try {
   agent::validate_input(agent::live_schema("model_batch"),{{"steps",json::array({batchStep})},{"expected_revision",0},{"request_id","batch"}});
   CHECK_THROWS(agent::validate_input(agent::live_schema("model_batch"),{{"steps",json::array()},{"expected_revision",0},{"request_id","batch"}}));
   CHECK_THROWS(agent::validate_input(agent::live_schema("model_batch"),{{"steps",json::array({{{"id","unsafe"},{"command","export"},{"arguments",json::object()}}})},{"expected_revision",0},{"request_id","batch"}}));
+  {  // Second MCP stress test #25: features (52 KB) and ops (67 KB) were one reply; pages of compact items now
+    Document d=Document::create();
+    for(int i=0;i<55;++i)commands::run("feature",{{"kind","box"},{"inputs",{{"length","10 mm"},{"width","10 mm"},{"height","10 mm"}}}},&d);
+    const json all=commands::run("features",json::object(),&d);  // the CLI's and scripts' shape stays
+    CHECK(all.is_array());CHECK_EQ(all.size(),55u);CHECK(all[0].contains("inputs"));
+    const json page=commands::run("features",{{"limit",2},{"offset",1},{"detail","compact"}},&d);
+    CHECK_EQ(page["items"].size(),2u);CHECK_EQ(page["total"],55);CHECK_EQ(page["offset"],1);CHECK_EQ(page["next_offset"],3);
+    CHECK_EQ(page["items"][0]["id"],all[1]["id"]);CHECK(!page["items"][0].contains("inputs"));
+    CHECK_EQ(page["items"][0]["state"],"ok");CHECK_EQ(page["items"][0]["kind"],"box");CHECK_EQ(page["items"][0]["name"],all[1]["name"]);
+    const json last=commands::run("features",{{"offset",54},{"limit",5}},&d);
+    CHECK_EQ(last["items"].size(),1u);CHECK(last["next_offset"].is_null());CHECK(last["items"][0].contains("inputs"));
+    // The live defaults: a page of live_page_limit compact items, small enough for an agent's context.
+    const json args=agent::live_read_defaults("features",json::object());
+    CHECK_EQ(args["limit"],agent::live_page_limit);CHECK_EQ(args["detail"],"compact");
+    const json first=commands::run("features",args,&d);
+    CHECK_EQ(first["items"].size(),size_t(agent::live_page_limit));CHECK_EQ(first["next_offset"],agent::live_page_limit);
+    std::printf("features: %zu bytes in full, %zu bytes for a live page\n",all.dump().size(),first.dump().size());
+    CHECK(first.dump().size()<8000);
+    CHECK_EQ(agent::live_read_defaults("features",{{"limit",3},{"detail","full"}})["detail"],"full");
+    CHECK(agent::live_read_defaults("tree",json::object()).empty());
+    const json ops=commands::run("ops",agent::live_read_defaults("ops",{{"since",d.ops[2].id}}),&d);
+    CHECK_EQ(ops["total"],d.ops.size()-3);CHECK_EQ(ops["items"][0]["id"],d.ops[3].id);CHECK_EQ(ops["items"][0]["state"],"live");
+    CHECK_EQ(ops["items"][0]["op"],d.ops[3].type);CHECK(!ops["items"][0].contains("result"));CHECK(ops.dump().size()<8000);
+    CHECK(commands::run("ops",json::object(),&d).is_array());
+    const json fs=agent::live_schema("features");
+    CHECK_EQ(fs["properties"]["limit"]["default"],agent::live_page_limit);CHECK_EQ(fs["properties"]["detail"]["default"],"compact");
+    agent::validate_input(fs,{{"offset",50},{"limit",50},{"detail","full"}});
+    CHECK_THROWS(agent::validate_input(fs,{{"limit",501}}));
+    CHECK_THROWS(agent::validate_input(agent::live_schema("ops"),{{"detail","short"}}));
+    // #17: live_state's change history only when asked for.
+    agent::validate_input(agent::live_schema("live_state"),{{"change_history",true}});
+  }
+  {  // #26: joint_set with preview writes nothing, so it answers without an id
+    Document d=Document::create();
+    const std::string part=commands::run("feature",{{"kind","box"},{"inputs",{{"length","20 mm"},{"width","10 mm"},{"height","5 mm"}}}},&d)["body_ids"][0];
+    const std::string joint=commands::run("joint",{{"kind","revolute"},{"part",part},{"at",{{"origin",{0,0,0}},{"z",{0,0,1}}}}},&d)["id"];
+    const size_t n=d.ops.size();
+    const json tried=commands::run("joint_set",{{"values",{{joint,30}}},{"preview",true}},&d);
+    CHECK(tried.contains("values") && !tried.contains("id"));CHECK_EQ(d.ops.size(),n);
+    CHECK(agent::live_mutation("joint_set",{{"preview",true}})==false);
+    agent::validate_input(agent::live_schema("joint_set"),{{"values",{{joint,30}}},{"preview",true}});  // a read: no revision or request id
+    const json set=commands::run("joint_set",{{"values",{{joint,30}}}},&d);
+    CHECK(set.contains("id"));CHECK_EQ(d.ops.size(),n+1);
+  }
   std::cout<<"agent schemas, bounded context, exact validation and stale references: PASS\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

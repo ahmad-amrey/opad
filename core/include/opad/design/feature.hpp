@@ -27,7 +27,7 @@ struct InputSpec {
   std::string name;   // key in the op's "inputs"
   std::string label;  // English source text; the app translates
   // length | angle | number | count: expression or number
-  // bool | choice | text
+  // bool | choice | text | names (words to swap: "R=L, Right=Left" or {"R": "L"}; a mirror's name_map)
   // bodies | faces | edges: lists of references ({"body":node,"kind":..,"index":N,"hint":{..}})
   // profiles: [{"sketch":id,"at":[u,v],...}] regions of sketches   path: {"sketch":id} or edges
   // plane: {"base":"xy|xz|yz"} | {"face":ref} | {"feature":id}     axis: {"base":"x|y|z"} | {"edge":ref} | {"sketch":id,"entity":n} | {"feature":id}
@@ -176,6 +176,10 @@ json align_sketch_plane(const Document& doc, const Scene& scene, const std::stri
 bool input_active(const InputSpec& in, const json& inputs);
 // A frame as results report it (TODO 10 B3): origin, x, y and the normal (x cross y).
 json frame_result(const Frame& frame);
+// A rule selector's filters ("select") with their expressions evaluated: lengths (radius_min/max, length_min/max,
+// at_plane's value, bounds' coordinates) in mm, areas (area_min/max) in mm²; numbers and nulls stay as they are. Rules
+// written with parameters follow them: the feature matches again when one changes. Throws for one that does not evaluate.
+json evaluate_rule_filters(const ParamTable& params, const json& filters);
 // A reference with its geometric fingerprint, which lets it survive a change of the body's topology.
 json make_ref(const Document& doc, const Scene& scene, const Ref& ref);
 // Feature inputs with a hint added to every face/edge/vertex reference that has none (the app picks plain

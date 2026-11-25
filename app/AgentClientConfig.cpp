@@ -2,10 +2,20 @@
 
 #include <QDir>
 #include <QFile>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QVersionNumber>
 #include <nlohmann/json.hpp>
+#include <vector>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace agentclients {
 using ojson = nlohmann::ordered_json;
@@ -106,8 +116,55 @@ bool writeServer(const QString& file, const std::optional<Entry>& entry, QString
   return true;
 }
 
+namespace {
+#ifdef Q_OS_WIN
+QString localAppData() { return QDir::fromNativeSeparators(qEnvironmentVariable("LOCALAPPDATA", QDir::homePath() + "/AppData/Local")); }
+
+// The data folder of Claude Desktop installed from its MSIX package: %LOCALAPPDATA%\Claude-Data\claude_<publisher>,
+// where it keeps claude_desktop_config.json and the Claude Code it ships (%APPDATA%\Claude then holds only a marker). The
+// one with the configuration file, else the newest; empty when there is none.
+QString claudeDataFolder() {
+  const QDir root(localAppData() + "/Claude-Data");
+  QString best;
+  QDateTime newest;
+  bool bestHasConfig = false;
+  for (const QFileInfo& d : root.entryInfoList({"claude_*"}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+    const bool hasConfig = QFileInfo::exists(d.filePath() + "/claude_desktop_config.json");
+    if (best.isEmpty() || (hasConfig && !bestHasConfig) || (hasConfig == bestHasConfig && d.lastModified() > newest)) {
+      best = d.filePath();
+      newest = d.lastModified();
+      bestHasConfig = hasConfig;
+    }
+  }
+  return best;
+}
+
+// The folder a packaged (MSIX) app is installed in, from its package family name; empty when it is not installed. The two
+// calls are looked up at run time (Windows 8 on), so no SDK version is needed.
+QString packageFolder(const wchar_t* family) {
+  using ByFamily = LONG(WINAPI*)(PCWSTR, UINT32*, PWSTR*, UINT32*, WCHAR*);
+  using PathOf = LONG(WINAPI*)(PCWSTR, UINT32*, PWSTR);
+  const HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+  const auto byFamily = kernel ? reinterpret_cast<ByFamily>(reinterpret_cast<void*>(GetProcAddress(kernel, "GetPackagesByPackageFamily"))) : nullptr;
+  const auto pathOf = kernel ? reinterpret_cast<PathOf>(reinterpret_cast<void*>(GetProcAddress(kernel, "GetPackagePathByFullName"))) : nullptr;
+  if (!byFamily || !pathOf) return {};
+  UINT32 count = 0, length = 0;
+  if (byFamily(family, &count, nullptr, &length, nullptr) != ERROR_INSUFFICIENT_BUFFER || count == 0 || length == 0) return {};
+  std::vector<PWSTR> names(count);
+  std::vector<WCHAR> buffer(length);
+  if (byFamily(family, &count, names.data(), &length, buffer.data()) != ERROR_SUCCESS || count == 0) return {};
+  UINT32 size = 0;
+  if (pathOf(names[0], &size, nullptr) != ERROR_INSUFFICIENT_BUFFER || size == 0) return {};
+  std::vector<WCHAR> path(size);
+  if (pathOf(names[0], &size, path.data()) != ERROR_SUCCESS) return {};
+  return QDir::fromNativeSeparators(QString::fromWCharArray(path.data()));
+}
+#endif
+}  // namespace
+
 QString desktopConfigPath() {
 #if defined(Q_OS_WIN)
+  if (const QString data = claudeDataFolder(); !data.isEmpty()) return QDir::cleanPath(data + "/claude_desktop_config.json");
   const QString base = qEnvironmentVariable("APPDATA", QDir::homePath() + "/AppData/Roaming");
 #elif defined(Q_OS_MACOS)
   const QString base = QDir::homePath() + "/Library/Application Support";
@@ -136,7 +193,17 @@ QStringList claudeCandidates() {
   const QString home = QDir::homePath();
 #if defined(Q_OS_WIN)
   const QString npm = qEnvironmentVariable("APPDATA", home + "/AppData/Roaming") + "/npm";
-  return candidates("claude", {home + "/.local/bin/claude.exe", npm + "/claude.cmd"});
+  QStringList more{home + "/.local/bin/claude.exe", npm + "/claude.cmd"};
+  // The Claude Code that Claude Desktop ships: claude-code\<version>\<build>\claude.exe in its data folder, the newest.
+  if (const QString data = claudeDataFolder(); !data.isEmpty()) {
+    QList<QPair<QVersionNumber, QString>> shipped;
+    for (const QFileInfo& v : QDir(data + "/claude-code").entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
+      for (const QFileInfo& b : QDir(v.filePath()).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
+        if (QFileInfo(b.filePath() + "/claude.exe").isFile()) shipped.append({QVersionNumber::fromString(v.fileName()), b.filePath() + "/claude.exe"});
+    std::stable_sort(shipped.begin(), shipped.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (const auto& s : shipped) more << s.second;
+  }
+  return candidates("claude", more);
 #else
   return candidates("claude", {home + "/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
                                home + "/.npm-global/bin/claude"});
@@ -147,10 +214,15 @@ QStringList codexCandidates() {
   const QString home = QDir::homePath();
 #if defined(Q_OS_WIN)
   const QString npm = qEnvironmentVariable("APPDATA", home + "/AppData/Roaming") + "/npm";
-  return candidates("codex", {npm + "/codex.cmd", home + "/.local/bin/codex.exe"});
+  QStringList more{npm + "/codex.cmd", home + "/.local/bin/codex.exe"};
+  // The Codex app (Microsoft Store / MSIX) carries the codex program: app/resources/codex.exe in its install folder.
+  if (const QString app = packageFolder(L"OpenAI.Codex_2p2nqsd0c76g0"); !app.isEmpty()) more << app + "/app/resources/codex.exe";
+  return candidates("codex", more);
 #else
   return candidates("codex", {"/opt/homebrew/bin/codex", "/usr/local/bin/codex", home + "/.local/bin/codex", home + "/.npm-global/bin/codex"});
 #endif
 }
+
+bool isOpadProgram(const QString& path) { return QFileInfo(path).baseName().startsWith("opad", Qt::CaseInsensitive); }
 
 }  // namespace agentclients

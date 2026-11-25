@@ -31,7 +31,8 @@ using CType = SkConstraint::Type;
 const char* const kEntityNames[] = {"point", "line", "circle", "arc", "ellipse", "spline"};
 const char* const kConstraintNames[] = {"coincident", "horizontal", "vertical", "parallel", "perpendicular", "collinear",
                                         "tangent",    "equal",      "concentric", "midpoint", "symmetric",   "fix", "smooth", "curvature", "rigid",
-                                        "distance",   "hdistance",  "vdistance",  "radius",   "diameter",    "angle", "arc_length", "offset"};
+                                        "distance",   "hdistance",  "vdistance",  "radius",   "diameter",    "angle", "arc_length", "offset",
+                                        "major_radius", "minor_radius"};
 
 bool has_radius(EType t) { return t == EType::Circle || t == EType::Ellipse; }
 
@@ -115,6 +116,8 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
     case CType::Radius:
     case CType::Diameter: return n == 1 && is_round(k[0]);
     case CType::ArcLength: return n == 1 && is(0, Kind::Arc);
+    case CType::MajorRadius:
+    case CType::MinorRadius: return n == 1 && is(0, Kind::Ellipse);
     case CType::Offset:  // curves only: the sources, then what the offset made (the split is `sources`: check_constraint)
       return n >= 2 && std::all_of(k.begin(), k.end(), [](Kind x) { return x == Kind::Line || is_round(x) || x == Kind::Ellipse || x == Kind::Spline; });
   }
@@ -125,7 +128,7 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
 // between a circle or an arc and a spline. Such a build throws on the whole sketch (and on any later edit of it, which
 // fails the document's replay), so to_json keeps these apart in "more_constraints", a key it ignores.
 bool older_readers_refuse(CType t, const std::vector<Kind>& k) {
-  if (t == CType::Rigid || t == CType::Offset) return true;  // a type they do not know
+  if (t == CType::Rigid || t == CType::Offset || t == CType::MajorRadius || t == CType::MinorRadius) return true;  // a type they do not know
   if (k.size() != 2) return false;
   if (t == CType::Smooth || t == CType::Curvature) return !(k[0] == Kind::Spline && k[1] == Kind::Spline);
   if (t == CType::Tangent) return (is_round(k[0]) && k[1] == Kind::Spline) || (k[0] == Kind::Spline && is_round(k[1]));
@@ -192,6 +195,8 @@ void check_constraint(const Sketch& sk, const SkConstraint& c, const Index* inde
     if (k == Kind::Constraint) throw Error(who + ": reference " + std::to_string(ref) + " is a constraint");
     kinds.push_back(k);
   }
+  if ((c.type == CType::Radius || c.type == CType::Diameter) && kinds.size() == 1 && kinds[0] == Kind::Ellipse)
+    throw Error(who + ": an ellipse has two radii: use minor_radius or major_radius");
   if (!refs_fit(c.type, kinds)) throw Error(who + ": references do not fit the constraint type");
   if ((c.type == CType::Rigid || c.type == CType::Offset) && std::set<int>(c.refs.begin(), c.refs.end()).size() != c.refs.size())
     throw Error(who + ": names a point or curve twice");
@@ -465,7 +470,8 @@ json Sketch::to_json() const {
       if (c.sharp) o["sharp"] = true;
     }
     bool later = false;
-    if (c.type == CType::Smooth || c.type == CType::Curvature || c.type == CType::Tangent || c.type == CType::Rigid || c.type == CType::Offset) {
+    if (c.type == CType::Smooth || c.type == CType::Curvature || c.type == CType::Tangent || c.type == CType::Rigid || c.type == CType::Offset ||
+        c.type == CType::MajorRadius || c.type == CType::MinorRadius) {
       std::vector<Kind> kinds;
       for (int ref : c.refs) kinds.push_back(kind_of(*this, ref));
       later = older_readers_refuse(c.type, kinds);

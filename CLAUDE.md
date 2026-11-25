@@ -461,6 +461,18 @@ QProcess, no shell, 15 s. Claude Desktop: its claude_desktop_config.json rewritt
 mcpServers.opad, key order kept, <file>.bak first, QSaveFile, nothing written when unchanged). `ctest -R agent-clients`,
 gui case agent-connect (APPDATA / HOME / XDG_CONFIG_HOME / CLAUDE_CONFIG_DIR pointed at the case's folders),
 tools/test_mcp_feedback.py with a real Codex.
+Agents' `expected_revision` is `AppDocument::contentRevision` (ops or the document changed: `refresh(cause, label)`,
+`commitSnapshot`, `recover`), never `revision`, which every scene re-resolve moves (`refreshView`: timeline and editor
+roll-backs, the icons, detach); `live_state.revision_change` says what moved it last. Appearance-only ops (hide, show,
+colour, opacity, lock: `AppDocument::viewOnly`) move only `docRevision` (`refreshLook`; `view_edits` in revision_change),
+which every other snapshot-and-swap caller checks (`commitSnapshot`: clipboard paste, recovery merge, version restore);
+the agent commits through `commitRebased` (the snapshot's op ids in `Snapshot::baseIds`): the user's looks made since stay
+and the agent's ops go after them, so staged work survives a hide or a roll-back (`AgentBridge::rebaseCommit`: `looksSince`
+on the UI thread, ids only; `rebase` + the resolve on a worker; a look made meanwhile starts it over). live_state gives the last command's
+changes (`change_history` for the kept 20); live `features`/`ops` are pages of compact items (`live_read_defaults`,
+core `commands::page_list`; the CLI keeps the plain list). Only a write's `preview` is staging: a read keeps its own
+(joint_set preview). The agent guide is served by `##`
+section (`guide_index`, `guide_section`, `opad://guide/agent#<id>`); `include_guide` returns the index.
 
 ## Builds and the update channels (`core/CMakeLists.txt` build_info, `app/UpdateCheck.*`, `app/UpdatesArea.cpp`)
 
@@ -542,6 +554,13 @@ Concrete consequences already in place; keep them that way:
   with the most faces; with `OPAD_BENCH_BAND=1` it then rubber-bands the whole view and clears it
   (`OPAD_BENCH_SUBSHOT` / `OPAD_BENCH_BANDSHOT=<png>` dump the frames). What is left for select-everything on
   the Engine (~0.5 s) is OCCT's own synchronous `SelectRectangle`.
+- A mesh body's Face, Edge and Vertex filters pick through `BodyPrs::meshGroups` (BodyShape.cpp `MeshPickSet`: one BVH
+  over the triangulations as stored, built on the mesh worker; `GroupSensitive` asks it, owners made as picked by
+  `groupOwner`, ordinals as `opad::subshape` counts them), never a sensitive and owner per triangle, side or node: a
+  3.3M-triangle scan's Edge filter (the Move panel's Axis box) took 217 s on the UI thread, its Vertex filter 118 s.
+  `mesh_circles` (rims) welds by hash and sorts the sides (16 s -> 4 s on that scan). Bench `heavy-mesh`
+  (OPAD_BENCH_HEAVYMESH, tools/bench_cases/heavy_mesh.py: a generated 1.2M-triangle tube); `BodyPrs::log` traces a big
+  body's build phases.
 - Displaying bodies (`Viewport::sync` -> `displayBody`) is a sliced job; the shaded presentation is built
   on the mesh worker (`BodyShape`/`BodyPrs`), not in `Display()`.
 - The load worker parses bodies and caches their bounding boxes (`opad::warm_shape_cache`), so the UI

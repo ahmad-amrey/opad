@@ -24,6 +24,7 @@
 #include <QLocalSocket>
 #include <QTimer>
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 #include "AgentBridge.hpp"
@@ -80,6 +81,12 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
     quint64 group = 0, firstBox = 0, shown = 0;
     json away;  // a camera far from the model: Show moves off it, Back returns to it
     quint64 retry = 0;  // a row left saying "Retrying…"
+    std::string body, joint;  // the body the user hides meanwhile (#16), the joint joint_set previews (#26)
+    size_t looksAt = 0, opsCount = 0;
+    int rebased = 0;                 // m_rebasedCommits before the commit after the hides
+    qint64 longestGap = 0;           // the UI thread's longest pause while that commit ran (a heartbeat)
+    QElapsedTimer beat, committing;
+    QTimer* heartbeat = nullptr;
     size_t rows = 0;
     QElapsedTimer clock;
   };
@@ -161,7 +168,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
           require(chipText() == "Claude", "the chip while connected: " + chipText());
         }
         require(events().size() == 1 && events()[0].kind == ActivityEvent::Divider, "one divider row");
-        st->base = m_doc->revision;
+        st->base = m_doc->contentRevision;
         st->rows = events().size();
         pass("connect: a toast and the chip, no panel");
         tool("live_state");
@@ -170,6 +177,47 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
       [=, this] {  // polling makes no row
         if (!answered()) return false;
         require(events().size() == st->rows, "live_state adds no row");
+        tool("set_phase", {{"title", "Checking the model"}});
+        return true;
+      },
+      [=, this] {  // set_phase: a heading row in the assistant's words, the chip and the strip say it
+        if (!answered()) return false;
+        require(!st->reply.value("isError", false), "set_phase: " + QString::fromStdString(st->reply.dump()));
+        const auto& e = last();
+        require(e.kind == ActivityEvent::Phase && agentsay::plain(e.text).contains("Checking the model"), "a phase heading row: " + agentsay::plain(e.text));
+        require(phase() == "Checking the model", "the bridge's phase: " + phase());
+        if (english) {
+          require(chipText() == "Claude · Checking the model", "the chip names the phase: " + chipText());
+          require(agentsay::plain(m_feed->strip().line1) == "Claude · “Checking the model”", "the strip names the phase: " + m_feed->strip().line1);
+        }
+        m_feed->scrollToEnd();
+        m_panel->grab().save(prefix + ".phase.png");
+        m_chip->grab().save(prefix + ".phase-chip.png");
+        st->rows = events().size();
+        tool("set_phase", {{"title", "Checking the model"}});
+        return true;
+      },
+      [=, this] {  // the same title again: nothing new
+        if (!answered()) return false;
+        require(events().size() == st->rows, "the same phase again adds no row");
+        tool("set_phase", {{"title", "Designing a mounting block for the motor\nwith four holes and rounded edges"}});
+        return true;
+      },
+      [=, this] {  // a long title with a line break: one line; the chip cuts it at a word (over 80 characters the tool refuses)
+        if (!answered()) return false;
+        require(!st->reply.value("isError", false), "a long set_phase: " + QString::fromStdString(st->reply.dump()));
+        require(phase() == "Designing a mounting block for the motor with four holes and rounded edges", "the phase on one line: " + phase());
+        require(events().size() == st->rows + 1 && last().kind == ActivityEvent::Phase, "a new phase, a new heading");
+        if (english) require(chipText().startsWith("Claude · Designing a mounting") && chipText().endsWith(QStringLiteral("…")) && chipText().size() <= 42, "the chip's cut phase: " + chipText());
+        tool("set_phase", {{"title", ""}});
+        return true;
+      },
+      [=, this] {  // empty: cleared, the chip as before
+        if (!answered()) return false;
+        require(phase().isEmpty() && events().size() == st->rows + 1, "an empty title clears the phase, no row");
+        if (english) require(chipText() == "Claude", "the chip without a phase: " + chipText());
+        pass("set_phase: a heading row, the chip and the strip; same title no row; long titles cut; empty clears");
+        st->rows = events().size();
         tool("context", {{"section", "nodes"}});
         return true;
       },
@@ -288,7 +336,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
           if (auto* tl = m_services ? m_services->timeline() : nullptr) require(tl->tooltip(e.op).contains("Claude (AI)"), "the timeline names Claude");
         }
         st->firstBox = e.id;
-        st->base = m_doc->revision;
+        st->base = m_doc->contentRevision;
         tool("feature", box({{"inputs", {{"x", "60 mm"}, {"length", "40 mm"}, {"width", "20 mm"}, {"height", "10 mm"}}}}), true);
         return true;
       },
@@ -354,7 +402,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         // A note by the assistant: the Annotations panel's author filter has "AI".
         const auto* shown = row(st->shown);
         require(shown && !shown->subjects.empty(), "a body to pin a note to");
-        tool("annotate", {{"anchor", shown->subjects.front()}, {"text", "Check this wall"}, {"expected_revision", m_doc->revision}}, true);
+        tool("annotate", {{"anchor", shown->subjects.front()}, {"text", "Check this wall"}, {"expected_revision", m_doc->contentRevision}}, true);
         return true;
       },
       [=, this] {
@@ -380,7 +428,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         m_chip->grab().save(prefix + ".chip.png");
         m_panel->grab().save(prefix + ".panel.png");
         m_benchDelay = 1500;  // a long tail, so Stop finds it running
-        st->base = m_doc->revision;
+        st->base = m_doc->contentRevision;
         tool("feature", box({{"inputs", {{"x", "120 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}), true);
         st->clock.start();
         return true;
@@ -406,7 +454,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         require(st->reply.value("isError", false), "the stopped call did not commit");
         require(!m_running && noRunning(), "still no row running once the stopped call replied");
         pass("Stop: its divider and toast; the call did not commit; no row left running");
-        tool("undo", {{"expected_revision", m_doc->revision}}, true);
+        tool("undo", {{"expected_revision", m_doc->contentRevision}}, true);
         return true;
       },
       [=, this] {  // undo / redo replies name an AI step as they always did
@@ -415,7 +463,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         const auto undone = QString::fromStdString(st->reply["structuredContent"]["result"].value("undone", ""));
         if (english) require(undone == "Agent: annotate", "the undo reply's label, as before: " + undone);
         else require(!undone.contains("Claude"), "the undo reply's label is not the window's: " + undone);
-        tool("redo", {{"expected_revision", m_doc->revision}}, true);
+        tool("redo", {{"expected_revision", m_doc->contentRevision}}, true);
         return true;
       },
       [=, this] {
@@ -424,6 +472,189 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         const auto redone = QString::fromStdString(st->reply["structuredContent"]["result"].value("redone", ""));
         if (english) require(redone == "Agent: annotate", "the redo reply's label, as before: " + redone);
         pass("undo / redo replies keep their labels");
+        // The user rolls the timeline back and forward, an editor rolls it back and ends, the icons are redrawn: the scene
+        // re-resolves each time, the document does not change, so an agent's expected_revision stays good (live-MCP
+        // stress test: 5 -> 6 -> 7 with no op, every write then failed with stale_revision).
+        const auto* first = row(st->firstBox);
+        require(first && m_doc->doc.find_op(first->op), "the first box's step");
+        const std::string op = first->op;
+        st->base = m_doc->contentRevision;
+        const auto scene = m_doc->revision;
+        m_doc->rollBackTo(op);
+        require(m_doc->rolledBack() && m_doc->revision > scene, "rolled back: the scene re-resolved");
+        m_doc->rollBackTo({});
+        m_doc->setRollback(op);
+        m_doc->setRollback({});
+        m_doc->refreshView("icons");
+        require(!m_doc->rolledBack() && m_doc->rollback().empty(), "rolled forward again");
+        require(m_doc->revision >= scene + 4 && m_doc->contentRevision == st->base,
+                QStringLiteral("view-only re-resolves leave the content revision: scene %1 -> %2, content %3 -> %4")
+                    .arg(scene).arg(m_doc->revision).arg(st->base).arg(m_doc->contentRevision));
+        tool("live_state");
+        return true;
+      },
+      [=, this] {  // live_state says what moved the revision last, and the view-only refreshes since
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "live_state: " + QString::fromStdString(st->reply.dump()));
+        const json& out = st->reply["structuredContent"];
+        const json change = out["result"].value("revision_change", json::object());
+        require(out.value("revision", 0ull) == st->base && change.value("revision", 0ull) == st->base && change.value("cause", "") == "redo",
+                "live_state's revision and revision_change: " + QString::fromStdString(out.dump()).left(600));
+        const json views = change.value("view_refreshes", json::object());
+        require(views.value("timeline_rollback", 0) == 2 && views.value("editor_rollback", 0) == 2 && views.value("icons", 0) == 1,
+                "the view-only refreshes since: " + QString::fromStdString(change.dump()));
+        tool("feature", box({{"inputs", {{"x", "120 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}), true);
+        return true;
+      },
+      [=, this] {  // the write with the revision read before the roll-backs
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "a write after roll-backs: " + QString::fromStdString(st->reply.dump()));
+        require(m_doc->contentRevision == st->base + 1, "the commit moved the content revision by one");
+        const json change = m_doc->revisionChange();
+        require(change.value("cause", "") == "agent" && !change.contains("view_refreshes"), "revision_change after the commit: " + QString::fromStdString(change.dump()));
+        pass("a timeline roll-back and forward keeps expected_revision; live_state says what moved it");
+        // The user hides, shows, colours and hides a body (four appearance ops, as in the second MCP stress test, #16, where
+        // they moved the revision 33 -> 37 between two agent calls): the content revision stays and live_state names them.
+        st->base = m_doc->contentRevision;
+        for (const auto& [id, n] : m_doc->scene.nodes)
+          if (n.kind == opad::Node::Kind::Body && !n.locked) {
+            st->body = id;
+            break;
+          }
+        require(!st->body.empty(), "a body to hide");
+        const auto docBefore = m_doc->docRevision;
+        const size_t opsBefore = m_doc->doc.ops.size();
+        m_doc->run("appearance", {{"target", st->body}, {"visible", false}});
+        m_doc->run("appearance", {{"target", st->body}, {"visible", true}});
+        m_doc->run("appearance", {{"target", st->body}, {"color", {0.8, 0.2, 0.2}}});
+        m_doc->run("appearance", {{"target", st->body}, {"visible", false}});
+        require(m_doc->doc.ops.size() == opsBefore + 4 && m_doc->docRevision == docBefore + 4 && m_doc->contentRevision == st->base,
+                QStringLiteral("four looks: ops %1 -> %2, doc revision %3 -> %4, content %5 -> %6")
+                    .arg(opsBefore).arg(m_doc->doc.ops.size()).arg(docBefore).arg(m_doc->docRevision).arg(st->base).arg(m_doc->contentRevision));
+        tool("live_state");
+        return true;
+      },
+      [=, this] {  // live_state: the view edits since, and only the last command's changes (#17)
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "live_state: " + QString::fromStdString(st->reply.dump()).left(400));
+        const json& out = st->reply["structuredContent"]["result"];
+        const json edits = out.value("revision_change", json::object()).value("view_edits", json::object());
+        require(out.value("revision", 0ull) == st->base && edits.value("count", 0) == 4 && edits.value("last", json::array()).size() == 4,
+                "live_state's revision and the view edits since: " + QString::fromStdString(out.value("revision_change", json::object()).dump()));
+        require(out.value("changes", json::array()).size() == 1 && out.value("changes_total", 0) >= 2,
+                QStringLiteral("live_state gives the last command's changes only: %1 of %2")
+                    .arg(out.value("changes", json::array()).size()).arg(out.value("changes_total", 0)));
+        tool("live_state", {{"change_history", true}});
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        const json& out = st->reply["structuredContent"]["result"];
+        require(out.value("changes", json::array()).size() == out.value("changes_total", size_t(0)) && out.value("changes_total", 0) >= 2,
+                "change_history gives every kept change: " + QString::fromStdString(out.value("changes", json::array()).dump()).left(200));
+        pass("view edits keep the revision; live_state names them and gives the last command's changes (all with change_history)");
+        // A preview staged with the revision read before the hides, then the user shows the body again meanwhile.
+        tool("feature", box({{"inputs", {{"x", "160 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}, {"preview", true}}), true);
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false) && st->reply["structuredContent"].value("state", "") == "staged",
+                "a preview with the revision from before the hides: " + QString::fromStdString(st->reply.dump()).left(400));
+        st->transaction = st->reply["structuredContent"].value("preview_id", "");
+        st->looksAt = m_doc->doc.ops.size();
+        m_doc->run("appearance", {{"target", st->body}, {"visible", true}});
+        require(m_prepared && m_prepared->id == st->transaction && m_doc->contentRevision == st->base, "a show keeps the staged preview");
+        // The commit resolves the rebased document on a worker (it scales with the model): held there, so the UI's
+        // heartbeat shows whether it waited, and so the user can colour the body while it runs.
+        m_benchRebaseHold = 400;
+        st->rebased = m_rebasedCommits;
+        st->longestGap = 0;
+        st->heartbeat = new QTimer(this);
+        st->heartbeat->setInterval(5);
+        connect(st->heartbeat, &QTimer::timeout, this, [st] { st->longestGap = std::max(st->longestGap, st->beat.restart()); });
+        st->beat.start();
+        st->heartbeat->start();
+        st->committing.start();
+        tool("preview_commit", {{"id", st->transaction}, {"expected_revision", st->base}}, true);
+        return true;
+      },
+      [=, this] {  // while the commit's resolve runs on the worker, the user colours the body: the commit starts over
+        if (answered()) throw std::runtime_error("the commit answered before its resolve was seen running: " + st->reply.dump().substr(0, 300));
+        if (!(m_busy && !m_prepared && m_job)) return false;
+        require(m_rebasedCommits == st->rebased, "the commit's first resolve still runs");
+        m_doc->run("appearance", {{"target", st->body}, {"color", {0.2, 0.6, 0.9}}});
+        require(m_doc->contentRevision == st->base, "a colour during the commit keeps the content revision");
+        return true;
+      },
+      [=, this] {  // the commit keeps the user's show and colour and puts the agent's ops after them
+        if (!answered() || !idle()) return false;
+        const qint64 took = st->committing.elapsed();
+        st->heartbeat->stop();
+        st->heartbeat->deleteLater();
+        st->heartbeat = nullptr;
+        m_benchRebaseHold = 0;
+        require(!st->reply.value("isError", false) && st->reply["structuredContent"].value("state", "") == "committed",
+                "the preview's commit after a show: " + QString::fromStdString(st->reply.dump()).left(400));
+        require(m_doc->contentRevision == st->base + 1, "the commit moved the content revision by one");
+        const auto& ops = m_doc->doc.ops;
+        require(ops.size() > st->looksAt + 2 && ops[st->looksAt].type == "appearance" && ops[st->looksAt + 1].type == "appearance" &&
+                    ops.back().type != "appearance",
+                QStringLiteral("the user's show and colour, then the agent's ops: %1 ops, show at %2").arg(ops.size()).arg(st->looksAt));
+        const auto* n = m_doc->scene.node(st->body);
+        require(n && n->visible && n->has_color && std::abs(n->color[2] - 0.9) < 1e-6,
+                "the body is shown and keeps the colour given during the commit");
+        require(m_rebasedCommits == st->rebased + 2, QStringLiteral("two resolves on the worker (the colour started it over): %1").arg(m_rebasedCommits - st->rebased));
+        trace::log(QStringLiteral("bench: agent activity: commit with looks in between: %1 ms, UI thread's longest pause %2 ms").arg(took).arg(st->longestGap));
+        require(took >= 800 && st->longestGap < 400,
+                QStringLiteral("the resolve ran off the UI thread: commit %1 ms (two 400 ms holds), longest pause %2 ms").arg(took).arg(st->longestGap));
+        pass("an agent commit keeps the user's hides and colours made while it worked, its resolve on a worker");
+        tool("features");
+        return true;
+      },
+      [=, this] {  // #25: features is a page of compact items
+        if (!answered() || !idle()) return false;
+        const json& out = st->reply["structuredContent"]["result"];
+        const json items = out.value("items", json::array());
+        require(out.is_object() && !items.empty() && items.size() <= size_t(opad::agent::live_page_limit) && out.value("total", 0) == int(items.size()) &&
+                    out.contains("next_offset") && out["next_offset"].is_null(),
+                "features as a page: " + QString::fromStdString(out.dump()).left(400));
+        require(items[0].contains("state") && items[0].contains("kind") && !items[0].contains("inputs"), "compact features: " + QString::fromStdString(items[0].dump()));
+        tool("ops", {{"limit", 2}});
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        const json& out = st->reply["structuredContent"]["result"];
+        require(out.value("items", json::array()).size() == 2 && out.value("next_offset", json()) == 2 && out.value("total", size_t(0)) == m_doc->doc.ops.size(),
+                "ops as a page: " + QString::fromStdString(out.dump()).left(400));
+        pass("features and ops are pages of compact items");
+        tool("joint", {{"kind", "revolute"}, {"part", st->body}, {"at", {{"origin", {0, 0, 0}}, {"z", {0, 0, 1}}}}, {"expected_revision", m_doc->contentRevision}}, true);
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "a joint: " + QString::fromStdString(st->reply.dump()).left(400));
+        st->joint = st->reply["structuredContent"]["result"].value("id", "");
+        st->opsCount = m_doc->doc.ops.size();
+        require(!st->joint.empty(), "the joint's id");
+        tool("joint_set", {{"values", {{st->joint, 30}}}, {"preview", true}});  // a read: no revision or request id needed
+        return true;
+      },
+      [=, this] {  // #26: a preview writes nothing, so it has no id
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false), "joint_set preview: " + QString::fromStdString(st->reply.dump()).left(400));
+        const json& out = st->reply["structuredContent"]["result"];
+        require(out.contains("values") && !out.contains("id") && m_doc->doc.ops.size() == st->opsCount,
+                "joint_set preview reports values, no id, no op: " + QString::fromStdString(out.dump()).left(300));
+        tool("ops", {{"limit", 1}});  // the agent's cached copy has no pose op either
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        require(st->reply["structuredContent"]["result"].value("total", size_t(0)) == m_doc->doc.ops.size(),
+                "the agent's copy after a joint_set preview: " + QString::fromStdString(st->reply.dump()).left(300));
+        pass("joint_set preview writes nothing and answers without an id");
         // A failure names the call that failed, not another connection's call refused meanwhile.
         ActivityEvent e;
         e.kind = ActivityEvent::Running;
@@ -452,7 +683,7 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         require(st->retry && m_retrying == st->retry && row(st->retry), "a Retrying row");
         // A commit that fails (a read-only document): its row says so, none stays running.
         m_doc->readOnly = true;
-        st->base = m_doc->revision;
+        st->base = m_doc->contentRevision;
         tool("feature", box({{"inputs", {{"x", "200 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}), true);
         return true;
       },

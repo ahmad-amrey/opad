@@ -1,7 +1,9 @@
 # OPAD agent guide
 
 What an agent needs to model in OPAD and cannot read from the tool schemas. The same text is served by both MCP
-servers as the resource `opad://guide/agent` and by `live_diagnostics` with `include_guide: true`.
+servers as the resource `opad://guide/agent`, each `##` section as `opad://guide/agent#<id>` (the heading in lower case,
+words joined by `-`: `opad://guide/agent#units-and-expressions`). `live_diagnostics` with `include_guide: true` lists the
+sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
 
 ## Units and expressions
 
@@ -81,7 +83,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - Curves share points by id: two lines meeting at point 3 are joined; no coincident constraint is needed.
 - Constraints, `refs` lists ids: `coincident horizontal vertical parallel perpendicular collinear tangent equal
   concentric midpoint symmetric fix smooth curvature`; dimensions `distance hdistance vdistance radius diameter angle
-  arc_length` take `value` (mm, or radians for angles) and optionally `expr` (`"width / 2"`), which then drives it.
+  arc_length major_radius minor_radius` take `value` (mm, or radians for angles) and optionally `expr` (`"width / 2"`),
+  which then drives it. An ellipse is dimensioned by `major_radius` and `minor_radius` (`[ellipse]`), not `radius`.
 - `smooth` (G2) and `curvature` join a spline's end to another spline, a line, a circle or an arc: smooth puts the end on
   it, along it and bending as it does, curvature only bends it so (straight by a line); `tangent` takes a spline too.
   These take open control-point splines of degree 2 or more (`degree` given), not fit splines. Both curves move as
@@ -155,6 +158,12 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   matched. Example: the four top edges of a box of height 20: `{"curve": "line", "at_plane": {"axis": "z", "value":
   20}}` with `"expect": 4`. `query_entities` returns what it matched as such a `rule`, ready to pass as an input; a
   feature given face/edge indices answers with a warning that points to it.
+- Rule values that are lengths (`radius_min/max`, `length_min/max`, `at_plane`'s value, `bounds` coordinates) may be
+  expressions of the parameters: `{"at_plane": {"axis": "z", "value": "height"}}` follows `height` when it changes.
+  `bounds_mode` "intersects" takes what reaches into the box, "outside" what stays out of it (default "inside": wholly
+  in it); a `null` coordinate leaves that side open (`"min": [null, null, 100]`). `length_min/max` (edges) and
+  `area_min/max` (faces, mm²) tell the outer and inner rim of a ring apart by size; `"loop": "inner"` picks the edges on
+  a hole of a face (a ring face's inner rim, a pocket's rim), `"outer"` every other edge.
 - Recognised details as a rule (faces only): `"select": {"recognized": "hole", "diameter": 6, "through": true}` is
   every face of the body's holes of that size; also `fillet` (`radius`), `chamfer` (`distance`), `wall`
   (`thickness`), `boss`, `pocket`; hole `type` simple|counterbore|countersink, `depth`, `cb_diameter`,
@@ -240,9 +249,12 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - A reference may name a step of an earlier batch on the same connection, when this batch has no step with that id
   (an id this batch defines is always its own step, so a reference to a later one is an error).
 - The batch's `parent` is the default component for every body its feature steps make; its `component` the default
-  component its feature and sketch steps are made in.
-- A failing step discards the whole batch and names the step; inputs and backward references are checked before
-  anything runs.
+  component its feature and sketch steps are made in. A step that makes no body (a fillet, a join) ignores the default
+  without a warning; it warns only when the step set body_name, color or parent itself.
+- A failing step discards the whole batch and names the step (`failed_step`; its receipt in `steps` has state `failed`
+  and the error); inputs and backward references are checked before anything runs. Every step's new and changed solids
+  must pass solid validation, as a single `feature` call's do, so an invalid body fails the step that made it even when
+  a later step would have used it up.
 
 ## History and files
 
@@ -320,7 +332,7 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - Kinds and their coordinates (degrees and mm): `revolute` (rotation about z), `slider` (translation along z),
   `cylindrical` (rotation, translation), `pin_slot` (rotation about z, translation along x), `planar` (x, y, rotation in
   the plane normal to z), `ball` (none tracked), `screw` (rotation; advances `pitch` mm per turn), `rigid` (none),
-  `ground` (fixes `part` where it is). A part joined to nothing that holds it keeps still while its mechanism moves
+  `ground` (fixes `part` where it is; `rigid` and `ground` need no `at`). A part joined to nothing that holds it keeps still while its mechanism moves
   around it; ground one part of every mechanism.
 - `at_part` snaps: the part moves so its own frame meets `at`, turned against it (faces meet; `mate: false` keeps them
   the same way), at `angle` (deg) and `offset` (mm). A knob into a panel's hole: `at` the hole's rim edge on the panel's
@@ -330,11 +342,13 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   `lead_screw` (`lead` mm per turn of the first). `joints: [first, second]`. Planet gears: `carrier: <arm part>` counts
   both joints' turns relative to the carrier arm (sun-planet and planet-ring pairs of a planetary set).
 - `limits: {"rotation": [-90, 90]}` bounds a coordinate (driving past a limit stops there and says so); `locked: true`
-  holds a joint at its values. `joint` with `id` changes name, limits, lock, drive, spring, friction, pitch or ratio.
+  holds a joint at its values. `joint` with `id` changes name, limits, lock, drive, spring, friction, pitch or ratio, and re-anchors
+  it with `at`, `part` or `base` (parts, values, poses and limits stay; `base` is kept unless given).
 - `joint_set` drives joints (`values: {joint: 30}` or `[rotation, translation]`, null leaves one free) or drags a part
   (`part` + world `matrix`); every other part follows through the joints and one pose op is written (`preview: true` only
   reports). A position the joints cannot reach is refused with the joints that cannot all be met.
-- `mechanism` lists joints, values, which coordinates are free, degrees of freedom and redundant equations.
+- `mechanism` lists joints, values, which coordinates are free, degrees of freedom and redundant equations (the
+  ground's are not counted; `redundant_joints` names the joints that repeat others, e.g. the one closing a loop).
 - Gears for mechanisms: `feature kind=gear` (`type` spur | internal | rack, `module`, `teeth`, `width`, `bore`,
   `phase`). Pitch diameter = module x teeth; two spur gears mesh with their centres the sum of their pitch radii apart
   (an internal pair: the difference) and the second's `phase` = 180 + 180/teeth deg when it sits on the first's +X side.
@@ -343,7 +357,14 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   - `motion` (kinematic): `duration` s, `frames`, `drivers: [{"joint", "coordinate"?, "to": 360 (from its value now;
     `profile`: linear | smooth | cycloidal) | "speed": deg/s or mm/s | "expr": "360 deg * t" | "table": [[t, v], ...]}]`,
     `traces: [{"part", "point": [x, y, z] now, "name"}]`. Without drivers, joints with a position or speed `drive` run.
-    Returns each coordinate's range, speed and acceleration, and the traced paths.
+    Returns each coordinate's range, speed and acceleration, and the traced paths. `clearance: true` (or `{"a", "b",
+    "ignore", "clearance_mm"}`: bodies or components; a alone: against the mechanism's other bodies) checks every frame:
+    `clearance.status` collision | too_close | clear, `first_collision` (t, pair, kind intersecting | touching | inside),
+    `min_distance_mm` and `closest` (exact), `too_close` pairs, and the series "Minimum distance" (meshes: within
+    `mesh_tolerance_mm`, over 1 mm up to 5% high). Pairs already touching at the start (a pin in its bore)
+    are listed in `in_contact_at_start` and not followed; collisions between frames are not seen (raise `frames` for
+    fast motion).
+  - `id` with `settings` merges them key by key (an array, such as drivers, is replaced whole; null removes a key).
   - `dynamic` (Project Chrono): masses and inertias from the solids and their materials (steel when none, said in
     warnings), `gravity` (true: 9.81 m/s2 down -Z; false; or [x, y, z] mm/s2), joints with their `drive` (`mode`
     position deg|mm, speed deg/s|mm/s, torque N.mm, force N; `value`, `expr` of t, or `to`), `spring` (stiffness N/mm or
@@ -404,7 +425,7 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   `ambient`) and `fan` (`on: [heatsink body]`, `fan`: an id (40x10, 40x28-server, 60x15, 80x25, 92x25, 120x25,
   120x25-high, 140x25) or `{"flow" m3/h | "cfm", "pressure" Pa | "mmH2O", "curve": [[m3/h, Pa], ...]}`, `vector` the
   air's way along the fins, `count`, `ambient` inlet degC): its plate fins are found in the geometry, the fan's curve
-  meets the fins' pressure drop, and the air warms along them; the air is taken as ducted through the fins. `mechanism` reports which engines this machine has (`engines`).
+  meets the fins' pressure drop, and the air warms along them; the air is taken as ducted through the fins. `mechanism` reports which engines this machine has (`engines`; `unavailable` says why a study kind cannot run).
 - Typical: ground the frame, joint the parts, `mechanism` to check the degrees of freedom, `joint_set` to try a
   position, a `motion` study for the travel, a `dynamic` study for forces, then `load` + `static` on the most loaded
   part with the reaction forces as its loads.

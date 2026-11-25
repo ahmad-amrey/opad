@@ -2,6 +2,8 @@
 #include <Bnd_Box.hxx>
 #include <TopoDS_Shape.hxx>
 #include <functional>
+#include <limits>
+#include <memory>
 #include <optional>
 #include "document.hpp"
 #include "scene.hpp"
@@ -25,6 +27,23 @@ json measure_distance(const Document& doc, const Scene& scene, const Ref& a, con
 // The distance between two shapes, surface to surface: value, point_a, point_b, delta, and approximate with
 // tolerance_mm when only the meshes could say (gap log #4). measure_distance adds the refs and warnings.
 json shape_distance(const TopoDS_Shape& s1, const TopoDS_Shape& s2, const std::function<bool()>& cancelled = {});
+// The distance between the meshes of two shapes alone, no exact extrema (a path clearance, per frame of a motion): 0 where
+// they cross, else within the coarser mesh's deflection of the surfaces' distance. A MeshSet is a meshed shape's triangles
+// and their tree, built once (its meshed faces; null when none is) and read by any number of threads; b is placed into a's
+// coordinates by `b_to_a` (a rigid motion), so moving parts never rebuild their trees. Points come in a's coordinates.
+struct MeshSet;
+std::shared_ptr<const MeshSet> mesh_set(const TopoDS_Shape& shape);
+struct MeshGap {
+  double value = 0;
+  Vec3 a{}, b{};
+  bool above = false;  // the walk stopped at stop_above: the distance is that or more (value = stop_above, no points)
+};
+// relative: above exact_below, an answer up to that fraction above the meshes' distance is taken (parallel or concentric
+// faces far apart tie over their whole area, and an exact minimum would visit every pair of them).
+// stop_above: a pair no nearer than that is not walked to the end (above). enough: a distance found at or under it ends
+// the walk (faces that lie on each other, a block and its head, tie over their whole area).
+MeshGap mesh_distance(const MeshSet& a, const MeshSet& b, const Mat4& b_to_a, double relative = 0, double exact_below = 0,
+                      double stop_above = std::numeric_limits<double>::infinity(), double enough = 0);
 // Edge-to-edge distance with selectable points of interest. The picked positions are projected onto their
 // edges, then snap to nearby endpoints, midpoints or curve extrema within snap_tolerance. The returned
 // `anchors` array also contains the closest, farthest and endpoint-based alternatives.
@@ -63,9 +82,17 @@ json bbox_to_json(const Bnd_Box& box);
 // What the entity filters look at for one face, edge or vertex (world coordinates): type, curve or surface, radius,
 // direction (straight edges), normal (planar faces), axis, bbox.
 json describe_entity(const TopoDS_Shape& sub);
+// The same plus what `filters` measure: "length" of an edge (length_min/max), "area" of a face (area_min/max).
+json describe_entity(const TopoDS_Shape& sub, const json& filters);
+// describe_entity(sub, filters) for the faces, edges or vertices of `body`, plus "loop" of an edge when the filters ask:
+// "inner" when it lies on a hole of one of the body's faces (any wire but the face's outer one), else "outer". Scans the
+// body's faces once, when it is made.
+std::function<json(const TopoDS_Shape&)> entity_describer(const TopoDS_Shape& body, const json& filters);
 // Whether a description passes the filters of query_entities and rule selectors (TODO 10 B7): curve, surface,
-// radius_min/max, parallel_to ("x"|"y"|"z" or [x,y,z]), normal ("+x".. or [x,y,z]), at_plane {axis, value},
-// bounds {min, max}. Throws for a filter it does not know.
+// radius_min/max, length_min/max (edges), area_min/max (faces), parallel_to ("x"|"y"|"z" or [x,y,z]), normal ("+x".. or
+// [x,y,z]), at_plane {axis, value}, bounds {min, max} (a null coordinate is open on that side) with bounds_mode "inside"
+// (default) / "intersects" / "outside", loop "inner" / "outer" (edges, from entity_describer). Numbers only: rule selectors
+// evaluate expressions first (design::evaluate_rule_filters). Throws for a filter it does not know.
 bool entity_matches(const json& detail, const json& filters, double tolerance = 1e-5);
 // Axis-aligned world bounding box of body nodes (empty list = all visible bodies). False when empty.
 bool scene_bbox(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, Vec3& lo, Vec3& hi);

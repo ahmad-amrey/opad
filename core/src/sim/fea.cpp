@@ -524,6 +524,14 @@ json engines() {
   if (!fea)
     out["note"] = ccx.empty() ? "static, modal and thermal studies need CalculiX's ccx: install it (Ubuntu: apt install calculix-ccx; Windows: put ccx.exe beside OPAD) or set OPAD_CCX"
                               : "this build has no Netgen";
+  // Why each study kind that cannot run here cannot (study refuses with the same words).
+  json why = json::object();
+  if (!chrono)
+    why["dynamic"] = "this build of OPAD has no dynamics engine (Project Chrono), so dynamic studies cannot run here; motion studies, "
+                     "joint_set and mechanism still work, and a build with Chrono runs the study as defined";
+  if (!fea)
+    for (const char* k : {"static", "modal", "thermal"}) why[k] = out["note"];
+  if (!why.empty()) out["unavailable"] = why;
   return out;
 }
 

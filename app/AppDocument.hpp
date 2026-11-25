@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <functional>
+#include <optional>
 
 #include "opad/core.hpp"
 #include "opad/design/feature.hpp"
@@ -40,7 +41,30 @@ class AppDocument : public QObject {
   bool viewOnly() const { return browse || readOnly; }
   bool hasDocument = false;
   unsigned long long generation = 0;
+  // The scene's revision: every re-resolve moves it, also those that change nothing in the document (a timeline roll-back,
+  // an editor's roll-back while a feature or sketch is edited, a theme change redrawing the icons, detach()).
   unsigned long long revision = 0;
+  // The committed content's revision (ops appended, undone, redone or removed, the document opened, replaced, merged or
+  // reloaded): what an agent's expected_revision is checked against. A live-MCP stress test saw `revision` go 5 -> 6 -> 7
+  // with no op while the user only rolled the timeline (2026-11-24): every agent write then failed with stale_revision.
+  unsigned long long contentRevision = 0;
+  // Every change of the ops, view-only ones included (appearance: hide/show, colour, opacity, lock), which leave
+  // contentRevision alone: nothing an agent could reference changed (the second MCP stress test, #16: four hides between two
+  // agent calls moved the revision 33 -> 37). What copies the document and swaps a result back in checks this one.
+  unsigned long long docRevision = 0;
+  // The document an agent's snapshot copied: its revisions and op ids. commitRebased() keeps the user's view-only edits
+  // made since (appended or undone) and appends the agent's new ops after them.
+  struct SnapshotBase {
+    unsigned long long content = 0, doc = 0;
+    std::vector<std::string> ids;
+  };
+  // The last content changes ({"revision", "cause", "label"}, oldest first, at most 10): a stale_revision names them.
+  const std::vector<opad::json>& revisionLog() const { return m_revisionLog; }
+  // Ops that only change how things look (appearance): they move docRevision, not contentRevision.
+  static bool viewOnly(const std::vector<opad::Op>& ops, size_t from = 0);
+  // What moved contentRevision last ({"revision", "cause", "label"}), plus `view_refreshes`: the re-resolves since that
+  // left the content alone, by cause. live_state reports it as `revision_change`.
+  opad::json revisionChange() const;
   bool loading = false;      // a worker thread owns the document content until loadFinished
   opad::json lastLoad;       // what the reader of the last finished open or import said (ImportResult::to_json + "file")
   // Linked files (opad/assets.hpp) of the open document as the last load found them: AssetState::to_json per asset.
@@ -144,7 +168,13 @@ class AppDocument : public QObject {
   // Where the display of the bodies starts in the load's overall progress, in per cent (the document's own part comes
   // before: an .opad file is mostly display work, a translated one mostly translation).
   int displayStart() const { return m_displayStart; }
-  void refresh();
+  // The content changed: re-resolve the scene, move both revisions. `cause` (edit, undo, open, ...) and `label` are
+  // what revisionChange() reports.
+  void refresh(const char* cause = "edit", const QString& label = {});
+  // The ops changed, but only how things look (viewOnly): re-resolve, move docRevision and `revision`, not contentRevision.
+  void refreshLook(const char* cause, const QString& label);
+  // Only the view changed (a roll-back, the icons): re-resolve the scene, move `revision` only.
+  void refreshView(const char* cause);
   // KiCad boards: the reader's options from the settings (kicad/*).
   static opad::KicadOptions kicadOptions();
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
@@ -162,7 +192,22 @@ class AppDocument : public QObject {
   void recover(opad::Document&& document, opad::Scene&& resolved);  // an unsaved copy, no path (see Recovered)
   // Prepared on a worker. Swaps the old values back into the caller for worker disposal.
   void commitSnapshot(opad::Document& document, opad::Scene& resolved,
-                      unsigned long long expectedRevision, const QString& label);
+                      unsigned long long expectedRevision, const QString& label, const char* cause = "edit");  // docRevision
+  // An agent's commit: `document` is `base`'s copy with new ops appended. Refused when the content moved since; when only
+  // view-only ops did, the user's hides stay: looksSince (UI thread, ids only) says what they did, rebase (any thread:
+  // a worker) makes the agent's document the current log plus its new ops, its scene is resolved there again (it scales
+  // with the model), and commitRebased swaps it in, refused if anything moved meanwhile (rebase again).
+  struct LooksSince {
+    size_t common = 0;            // ops the copy and the document still share
+    std::vector<opad::Op> ops;    // the user's looks after those
+    unsigned long long doc = 0;   // docRevision they are at
+  };
+  // Empty: nothing moved since the copy (commit it as it is). Throws stale_revision when more than looks moved.
+  std::optional<LooksSince> looksSince(const SnapshotBase& base) const;
+  // `base` moves on to the log it was put on.
+  static void rebase(opad::Document& document, SnapshotBase& base, LooksSince looks);
+  void commitRebased(opad::Document& document, opad::Scene& resolved, const SnapshotBase& base, const QString& label,
+                     const char* cause = "agent");
 
   QString title() const;
   QString path() const;
@@ -287,6 +332,7 @@ class AppDocument : public QObject {
   };
   void disposeOld();  // the document and scene being replaced, to a worker (moved out: both are empty afterwards)
   void recordStep(const QString& label, size_t opsBefore);
+  void swapIn(opad::Document& document, opad::Scene& resolved, size_t before, const QString& label, const char* cause, bool look);
   void dropFollowedPaths();  // followAssetPaths' step taken back after a read-only document's copy failed to save
   void clearHistory();
   void markSaved();      // snapshot the state the file holds (or the empty state of a new document)
@@ -295,6 +341,13 @@ class AppDocument : public QObject {
   void checkActive();  // the active component still a component of the (whole) scene, else the root
   // Adds the targets of ops[from..] to `nodes`; false when one of them is not an appearance, transform, rename or reparent.
   static bool touches(const std::vector<opad::Op>& ops, size_t from, std::vector<std::string>& nodes);
+  void resolveScene();  // refresh() and refreshView(): the scene re-resolved, `revision` moved, `changed` emitted
+  void contentChanged(const char* cause, const QString& label);  // contentRevision moved, with what moved it
+  void lookChanged(const char* cause, const QString& label);  // only docRevision moved (view-only ops)
+  void changedOps(bool look, const char* cause, const QString& label) { look ? lookChanged(cause, label) : contentChanged(cause, label); }
+  opad::json m_contentChange = opad::json::object(), m_viewSince = opad::json::object(), m_lookSince = opad::json::array();
+  size_t m_lookCount = 0;
+  std::vector<opad::json> m_revisionLog;
   Change m_change, m_next;  // the last refresh's, and what the next one reports (anything unless the caller says)
   std::string m_rollback, m_active;
   std::string m_resolvedRollback;  // what the scene was resolved up to: another point is a change of everything

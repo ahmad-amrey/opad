@@ -97,4 +97,36 @@ TEST(registrations_compare_with_this_copy) {
   CHECK(classify(Entry{dir.filePath("gone/opad-cli.exe"), serverArgs(discovery), true}, exe, discovery) == State::Missing);  // moved away
 }
 
+#ifdef Q_OS_WIN
+// Claude Desktop from its MSIX package keeps its settings in %LOCALAPPDATA%\Claude-Data\claude_<publisher> (the one with the
+// configuration file first), and ships Claude Code there; without that folder it is %APPDATA%\Claude as before.
+TEST(desktop_config_in_the_packaged_apps_data_folder) {
+  QTemporaryDir dir;
+  const QByteArray local = qgetenv("LOCALAPPDATA"), roaming = qgetenv("APPDATA");
+  qputenv("LOCALAPPDATA", QDir::toNativeSeparators(dir.filePath("local")).toUtf8());
+  qputenv("APPDATA", QDir::toNativeSeparators(dir.filePath("roaming")).toUtf8());
+  CHECK(QDir::cleanPath(desktopConfigPath()) == QDir::cleanPath(dir.filePath("roaming/Claude/claude_desktop_config.json")));
+  QDir().mkpath(dir.filePath("local/Claude-Data/claude_other"));
+  QDir().mkpath(dir.filePath("local/Claude-Data/claude_abc123/claude-code/2.1.9/aa"));
+  QDir().mkpath(dir.filePath("local/Claude-Data/claude_abc123/claude-code/2.1.10/bb"));
+  write(dir.filePath("local/Claude-Data/claude_abc123/claude_desktop_config.json"), "{}");
+  write(dir.filePath("local/Claude-Data/claude_abc123/claude-code/2.1.9/aa/claude.exe"), "x");
+  write(dir.filePath("local/Claude-Data/claude_abc123/claude-code/2.1.10/bb/claude.exe"), "x");
+  CHECK(QDir::cleanPath(desktopConfigPath()) == QDir::cleanPath(dir.filePath("local/Claude-Data/claude_abc123/claude_desktop_config.json")));
+  const QStringList found = claudeCandidates();
+  CHECK(found.contains(QDir::cleanPath(dir.filePath("local/Claude-Data/claude_abc123/claude-code/2.1.10/bb/claude.exe"))));
+  CHECK(found.indexOf(QDir::cleanPath(dir.filePath("local/Claude-Data/claude_abc123/claude-code/2.1.10/bb/claude.exe"))) <
+        found.indexOf(QDir::cleanPath(dir.filePath("local/Claude-Data/claude_abc123/claude-code/2.1.9/aa/claude.exe"))));  // the newest first
+  qputenv("LOCALAPPDATA", local);
+  qputenv("APPDATA", roaming);
+}
+#endif
+
+TEST(opad_itself_is_never_a_clients_program) {
+  CHECK(isOpadProgram("D:/Apps/OPAD/opad-cli.exe"));
+  CHECK(isOpadProgram("/Applications/OPAD.app/Contents/MacOS/opad"));
+  CHECK(!isOpadProgram("D:/tools/bin/claude.exe"));
+  CHECK(!isOpadProgram("/usr/local/bin/codex"));
+}
+
 CHECK_MAIN()

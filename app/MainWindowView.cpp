@@ -212,7 +212,7 @@ void MainWindow::refreshIcons() {
     QString icon = a->data().toString();
     if (!icon.isEmpty()) a->setIcon(icons::themed(icon));
   }
-  m_doc->refresh();
+  m_doc->refreshView("icons");  // the browser and timeline repaint with the new icons; the content is the same
 }
 
 void MainWindow::buildCentral() {

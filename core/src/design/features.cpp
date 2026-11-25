@@ -68,6 +68,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <cstdio>
 #include <set>
 #include <sstream>
 #include <tuple>
@@ -228,7 +229,12 @@ std::vector<FeatureSpec> build_specs() {
   add("combine", "Combine", "combine", "combine", "Join, cut or intersect bodies.",
       {advancing(pick("target", "Target bodies", "bodies", 1, 0)), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
   add("split", "Split body", "split", "combine", "Cut bodies in two along a plane.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Splitting plane", "plane")});
-  add("mirror", "Mirror", "mirror", "pattern", "Mirrored copies of bodies.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Mirror plane", "plane")}, "new");
+  // name_map: words swapped in the copies' names ("R=L, Right=Left", or {"R": "L"} from an agent), and the component a copy
+  // goes into, when its source's has a sibling of the swapped name (engine.cpp materialize). Used when the copies are made.
+  add("mirror", "Mirror", "mirror", "pattern",
+      "Mirrored copies of bodies. Swap in names (e.g. R=L, Right=Left) names each copy after its source with those words swapped, "
+      "and puts it in the component whose name swaps so, beside its source's.",
+      {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Mirror plane", "plane"), in("name_map", "Swap in names", "names", "", "", true)}, "new");
   add("pattern_rect", "Rectangular pattern", "patternRect", "pattern", "Copies of bodies in rows and columns.",
       {pick("bodies", "Bodies", "bodies", 1, 0), in("axis", "Direction", "axis", json{{"base", "x"}}), in("count", "Count", "count", "3"), in("spacing", "Spacing", "length", "20 mm"),
        in("second", "Second direction", "bool", false), in("axis2", "Direction 2", "axis", json{{"base", "y"}}, "second=true"), in("count2", "Count 2", "count", "2", "second=true"),
@@ -376,6 +382,48 @@ TopoDS_Shape healed(const TopoDS_Shape& s) {
   ShapeFix_Shape fix(s);
   fix.Perform();
   return fix.Shape();
+}
+
+// Why an offset join failed, as far as it can be told: the faces that come closer than `gap` to a face they do not touch
+// (share no vertex with), closest first, as ": face 12 (plane) and face 4 (bspline) are 1.3 mm apart, ...". Their offsets
+// run into each other, which the join cannot always close. Empty when there are none, or too many faces to look (> 400).
+std::string close_faces(const TopoDS_Shape& body, double gap) {
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(body, TopAbs_FACE, faces);
+  const int n = faces.Extent();
+  if (n > 400) return {};
+  std::vector<Bnd_Box> boxes(size_t(n) + 1);
+  std::vector<std::set<int>> corners(size_t(n) + 1);  // vertex ids per face, to tell faces that touch
+  TopTools_IndexedMapOfShape vertices;
+  for (int i = 1; i <= n; ++i) {
+    BRepBndLib::Add(faces(i), boxes[size_t(i)]);
+    for (TopExp_Explorer v(faces(i), TopAbs_VERTEX); v.More(); v.Next()) corners[size_t(i)].insert(vertices.Add(v.Current()));
+  }
+  auto kind = [&](int i) {
+    static const char* const names[] = {"plane", "cylinder", "cone", "sphere", "torus", "bezier", "bspline", "revolution", "extrusion", "offset", "other"};
+    const int t = int(BRepAdaptor_Surface(TopoDS::Face(faces(i))).GetType());
+    return std::string(t >= 0 && t < 11 ? names[t] : "other");
+  };
+  std::vector<std::tuple<double, int, int>> close;
+  for (int i = 1; i <= n; ++i)
+    for (int j = i + 1; j <= n; ++j) {
+      if (boxes[size_t(i)].Distance(boxes[size_t(j)]) >= gap) continue;
+      const auto& a = corners[size_t(i)];
+      if (std::any_of(corners[size_t(j)].begin(), corners[size_t(j)].end(), [&](int v) { return a.count(v) > 0; })) continue;
+      BRepExtrema_DistShapeShape d(faces(i), faces(j), Extrema_ExtFlag_MIN);
+      if (d.IsDone() && d.Value() < gap - 1e-6) close.push_back({d.Value(), i, j});
+    }
+  if (close.empty()) return {};
+  std::sort(close.begin(), close.end());
+  std::string out = ": ";
+  for (size_t k = 0; k < close.size() && k < 3; ++k) {
+    const auto& [dist, i, j] = close[k];
+    char mm[32];
+    std::snprintf(mm, sizeof mm, "%.2f", dist);
+    out += std::string(k ? ", " : "") + "face " + std::to_string(i - 1) + " (" + kind(i) + ") and face " + std::to_string(j - 1) + " (" + kind(j) + ") are " + mm + " mm apart";
+  }
+  if (close.size() > 3) out += " (and " + std::to_string(close.size() - 3) + " more pairs)";
+  return out + ", closer than the thickness";
 }
 
 // A solid with negative volume is inside out (revolving the other way round, mirrored input).
@@ -2148,10 +2196,25 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
         if (offset > 0) throw Error("an outside shell needs a face to remove");
         result = boolean(BoolOp::Cut, body, outward(inner));
       } else {
+        // The kernel's join intersects each offset face with its neighbours only. A face that comes within the thickness of
+        // one it does not touch (a pocket's wall near a rim fillet: the wall's offset grows into the fillet's) leaves it
+        // unable to close the inner skin, so it fails. Asked to intersect every offset face with every other, it closes it:
+        // slower, so only after the plain join failed, and kept only as a valid solid.
         BRepOffsetAPI_MakeThickSolid mk;
         mk.MakeThickSolidByJoin(body, remove, offset, 1e-4);
-        if (!mk.IsDone()) throw Error("the body cannot be shelled by that thickness");
-        result = mk.Shape();
+        if (mk.IsDone()) {
+          result = mk.Shape();
+        } else {
+          BRepOffsetAPI_MakeThickSolid all;
+          try {
+            all.MakeThickSolidByJoin(body, remove, offset, 1e-4, BRepOffset_Skin, Standard_True);
+          } catch (const Standard_Failure&) {
+          }
+          if (!all.IsDone() || !BRepCheck_Analyzer(all.Shape()).IsValid())
+            throw Error("the body cannot be shelled by that thickness: the kernel could not join the offset faces" + close_faces(body, std::fabs(t)) +
+                        "; try a smaller thickness, or shell before the cut that brings those faces together");
+          result = all.Shape();
+        }
       }
       const auto pieces = solids_of(result);
       if (pieces.empty()) throw Error("the shell is not a solid");

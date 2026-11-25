@@ -15,11 +15,27 @@ Working with an AI assistant is calm and readable now: OPAD tells you in plain w
 AI app looked at and changed, marks its steps in the timeline, and asks you only when it needs you.
 
 ### Added
+- **See what the AI is working on at a glance.** An assistant can name the stage it is in, in a few words ("Opening the
+  drawing", "Designing the mounting bracket"): the AI chip shows it beside the assistant's name, and the AI activity panel
+  starts a heading with it, so the entries under it read as that stage's work.
 - **Stop AI work** (Tools, the chip's menu and the panel) stops what the assistant is doing and removes its preview;
   changes it already made stay. **Pause changes** lets it look but not change anything until you resume.
 - **Development builds, if you want them.** *Help > Offer development builds* makes OPAD offer the builds of the
   development branch and the release candidates too, not only releases, so you can try fixes and features before they
   ship. *About* now shows the build number.
+- **Ellipse dimensions.** An ellipse in a sketch takes a major and a minor radius dimension, with expressions like any
+  other, so a parametric ellipse no longer needs an equation spline. The Dimension tool picks the radius nearer where
+  you click the ellipse.
+- **Mirror names its copies.** *Swap in names* (e.g. `R=L, Right=Left`) names each mirrored copy after its source with
+  those words swapped ("Bracket R" becomes "Bracket L") and puts it in the component beside its source's whose name swaps
+  the same way ("Right side" to "Left side"), so a mirrored assembly needs no renaming or moving afterwards.
+- **Sharper edge and face rules.** A rule can take what reaches into a box (`bounds_mode` "intersects") or stays out of it
+  ("outside"), leave a side of the box open, pick edges and faces by length or area, and tell a ring's inner rim from its
+  outer one (`loop` "inner" / "outer").
+- **Motion studies check clearance along the way.** Turn on *clearance* in a motion study's settings and it measures
+  how close the moving parts come at every frame: the first collision (when, which two parts, and whether they cross or
+  only touch), the closest approach, the pairs closer than a gap you set, and a minimum-distance curve over time. Parts
+  that already touch at the start, like a pin in its bore, are listed apart. No more posing the worst frames one by one.
 
 ### Changed
 - **AI activity in plain words.** The panel now reads like a log of what was done, with your part and step names and
@@ -31,14 +47,17 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
   of the view says "Claude's preview · not applied", lists its steps when you point at it, and its *Discard* drops it.
 - **The AI chip** in the status bar carries a new AI mark and says what is going on in a word or two: *Connect AI*,
   *AI ready*, *Claude*, *Claude · working*, *Claude · preview*, *Claude needs you*, with a count of changes made while the
-  panel was closed. Its menu stops the assistant, sets what it may do, pauses its changes for now, or disconnects it.
+  panel was closed. Its menu stops the assistant, sets what it may do, pauses its changes for now, or disconnects it. It
+  sits at the right end of the status bar, leaving the room beside the document's name to the name.
 - **When the assistant needs you**, one entry says so in amber with one button: for example, if it may only look and
   tries to change something, *Allow changes* lets it. Errors it fixes by itself no longer fill the panel.
 - **Steps an AI made** carry its mark in the timeline, their tooltip and Properties name the assistant and the time
   ("Claude (AI) · 14:02"), and Undo reads "Undo Claude: Added …". The assistant's name is saved with the step. A step's
   right-click menu has *Show in AI activity*, and the Annotations panel can show only the AI's notes (author *AI*).
 - **Settings > AI assistants** (was AI integration) sets up Claude Code, Claude Desktop or Codex with one click, shows
-  whether each is ready, and gives a sentence to try. Setup for other apps moved to *Other AI apps*.
+  whether each is ready, and gives a sentence to try. Setup for other apps moved to *Other AI apps*. It finds Claude
+  Desktop and the Codex app as installed from the Microsoft Store, and the Claude Code that comes with Claude Desktop; a
+  box for an app's program appears only when OPAD can't find it, and says so.
 - **Version control in a folder of its own.** Setting up version control for a document that shares its folder with
   other files now offers to move it into a folder of its own first, so the repository holds just your design. AI agents
   setting up version control ask you first too, then move the design or use the folder as it is.
@@ -60,8 +79,14 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - **Search commands puts the tools of where you work first:** in a sketch, *Sketch fillet* comes before *Fillet* (and
   so on for Mirror, Offset, Move and the patterns; "measure" finds Measure in a sketch, Distance outside it).
   Everything is still listed.
+- **Rules follow parameters.** The lengths in an edge or face rule (a plane's height, the box, the radius and length
+  limits) may be expressions such as `height` or `w / 2`, and the rule matches again when a parameter changes.
 
 ### Fixed
+- **3D scans and other big meshes no longer freeze OPAD.** Choosing the axis in *Move / copy*, or switching to the
+  Face, Edge or Vertex filter, used to make OPAD wait while it prepared every triangle of the mesh for picking: over
+  three minutes on a 3-million-triangle scan. It now takes no noticeable time, picking a scan's edges, points and
+  triangles works as on any part, committing a move no longer pauses, and scans open faster.
 - **Sketch fillet says why a corner can't be rounded:** two ends that only touch (common in DXF drawings: merge the
   points), a tangent join, more than two curves meeting, or a radius too big, with the largest that fits. Any sketch
   change OPAD refuses now shows its reason in a notice, not only on the status line.
@@ -79,6 +104,46 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - Zoomed in close, curved faces stay smooth in two more places: the faces a timeline step made, highlighted while you
   point at it, and Compare's coloured bodies (the other version's, and the changed faces of a modified body). Both
   showed the coarse steps of the whole-model mesh instead of the smooth surface around them.
+- **AI assistants' changes no longer fail because you looked back in the timeline.** Rolling the timeline back and
+  forward, opening a feature or sketch to edit it and leaving it, or switching between light and dark no longer count as
+  changes to the design, so an assistant's next change is not refused as "the document changed". The assistant can also
+  see what changed the design last.
+  Hiding, showing, colouring or locking parts doesn't count either, also while the assistant is working or has a preview
+  waiting: its change goes in after yours and your hidden parts stay hidden. When the design did change meanwhile, the
+  assistant is told what changed it.
+- AI assistants can read the list of feature kinds and their inputs while OPAD shows its start page, before a design is
+  open.
+- AI assistants get the design history and the operation list a page at a time (50 short entries: name, kind and
+  state), and only the last change when they ask what changed, instead of replies of tens of KB that could fill their
+  memory. They can still ask for the full details.
+- An AI assistant trying a mechanism position (a preview) no longer gets back an id for a position that was never saved.
+- AI assistants read OPAD's agent guide one section at a time instead of all 50 KB at once, which some of them could not
+  take in; the whole guide is still there for those that want it.
+- **An AI assistant's multi-step change checks every step.** A step that makes a broken solid (a sweep along a path
+  too tight for its profile, say) now stops the whole change at that step and says which one, as a single step already
+  did. Before, a later step could swallow the broken body and the change went through with part of the model missing.
+  A component chosen for the whole change no longer adds a "not used" warning to every fillet, cut or join in it.
+- **Sweep paths join ends that nearly meet**, such as curves whose end points were typed to a few decimals. A path
+  that really is open now names the curves whose ends don't meet and how far apart they are.
+- **Shell after a pocket near a fillet.** A body whose pocket comes close to a rim fillet, closer than the shell's
+  thickness, now shells, where it used to say it "cannot be shelled by that thickness". When it still cannot, the
+  message names the two faces that come too close and how far apart they are.
+- **Joints made by an AI assistant or a script:**
+  - A ground or rigid joint no longer asks where it is: it holds the part where it stands.
+  - A joint can be moved onto another axis (the cylinder face of a pin, say), another part or another base and stays
+    the same joint, with its name, limits, drive and poses; the parts stay where they are. Before, it had to be deleted
+    and made again.
+  - Driving a joint past a limit says which coordinate stopped (rotation or translation), at what value, and what was
+    asked: "Slide rotation held at its upper limit 30 deg (asked 45 deg)".
+  - The mechanism no longer counts the ground's equations as redundant (a clean mechanism read "6 redundant"), and
+    names the joints whose equations repeat others, such as the one closing a loop. Dynamic studies of a grounded
+    mechanism no longer warn about redundant equations either.
+  - A dynamic study in a build without its dynamics engine (Project Chrono) says so, and what still works, instead of
+    a bare "not available"; static, modal and thermal studies say what they are missing the same way.
+- Changing part of a study's settings (an AI assistant adding traces, say) keeps the rest: the drivers are no longer
+  lost. The settings given are merged in, and an empty value removes one.
+- A parameter used only in a sketch's equation curve (an ellipse's half axes, for example) is now listed as used by
+  that sketch, can't be deleted while the sketch needs it, and renaming it updates the equation.
 
 ## [0.10.0] - 2026-11-21
 

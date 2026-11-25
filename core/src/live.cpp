@@ -35,6 +35,26 @@ json transaction_policy() {
     {"expected_revision","Use base_revision for every staged command and commit; staging does not advance the live revision."},
     {"recovery","After reconnect, bind the same target and query request_status for any uncertain commit. Discarded transactions cannot resume: inspect current context, begin a new transaction and replan with new request IDs."}};
 }
+json live_read_defaults(const std::string& name, json args) {
+  if (name != "features" && name != "ops") return args;
+  if (!args.contains("limit")) args["limit"] = live_page_limit;
+  if (!args.contains("detail")) args["detail"] = "compact";
+  return args;
+}
+void add_guide(json& out, const json& args) {
+  if (args.value("include_example", false)) out["guide"] = live_guide();
+  if (args.value("include_guide", false)) out["agent_guide"] = guide_index();
+  if (const auto id = args.value("guide_section", std::string()); !id.empty()) {
+    try {
+      out["agent_guide_section"] = guide_section(id);
+    } catch (const std::exception& e) {
+      json ids = json::array();
+      const json index = guide_index();
+      for (const auto& s : index["sections"]) ids.push_back(s["id"]);
+      out["agent_guide_section"] = {{"error", e.what()}, {"sections", ids}};
+    }
+  }
+}
 json live_guide() {
   return {{"transactions",transaction_policy()},{"identifiers","result.feature_id identifies a history operation; result.body_ids identifies its output bodies; result.sketch_id identifies a sketch. Legacy result.ids contains operation IDs, not body IDs."},
     {"changes","changes.scope=transaction means cumulative changes since transaction_begin; command means this command only. result identifies the last modeling command, including at transaction_commit."},
@@ -81,10 +101,11 @@ const json& live_tools() {
   static const json tools=[] {
   json out=json::array();
   auto add=[&](const std::string& name,const std::string& description,json schema){out.push_back({{"name",name},{"description",description},{"inputSchema",schema},{"outputSchema",live_output_schema(name)},{"annotations",{{"readOnlyHint",!live_mutation(name)},{"openWorldHint",false}}}});};
-  add("live_diagnostics","Start here: compact read-only connection, target, permissions, units, revision, transaction state and next calls. Set include_example for a typed-ID workflow and include_guide for the agent guide (units, frames, sketch geometry, references, feature conventions; also the MCP resource opad://guide/agent).",object({{"include_example",{{"type","boolean"},{"default",false}}},{"include_guide",{{"type","boolean"},{"default",false}}}}));
+  add("live_diagnostics","Start here: compact read-only connection, target, permissions, units, revision, transaction state and next calls. Set include_example for a typed-ID workflow and include_guide for the agent guide's index (units, frames, sketch geometry, references, feature conventions), then guide_section=<id> for one section (\"all\": the whole guide, also the MCP resource opad://guide/agent; one section: opad://guide/agent#<id>).",object({{"include_example",{{"type","boolean"},{"default",false}}},{"include_guide",{{"type","boolean"},{"default",false}}},{"guide_section",{{"type","string"}}}}));
   add("live_instances","List running OPAD windows. Choose the intended instance and document explicitly.",object());
   add("live_bind","Bind this connection to exactly one instance and document target; never follows a newly opened document.",object({{"instance",str()},{"target",str()}},{"instance","target"}));
-  add("live_state","Current revision, camera, selection, edit session and bounded recent changes.",object());
+  add("live_state","Current revision (revision_change: what moved it; view edits such as hides do not), camera, selection, edit session and the last command's changes.",
+      object({{"change_history",{{"type","boolean"},{"default",false},{"description","All kept changes (up to 20), not only the last."}}}}));
   add("wait_for_idle","Wait without blocking the UI, up to 10 seconds, for this connection to be ready. Human editors return immediately with idle=false. Does not cancel work or reserve an edit lock; check revision before writing.",object({{"timeout_ms",{{"type","integer"},{"minimum",0},{"maximum",10000},{"default",2000}}}}));
   add("save","Save the committed live document to disk without a dialog. Omit path to save to its current file; an unsaved document needs an absolute .opad path. Saving to another existing file requires overwrite=true. Finish active editors and commit/cancel previews or transactions first. Requires edit access. Does not add an Undo step or change revision. Reuse request_id only to retrieve the same save receipt.",object({{"path",{{"type","string"},{"minLength",1},{"maxLength",32767}}},{"overwrite",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()}},{"expected_revision","request_id"}));
   // An agent starts without a person or the CLI: a document opened or made in the bound window (also from its start page).
@@ -94,6 +115,10 @@ const json& live_tools() {
   add("live_select","Select up to 25 bodies or subshapes of the same kind in the viewport. Selection is applied asynchronously; inspect live_state afterwards. Does not edit geometry.",object({{"refs",{{"type","array"},{"items",{{"type",{"string","object"}}}},{"minItems",1},{"maxItems",25}}},{"expected_revision",revision()}},{"refs","expected_revision"}));
   add("request_status","Find an earlier request's committed, failed, cancelled or pending receipt after reconnecting.",object({{"request_id",str()}},{"request_id"}));
   add("stop","Cancel unfinished agent work and remove temporary previews. Completed edits remain undoable.",object());
+  // What the assistant is working on, in its own few words: OPAD's AI chip and a heading in the AI activity panel (the
+  // panel's rows give the details). Changes nothing in the document.
+  add("set_phase","Tell the user in a few words what you are working on, e.g. \"Designing the mounting bracket\". Shown in OPAD's AI chip and as a heading in its activity panel until the next call. Call it at each new stage, not each step; empty clears. Changes nothing.",
+      object({{"title",{{"type","string"},{"maxLength",80},{"description","At most about 6 words, in the user's language."}}}},{"title"}));
   // Gap log #14: the document's own undo and redo, one step each (an agent's commit, a batch or a person's edit).
   for(const auto name:{"undo","redo"})
     add(name,std::string(name)=="undo"?"Undo the document's last step (whoever made it), as Edit > Undo does; not during a transaction. The reply names the step.":"Redo the step undo took back, as Edit > Redo does.",
@@ -134,7 +159,7 @@ const json& live_tools() {
     }
     batchSteps.push_back(object({{"id",str()},{"command",{{"enum",{command.name}}}},{"arguments",arguments},{"references",{{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}}}},{"id","command","arguments"}));
   }
-  add("model_batch","Execute 1-100 typed modeling steps atomically with per-step receipts. An identifier string may refer to an earlier step's result as @{<step id>#/<path in that step's result>}: with a step {\"id\":\"cabin\",\"command\":\"feature\",...}, @{cabin#/body_ids/0} is its first body and @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids (mirror and patterns also all_body_ids), sketch steps sketch_id, component steps component_id. @{pat#/body_ids/*} is the whole list wherever a list is accepted, e.g. targets:[\"@{pat#/body_ids/*}\"]. A reference may also name a step of an earlier batch on the same connection when this batch has no step with that id. Feature steps take body_name, color and parent for the bodies they make; parent here is the default component for all of them. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
+  add("model_batch","Execute 1-100 typed modeling steps atomically with per-step receipts. An identifier string may refer to an earlier step's result as @{<step id>#/<path in that step's result>}: with a step {\"id\":\"cabin\",\"command\":\"feature\",...}, @{cabin#/body_ids/0} is its first body and @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids (mirror and patterns also all_body_ids), sketch steps sketch_id, component steps component_id. @{pat#/body_ids/*} is the whole list wherever a list is accepted, e.g. targets:[\"@{pat#/body_ids/*}\"]. A reference may also name a step of an earlier batch on the same connection when this batch has no step with that id. Feature steps take body_name, color and parent for the bodies they make; parent here is the default component for all of them. Validates all inputs/dependencies first. Each step's new and changed solids are validated as one feature call's are. Failure discards this whole batch, retaining previous staged work; failed_step names the failing step. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
     {"steps",{{"type","array"},{"items",{{"anyOf",batchSteps}}},{"minItems",1},{"maxItems",100}}},
     {"transaction",str()},{"preview",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()},{"verbosity",verbosity()},
     {"parent",{{"type",{"string","null"}},{"description","Default component for every body the feature steps make (a step's own parent wins); a component id or @{step#/component_id} of an earlier component step."}}},
@@ -144,6 +169,11 @@ const json& live_tools() {
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
     auto schema=command_schema(c,true);
     if(c.name=="sketch_edit")schema["properties"]["geometry"]=brief_geometry();  // the sketch tool has the full schema (B12)
+    if(c.name=="features" || c.name=="ops"){  // pages of compact items by default (live_read_defaults)
+      schema["properties"]["offset"]={{"type","integer"},{"minimum",0},{"default",0}};
+      schema["properties"]["limit"]={{"type","integer"},{"minimum",1},{"maximum",500},{"default",live_page_limit},{"description","result: items, total, next_offset (null at the end)"}};
+      schema["properties"]["detail"]["default"]="compact";
+    }
     schema["properties"]["transaction"]=str();
     if(live_mutation(c.name)) {
       schema["properties"]["expected_revision"]=revision();schema["properties"]["request_id"]=str();
@@ -153,7 +183,8 @@ const json& live_tools() {
       // measure writes only with pin, explode only with name or update: then (and only then) they need the revision
       // and a request id.
       if(c.name=="measure")schema["properties"]["pin"]={{"type","boolean"},{"default",false},{"description","Append a measurement op; then expected_revision and request_id are required. Without pin, measure is a read."}};
-      else if(c.name!="explode"){schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
+      // joint_set likewise writes only without preview (a preview only reports, #26).
+      else if(c.name!="explode" && c.name!="joint_set"){schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
     }
     add(c.name,c.description,schema);
   }

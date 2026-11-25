@@ -473,6 +473,21 @@ void SketchEditor::benchWorkflow() {
     setTool("dimension");m_options["dimensionType"]="arc_length";m_options["reference"]="1";
     const int arc=m_sk.entities.back().id;dimensionClick({Hit::Entity,arc},107,7);placeDimension(116,16);
     require(m_sk.constraints.back().type==SkConstraint::Type::ArcLength && m_sk.constraints.back().reference,"arc length reference from side panel");
+    // An ellipse: a click near the end of its major axis dimensions its major radius, one near the minor axis its minor
+    // radius, and a typed value drives each.
+    setTool("ellipse");placePrecise("130","0",0);placePrecise("150","0",0);placePrecise("130","8",0);
+    int ellipse=0;for(const auto& e:m_sk.entities)if(e.type==SkEntity::Type::Ellipse)ellipse=e.id;
+    require(ellipse!=0,"ellipse drawn");
+    setTool("dimension");m_options["dimensionType"]="auto";m_options["reference"]="0";
+    auto radiusAt=[&](double u,double v,double lu,double lv,const char* value,SkConstraint::Type want,const char* what){
+      dimensionClick({Hit::Entity,ellipse},u,v);placeDimension(lu,lv);
+      require(!m_sk.constraints.empty() && m_sk.constraints.back().type==want,what);
+      m_options["expression"]=value;applyTool();
+    };
+    radiusAt(149,1,160,4,"25 mm",SkConstraint::Type::MajorRadius,"ellipse major radius dimension");
+    radiusAt(131,7.5,134,14,"6 mm",SkConstraint::Type::MinorRadius,"ellipse minor radius dimension");
+    const SkEntity* drawn=m_sk.entity(ellipse);const SkPoint *centre=m_sk.point(drawn->p[0]),*tip=m_sk.point(drawn->p[1]);
+    require(std::fabs(std::hypot(tip->x-centre->x,tip->y-centre->y)-25)<1e-6 && std::fabs(drawn->r-6)<1e-6,"ellipse radii driven by their dimensions");
     const auto camera=m_viewport->cameraJson();
     QCoreApplication::processEvents();
     m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_WORKFLOW")+".viewport.png");

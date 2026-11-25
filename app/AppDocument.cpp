@@ -297,7 +297,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
       if (external && !viewer) m_savedIds.clear();  // imported for editing: not saved as an OPAD document yet
       if (external) setDisk({}, {}, {});
       else setDisk(QFileInfo(path).absoluteFilePath(), stat, manifest);
-      refresh();
+      refresh("open");
       emit pathChanged();
       if (viewer) emit message(tr("Viewing %1 (read-only)").arg(QFileInfo(path).fileName()));
       else if (external) emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
@@ -382,7 +382,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
                                // where: the file the user chose stays trusted (AssetMonitor::options), even outside a saved
                                // document's project (a board linked from another folder showed "not read" at once)
                                {"file", QFileInfo(path).absoluteFilePath().toStdString()}});
-      refresh();
+      refresh("import");
       emit undoChanged();
       if (!error.isEmpty()) {
         emit loadFinished(false, error);
@@ -413,7 +413,7 @@ void AppDocument::newDocument() {
   clearHistory();
   markSaved();
   setDisk({}, {}, {});
-  refresh();
+  refresh("new");
   emit pathChanged();
   emit newDocumentCreated();
 }
@@ -440,7 +440,7 @@ void AppDocument::closeDocument() {
   clearHistory();
   markSaved();
   setDisk({}, {}, {});
-  refresh();
+  refresh("close");
   emit pathChanged();
 }
 
@@ -473,7 +473,7 @@ void AppDocument::open(const QString& path) {
   if (ext != "opad") m_savedIds.clear();
   if (ext != "opad") setDisk({}, {}, {});
   else setDisk(QFileInfo(path).absoluteFilePath(), stat, std::make_shared<opad::Manifest>(opad::Manifest::of(doc)));
-  refresh();
+  refresh("open");
   emit pathChanged();
 }
 
@@ -541,7 +541,7 @@ void AppDocument::dropFollowedPaths() {
   const size_t count=m_undo.back().count;
   m_undo.pop_back();
   doc.truncate_ops(doc.ops.size()-std::min(count,doc.ops.size()));
-  refresh();
+  refresh("paths_dropped");
   emit undoChanged();
 }
 
@@ -586,9 +586,11 @@ opad::json AppDocument::run(const std::string& command, opad::json args, const Q
     throw opad::Error(lockedMessage(e).toStdString());
   }
   if (m_batching) return out;  // the batch makes the step and refreshes once
-  recordStep(label.isEmpty() ? labelFor(command, args) : label, before);
+  const QString step = label.isEmpty() ? labelFor(command, args) : label;
+  recordStep(step, before);
   if (std::vector<std::string> nodes; touches(doc.ops, before, nodes)) m_next = {false, std::move(nodes)};
-  refresh();
+  if (viewOnly(doc.ops, before)) refreshLook("edit", step);  // a hide or a colour: an agent's revision stays
+  else refresh("edit", step);
   return out;
 }
 
@@ -619,7 +621,8 @@ opad::json AppDocument::runAll(const std::vector<std::pair<std::string, opad::js
   }
   if (m_batching) return out;
   recordStep(label, before);
-  refresh();
+  if (viewOnly(doc.ops, before)) refreshLook("edit", label);
+  else refresh("edit", label);
   return out;
 }
 
@@ -646,14 +649,15 @@ void AppDocument::batch(const QString& label, const std::function<void()>& comma
   } catch (...) {
     m_batching = false;
     if (doc.ops.size() > before) doc.truncate_ops(before);
-    refresh();
+    refreshView("batch_failed");  // the ops the batch appended are gone again
     throw;
   }
   m_batching = false;
   if (doc.ops.size() == before) return;
   recordStep(label, before);
   if (std::vector<std::string> nodes; touches(doc.ops, before, nodes)) m_next = {false, std::move(nodes)};
-  refresh();
+  if (viewOnly(doc.ops, before)) refreshLook("edit", label);
+  else refresh("edit", label);
 }
 
 opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& label) {
@@ -663,7 +667,7 @@ opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& lab
   const size_t before = doc.ops.size();
   opad::json report = opad::design::commit(doc, std::move(plan), QSettings().value("user/name").toString().trimmed().toStdString());
   recordStep(label, before);
-  refresh();
+  refresh("edit", label);
   return report;
 }
 
@@ -683,7 +687,7 @@ opad::json AppDocument::commitRemoval(opad::design::Removal&& removal, const QSt
   m_redo.clear();
   while (static_cast<int>(m_undo.size()) > m_undoLimit) m_undo.erase(m_undo.begin());
   emit undoChanged();
-  refresh();  // a roll-back to a deleted op ends there
+  refresh("delete", label);  // a roll-back to a deleted op ends there
   return report;
 }
 
@@ -701,7 +705,7 @@ void AppDocument::setRollback(const std::string& opId) {
     if (const std::string resume = std::exchange(m_resume, {}); doc.find_op(resume)) return rollBackTo(resume);
   if (m_rollback == opId) return;
   m_rollback = opId;
-  refresh();
+  refreshView("editor_rollback");
 }
 
 void AppDocument::rollBackTo(const std::string& opId) {
@@ -709,7 +713,7 @@ void AppDocument::rollBackTo(const std::string& opId) {
   const bool moved = m_rollback != opId;
   m_rollback = opId;
   m_userRollback = !opId.empty();
-  if (moved) refresh();
+  if (moved) refreshView("timeline_rollback");
 }
 
 // The document being replaced and its scene are freed on a worker (UI-41): the Engine's are op JSON trees, 322 MB of BREP
@@ -721,7 +725,58 @@ void AppDocument::disposeOld() {
   t->start(QThread::LowPriority);
 }
 
-void AppDocument::refresh() {
+void AppDocument::contentChanged(const char* cause, const QString& label) {
+  ++contentRevision;
+  ++docRevision;
+  m_contentChange = {{"revision", contentRevision}, {"cause", cause}};
+  if (!label.isEmpty()) m_contentChange["label"] = label.toStdString();
+  m_viewSince = opad::json::object();
+  m_lookSince = opad::json::array();
+  m_lookCount = 0;
+  m_revisionLog.push_back(m_contentChange);
+  if (m_revisionLog.size() > 10) m_revisionLog.erase(m_revisionLog.begin());
+}
+
+void AppDocument::lookChanged(const char* cause, const QString& label) {
+  ++docRevision;
+  ++m_lookCount;
+  opad::json e = {{"cause", cause}};
+  if (!label.isEmpty()) e["label"] = label.toStdString();
+  m_lookSince.push_back(std::move(e));
+  if (m_lookSince.size() > 10) m_lookSince.erase(m_lookSince.begin());
+}
+
+bool AppDocument::viewOnly(const std::vector<opad::Op>& ops, size_t from) {
+  if (from >= ops.size()) return false;  // nothing appended: counted as before
+  for (size_t i = from; i < ops.size(); ++i)
+    if (ops[i].type != "appearance") return false;
+  return true;
+}
+
+opad::json AppDocument::revisionChange() const {
+  opad::json out = m_contentChange.empty() ? opad::json{{"revision", contentRevision}, {"cause", "none"}} : m_contentChange;
+  if (!m_viewSince.empty()) out["view_refreshes"] = m_viewSince;  // the scene re-resolved since, the content unchanged
+  // Hides, shows, colours, opacity and locks since: ops in the log, but nothing an agent references, so no new revision.
+  if (m_lookCount > 0) out["view_edits"] = {{"count", m_lookCount}, {"last", m_lookSince}};
+  return out;
+}
+
+void AppDocument::refresh(const char* cause, const QString& label) {
+  contentChanged(cause, label);
+  resolveScene();
+}
+
+void AppDocument::refreshLook(const char* cause, const QString& label) {
+  lookChanged(cause, label);
+  resolveScene();
+}
+
+void AppDocument::refreshView(const char* cause) {
+  m_viewSince[cause] = m_viewSince.value(cause, 0) + 1;
+  resolveScene();
+}
+
+void AppDocument::resolveScene() {
   m_change = std::exchange(m_next, Change{});
   if (!m_rollback.empty() && !doc.find_op(m_rollback)) m_rollback.clear();  // undone or closed
   if (!m_resume.empty() && !doc.find_op(m_resume)) m_resume.clear();
@@ -740,7 +795,7 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {rec
 
 void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved,const Recovered& into) {
   if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
-  emit aboutToReplace();++generation;++revision;dropRollback();m_change={};disposeOld();
+  emit aboutToReplace();++generation;++revision;contentChanged("recover",{});dropRollback();m_change={};disposeOld();
   doc=std::move(document);scene=std::move(resolved);
   linkedUnread=opad::has_assets(doc);  // a snapshot holds no linked file's parts: read as an open reads them
   browse=readOnly=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
@@ -756,15 +811,62 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved,const
 
 // ---------------------------------------------------------------- undo / redo
 void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
-                                 unsigned long long expectedRevision,const QString& label) {
+                                 unsigned long long expectedRevision,const QString& label,const char* cause) {
   if(browse) throw opad::Error("viewer_mode: the open file is shown read-only; the user has to save it as an OPAD document before it can be edited");
   if(readOnly) throw opad::Error("read_only: the document is open read-only; the user has to save a copy before it can be edited");
-  if(loading || designBusy || revision!=expectedRevision || document.header.uuid!=doc.header.uuid)
+  if(loading || designBusy || docRevision!=expectedRevision || document.header.uuid!=doc.header.uuid)
     throw opad::Error("stale_revision: the document changed while the agent was working");
   const auto before=doc.ops.size();
+  // Only appearance ops appended to the same log: a look change (the agent's own hide or colour), no new revision.
+  bool look=document.ops.size()>before && viewOnly(document.ops,before);
+  for(size_t i=0;look && i<before;++i)look=document.ops[i].id==doc.ops[i].id;
+  swapIn(document,resolved,before,label,cause,look);
+}
+
+void AppDocument::swapIn(opad::Document& document,opad::Scene& resolved,size_t before,const QString& label,const char* cause,bool look) {
   document.path=doc.path; // Save As may have changed the path without changing geometry.
   std::swap(doc,document);std::swap(scene,resolved);dropRollback();m_change={};
-  recordStep(label,before);updateDirty();++revision;checkActive();emit changed();emit undoChanged();
+  recordStep(label,before);updateDirty();++revision;changedOps(look,cause,label);checkActive();emit changed();emit undoChanged();
+}
+
+namespace {
+opad::Error staleAgent() {return opad::Error("stale_revision: the document changed while the agent was working");}
+}
+
+std::optional<AppDocument::LooksSince> AppDocument::looksSince(const SnapshotBase& base) const {
+  if(contentRevision!=base.content)throw staleAgent();
+  if(docRevision==base.doc)return std::nullopt;
+  // Since the copy the user only changed how things look (hid, showed, coloured, undid such a step): those stay, the
+  // agent's ops go after them. Ids and types only, the ops copied are looks: cheap on any model.
+  LooksSince out;out.doc=docRevision;
+  const auto& ids=base.ids;
+  while(out.common<ids.size() && out.common<doc.ops.size() && doc.ops[out.common].id==ids[out.common])++out.common;
+  for(size_t i=out.common;i<doc.ops.size();++i)if(doc.ops[i].type!="appearance")throw staleAgent();  // added since: looks only
+  out.ops.assign(doc.ops.begin()+static_cast<std::ptrdiff_t>(out.common),doc.ops.end());
+  return out;
+}
+
+void AppDocument::rebase(opad::Document& document,SnapshotBase& base,LooksSince looks) {
+  // The copy's ops must still lead the agent's document (it only appended); those the user undid since were looks.
+  const auto& ids=base.ids;
+  if(document.ops.size()<ids.size() || looks.common>ids.size())throw staleAgent();
+  for(size_t i=0;i<ids.size();++i)if(document.ops[i].id!=ids[i])throw staleAgent();
+  for(size_t i=looks.common;i<ids.size();++i)if(document.ops[i].type!="appearance")throw staleAgent();
+  std::vector<opad::Op> ops;ops.reserve(looks.common+looks.ops.size()+(document.ops.size()-ids.size()));
+  const auto from=[&](size_t i){return std::make_move_iterator(document.ops.begin()+static_cast<std::ptrdiff_t>(i));};
+  ops.insert(ops.end(),from(0),from(looks.common));
+  ops.insert(ops.end(),std::make_move_iterator(looks.ops.begin()),std::make_move_iterator(looks.ops.end()));
+  ops.insert(ops.end(),from(ids.size()),std::make_move_iterator(document.ops.end()));  // moved, never copied: imports are huge
+  document.ops=std::move(ops);document.dirty=true;
+  base.doc=looks.doc;base.ids.resize(looks.common);
+  for(size_t i=looks.common;i<looks.common+looks.ops.size();++i)base.ids.push_back(document.ops[i].id);
+}
+
+void AppDocument::commitRebased(opad::Document& document,opad::Scene& resolved,const SnapshotBase& base,const QString& label,const char* cause) {
+  if(browse) throw opad::Error("viewer_mode: the open file is shown read-only; the user has to save it as an OPAD document before it can be edited");
+  if(readOnly) throw opad::Error("read_only: the document is open read-only; the user has to save a copy before it can be edited");
+  if(contentRevision!=base.content)throw staleAgent();
+  commitSnapshot(document,resolved,base.doc,label,cause);  // the log it was rebased on, else refused
 }
 
 void AppDocument::detach() {
@@ -775,7 +877,8 @@ void AppDocument::detach() {
   m_savedBodies = 0;
   setDisk({}, {}, {});
   updateDirty();
-  ++revision;
+  ++revision;  // the same content, now editable: not a content change (agents check access themselves)
+  m_viewSince["detach"] = m_viewSince.value("detach", 0) + 1;
   emit changed();
   emit pathChanged();
   emit undoChanged();
@@ -839,18 +942,22 @@ void AppDocument::undo(int steps) {
   if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity,steps]{if(generation==identity)undo(steps);});return;}
   if (!canUndo()) return;
   std::vector<std::string> nodes;
-  bool local = true;
+  bool local = true, look = true;
+  QString label;
   for (; steps > 0 && !m_undo.empty(); --steps) {
     Step s = std::move(m_undo.back());
     m_undo.pop_back();
+    label = s.label;
     s.ops = doc.truncate_ops(doc.ops.size() - std::min(s.count, doc.ops.size()));
     local = local && s.removed.empty() && touches(s.ops, 0, nodes);
+    look = look && s.removed.empty() && viewOnly(s.ops);
     if (!s.removed.empty()) doc.reinsert_ops(std::move(s.removed));  // the deleted ops back where they stood
     s.removed.clear();
     m_redo.push_back(std::move(s));
   }
   if (local) m_next = {false, std::move(nodes)};
-  refresh();
+  if (look) refreshLook("undo", label);
+  else refresh("undo", label);
   emit undoChanged();
 }
 
@@ -858,11 +965,14 @@ void AppDocument::redo(int steps) {
   if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity,steps]{if(generation==identity)redo(steps);});return;}
   if (!canRedo()) return;
   std::vector<std::string> nodes;
-  bool local = true;
+  bool local = true, look = true;
+  QString label;
   for (; steps > 0 && !m_redo.empty(); --steps) {
     Step s = std::move(m_redo.back());
     m_redo.pop_back();
+    label = s.label;
     local = local && s.removedIds.empty() && touches(s.ops, 0, nodes);
+    look = look && s.removedIds.empty() && viewOnly(s.ops);
     if (!s.removedIds.empty()) s.removed = doc.remove_ops(s.removedIds);
     s.count = s.ops.size();
     doc.restore_ops(std::move(s.ops));
@@ -870,7 +980,8 @@ void AppDocument::redo(int steps) {
     m_undo.push_back(std::move(s));
   }
   if (local) m_next = {false, std::move(nodes)};
-  refresh();
+  if (look) refreshLook("redo", label);
+  else refresh("redo", label);
   emit undoChanged();
 }
 
@@ -1054,7 +1165,7 @@ opad::MergePlan AppDocument::mergeDisk(DiskRead&& read, const QString& label) {
   m_savedBodies = read.bodies.size();
   setDisk(read.file, read.stat, read.manifest);
   linkedUnread = opad::has_assets(doc);  // the file's ops may link files, or other versions of them: read as an open reads them
-  refresh();
+  refresh("disk_merge", label);
   emit undoChanged();
   return plan;
 }
@@ -1097,7 +1208,7 @@ void AppDocument::reloadDisk(DiskRead&& read) {
   markSaved();
   m_savedBodies = doc.body_count();
   setDisk(read.file, read.stat, read.manifest);
-  refresh();
+  refresh("disk_reload");
   emit pathChanged();
   emit message(tr("Reloaded %1 from disk").arg(QFileInfo(read.file).fileName()));
 }
