@@ -24,6 +24,7 @@
 #include <QLocalSocket>
 #include <QTimer>
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 #include "AgentBridge.hpp"
@@ -82,6 +83,10 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
     quint64 retry = 0;  // a row left saying "Retrying…"
     std::string body, joint;  // the body the user hides meanwhile (#16), the joint joint_set previews (#26)
     size_t looksAt = 0, opsCount = 0;
+    int rebased = 0;                 // m_rebasedCommits before the commit after the hides
+    qint64 longestGap = 0;           // the UI thread's longest pause while that commit ran (a heartbeat)
+    QElapsedTimer beat, committing;
+    QTimer* heartbeat = nullptr;
     size_t rows = 0;
     QElapsedTimer clock;
   };
@@ -560,20 +565,50 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         st->looksAt = m_doc->doc.ops.size();
         m_doc->run("appearance", {{"target", st->body}, {"visible", true}});
         require(m_prepared && m_prepared->id == st->transaction && m_doc->contentRevision == st->base, "a show keeps the staged preview");
+        // The commit resolves the rebased document on a worker (it scales with the model): held there, so the UI's
+        // heartbeat shows whether it waited, and so the user can colour the body while it runs.
+        m_benchRebaseHold = 400;
+        st->rebased = m_rebasedCommits;
+        st->longestGap = 0;
+        st->heartbeat = new QTimer(this);
+        st->heartbeat->setInterval(5);
+        connect(st->heartbeat, &QTimer::timeout, this, [st] { st->longestGap = std::max(st->longestGap, st->beat.restart()); });
+        st->beat.start();
+        st->heartbeat->start();
+        st->committing.start();
         tool("preview_commit", {{"id", st->transaction}, {"expected_revision", st->base}}, true);
         return true;
       },
-      [=, this] {  // the commit keeps the user's show and puts the agent's ops after it
+      [=, this] {  // while the commit's resolve runs on the worker, the user colours the body: the commit starts over
+        if (answered()) throw std::runtime_error("the commit answered before its resolve was seen running: " + st->reply.dump().substr(0, 300));
+        if (!(m_busy && !m_prepared && m_job)) return false;
+        require(m_rebasedCommits == st->rebased, "the commit's first resolve still runs");
+        m_doc->run("appearance", {{"target", st->body}, {"color", {0.2, 0.6, 0.9}}});
+        require(m_doc->contentRevision == st->base, "a colour during the commit keeps the content revision");
+        return true;
+      },
+      [=, this] {  // the commit keeps the user's show and colour and puts the agent's ops after them
         if (!answered() || !idle()) return false;
+        const qint64 took = st->committing.elapsed();
+        st->heartbeat->stop();
+        st->heartbeat->deleteLater();
+        st->heartbeat = nullptr;
+        m_benchRebaseHold = 0;
         require(!st->reply.value("isError", false) && st->reply["structuredContent"].value("state", "") == "committed",
                 "the preview's commit after a show: " + QString::fromStdString(st->reply.dump()).left(400));
         require(m_doc->contentRevision == st->base + 1, "the commit moved the content revision by one");
         const auto& ops = m_doc->doc.ops;
-        require(ops.size() > st->looksAt + 1 && ops[st->looksAt].type == "appearance" && ops.back().type != "appearance",
-                QStringLiteral("the user's show, then the agent's ops: %1 ops, show at %2").arg(ops.size()).arg(st->looksAt));
+        require(ops.size() > st->looksAt + 2 && ops[st->looksAt].type == "appearance" && ops[st->looksAt + 1].type == "appearance" &&
+                    ops.back().type != "appearance",
+                QStringLiteral("the user's show and colour, then the agent's ops: %1 ops, show at %2").arg(ops.size()).arg(st->looksAt));
         const auto* n = m_doc->scene.node(st->body);
-        require(n && n->visible && n->has_color, "the body is shown and keeps its colour after the agent's commit");
-        pass("an agent commit keeps the user's hides and colours made while it worked");
+        require(n && n->visible && n->has_color && std::abs(n->color[2] - 0.9) < 1e-6,
+                "the body is shown and keeps the colour given during the commit");
+        require(m_rebasedCommits == st->rebased + 2, QStringLiteral("two resolves on the worker (the colour started it over): %1").arg(m_rebasedCommits - st->rebased));
+        trace::log(QStringLiteral("bench: agent activity: commit with looks in between: %1 ms, UI thread's longest pause %2 ms").arg(took).arg(st->longestGap));
+        require(took >= 800 && st->longestGap < 400,
+                QStringLiteral("the resolve ran off the UI thread: commit %1 ms (two 400 ms holds), longest pause %2 ms").arg(took).arg(st->longestGap));
+        pass("an agent commit keeps the user's hides and colours made while it worked, its resolve on a worker");
         tool("features");
         return true;
       },

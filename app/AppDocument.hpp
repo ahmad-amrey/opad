@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <functional>
+#include <optional>
 
 #include "opad/core.hpp"
 #include "opad/design/feature.hpp"
@@ -193,7 +194,18 @@ class AppDocument : public QObject {
   void commitSnapshot(opad::Document& document, opad::Scene& resolved,
                       unsigned long long expectedRevision, const QString& label, const char* cause = "edit");  // docRevision
   // An agent's commit: `document` is `base`'s copy with new ops appended. Refused when the content moved since; when only
-  // view-only ops did, the result is the current log plus the new ops (re-resolved here), so the user's hides stay.
+  // view-only ops did, the user's hides stay: looksSince (UI thread, ids only) says what they did, rebase (any thread:
+  // a worker) makes the agent's document the current log plus its new ops, its scene is resolved there again (it scales
+  // with the model), and commitRebased swaps it in, refused if anything moved meanwhile (rebase again).
+  struct LooksSince {
+    size_t common = 0;            // ops the copy and the document still share
+    std::vector<opad::Op> ops;    // the user's looks after those
+    unsigned long long doc = 0;   // docRevision they are at
+  };
+  // Empty: nothing moved since the copy (commit it as it is). Throws stale_revision when more than looks moved.
+  std::optional<LooksSince> looksSince(const SnapshotBase& base) const;
+  // `base` moves on to the log it was put on.
+  static void rebase(opad::Document& document, SnapshotBase& base, LooksSince looks);
   void commitRebased(opad::Document& document, opad::Scene& resolved, const SnapshotBase& base, const QString& label,
                      const char* cause = "agent");
 

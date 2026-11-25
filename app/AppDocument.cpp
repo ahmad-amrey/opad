@@ -829,28 +829,44 @@ void AppDocument::swapIn(opad::Document& document,opad::Scene& resolved,size_t b
   recordStep(label,before);updateDirty();++revision;changedOps(look,cause,label);checkActive();emit changed();emit undoChanged();
 }
 
+namespace {
+opad::Error staleAgent() {return opad::Error("stale_revision: the document changed while the agent was working");}
+}
+
+std::optional<AppDocument::LooksSince> AppDocument::looksSince(const SnapshotBase& base) const {
+  if(contentRevision!=base.content)throw staleAgent();
+  if(docRevision==base.doc)return std::nullopt;
+  // Since the copy the user only changed how things look (hid, showed, coloured, undid such a step): those stay, the
+  // agent's ops go after them. Ids and types only, the ops copied are looks: cheap on any model.
+  LooksSince out;out.doc=docRevision;
+  const auto& ids=base.ids;
+  while(out.common<ids.size() && out.common<doc.ops.size() && doc.ops[out.common].id==ids[out.common])++out.common;
+  for(size_t i=out.common;i<doc.ops.size();++i)if(doc.ops[i].type!="appearance")throw staleAgent();  // added since: looks only
+  out.ops.assign(doc.ops.begin()+static_cast<std::ptrdiff_t>(out.common),doc.ops.end());
+  return out;
+}
+
+void AppDocument::rebase(opad::Document& document,SnapshotBase& base,LooksSince looks) {
+  // The copy's ops must still lead the agent's document (it only appended); those the user undid since were looks.
+  const auto& ids=base.ids;
+  if(document.ops.size()<ids.size() || looks.common>ids.size())throw staleAgent();
+  for(size_t i=0;i<ids.size();++i)if(document.ops[i].id!=ids[i])throw staleAgent();
+  for(size_t i=looks.common;i<ids.size();++i)if(document.ops[i].type!="appearance")throw staleAgent();
+  std::vector<opad::Op> ops;ops.reserve(looks.common+looks.ops.size()+(document.ops.size()-ids.size()));
+  const auto from=[&](size_t i){return std::make_move_iterator(document.ops.begin()+static_cast<std::ptrdiff_t>(i));};
+  ops.insert(ops.end(),from(0),from(looks.common));
+  ops.insert(ops.end(),std::make_move_iterator(looks.ops.begin()),std::make_move_iterator(looks.ops.end()));
+  ops.insert(ops.end(),from(ids.size()),std::make_move_iterator(document.ops.end()));  // moved, never copied: imports are huge
+  document.ops=std::move(ops);document.dirty=true;
+  base.doc=looks.doc;base.ids.resize(looks.common);
+  for(size_t i=looks.common;i<looks.common+looks.ops.size();++i)base.ids.push_back(document.ops[i].id);
+}
+
 void AppDocument::commitRebased(opad::Document& document,opad::Scene& resolved,const SnapshotBase& base,const QString& label,const char* cause) {
   if(browse) throw opad::Error("viewer_mode: the open file is shown read-only; the user has to save it as an OPAD document before it can be edited");
   if(readOnly) throw opad::Error("read_only: the document is open read-only; the user has to save a copy before it can be edited");
-  const auto stale=[]{return opad::Error("stale_revision: the document changed while the agent was working");};
-  if(loading || designBusy || contentRevision!=base.content || document.header.uuid!=doc.header.uuid)throw stale();
-  if(docRevision==base.doc){commitSnapshot(document,resolved,docRevision,label,cause);return;}
-  // Since the copy the user only changed how things look (hid, showed, coloured, undid such a step): keep that and put
-  // the agent's ops after it. The copy's ops must still lead the agent's document (it only appended).
-  const auto& ids=base.ids;
-  if(document.ops.size()<ids.size())throw stale();
-  for(size_t i=0;i<ids.size();++i)if(document.ops[i].id!=ids[i])throw stale();
-  size_t common=0;
-  while(common<ids.size() && common<doc.ops.size() && doc.ops[common].id==ids[common])++common;
-  for(size_t i=common;i<ids.size();++i)if(document.ops[i].type!="appearance")throw stale();  // undone since: looks only
-  for(size_t i=common;i<doc.ops.size();++i)if(doc.ops[i].type!="appearance")throw stale();  // added since: looks only
-  std::vector<opad::Op> fresh=document.truncate_ops(ids.size());
-  const bool look=viewOnly(fresh);
-  document.truncate_ops(common);
-  document.restore_ops(std::vector<opad::Op>(doc.ops.begin()+static_cast<std::ptrdiff_t>(common),doc.ops.end()));
-  document.restore_ops(std::move(fresh));
-  resolved=opad::resolve(document);  // the agent's scene lacked the user's looks (a resolve, as every refresh does here)
-  swapIn(document,resolved,doc.ops.size(),label,cause,look);
+  if(contentRevision!=base.content)throw staleAgent();
+  commitSnapshot(document,resolved,base.doc,label,cause);  // the log it was rebased on, else refused
 }
 
 void AppDocument::detach() {

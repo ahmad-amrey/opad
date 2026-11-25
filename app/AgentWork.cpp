@@ -482,6 +482,50 @@ void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::stri
   if(!m_prepared || m_prepared->id!=id || m_prepared->owner!=session->socket){fail(session,"unknown_prepared",tr("No matching prepared operation belongs to this connection."),receipt);return;}
   if(m_prepared->snapshot->revision!=revision || m_doc->contentRevision!=revision || editorBusy() || !canEdit() || !m_enabled){m_dropReason=tr("Dropped: the design changed first. Nothing changed.");clearPrepared();fail(session,"stale_revision",tr("The document changed. Prepare the operation again."),receipt);return;}
   auto prepared=std::move(m_prepared);m_viewport->clearPreviewBodies();
+  const auto& ids=prepared->snapshot->baseIds;
+  AppDocument::SnapshotBase base{revision,prepared->snapshot->docRevision,ids?*ids:std::vector<std::string>{}};
+  rebaseCommit(session,std::move(prepared),receipt,std::move(base),0);
+}
+// The user hid, showed or coloured something since the copy: the agent's document takes those, its ops after them, and
+// its scene is resolved again on a worker (it scales with the model: seconds on the Engine). A look made meanwhile
+// starts it over; a content change refuses it.
+void AgentBridge::rebaseCommit(const std::shared_ptr<Session>& session,std::shared_ptr<Prepared> prepared,const std::string& receipt,
+                               AppDocument::SnapshotBase base,int attempt){
+  std::optional<AppDocument::LooksSince> looks;
+  try{looks=m_doc->looksSince(base);}catch(const std::exception& e){failCommit(session,std::move(prepared),receipt,QString::fromUtf8(e.what()));return;}
+  if(!looks){applyCommit(session,std::move(prepared),receipt,base);return;}
+  if(attempt>=5){failCommit(session,std::move(prepared),receipt,tr("stale_revision: the view kept changing while the agent's change was applied"));return;}
+  m_busy=true;m_owner=session->socket;const auto epoch=++m_epoch;
+  auto rebased=std::make_shared<AppDocument::SnapshotBase>(std::move(base));
+  auto scene=std::make_shared<opad::Scene>();
+  auto moved=std::make_shared<AppDocument::LooksSince>(std::move(*looks));
+  m_jobs->backgroundNext();
+  m_job=m_jobs->async(tr("Applying the agent's change"),[doc=prepared->snapshot->doc,rebased,scene,moved,hold=m_benchRebaseHold](Progress p){
+      AppDocument::rebase(*doc,*rebased,std::move(*moved));
+      *scene=opad::resolve(*doc);
+      if(hold>0)QThread::msleep(static_cast<unsigned long>(hold));  // the bench's window for a look made meanwhile
+      if(p.cancelled())throw opad::Error("cancelled");
+    },[this,session,prepared,receipt,rebased,scene,attempt,epoch](bool ok,const QString& error)mutable{
+      // The documents and scenes go to a worker to be freed (release), never here.
+      if(epoch!=m_epoch || !session->socket || !session->bound){fail(session,"cancelled",tr("Agent operation cancelled."),receipt);release(std::move(prepared));release(std::move(scene));return;}
+      m_busy=false;m_job.clear();m_owner.clear();
+      if(!ok){release(std::move(scene));failCommit(session,std::move(prepared),receipt,error=="cancelled"?tr("Agent operation cancelled."):error);return;}
+      ++m_rebasedCommits;
+      std::swap(prepared->snapshot->scene,*scene);release(std::move(scene));  // the scene without the user's looks
+      rebaseCommit(session,std::move(prepared),receipt,std::move(*rebased),attempt+1);  // at once when nothing moved meanwhile
+    });
+  emit statusChanged();
+}
+void AgentBridge::failCommit(const std::shared_ptr<Session>& session,std::shared_ptr<Prepared> prepared,const std::string& receipt,const QString& error){
+  m_committing=false;
+  m_running=prepared->event;  // failed() turns the call's row (running, or the staged preview or task) into the failure
+  if(prepared->event==m_staged){m_staged=0;m_group=0;}
+  fail(session,"commit_failed",error,receipt);
+  release(std::move(prepared));emit statusChanged();
+}
+void AgentBridge::applyCommit(const std::shared_ptr<Session>& session,std::shared_ptr<Prepared> prepared,const std::string& receipt,
+                              const AppDocument::SnapshotBase& base){
+  if(editorBusy() || !canEdit() || !m_enabled){failCommit(session,std::move(prepared),receipt,tr("stale_revision: the document or access changed while the agent's change was applied"));return;}
   try{
     if(!m_follow)m_viewport->setCameraJson(m_viewport->cameraJson()); // cancel an earlier pending load-fit
     // The undo step reads as what was done: "Claude: Filleted 4 edges of Bracket, 2 mm", a task by its label.
@@ -490,8 +534,7 @@ void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::stri
     if(done.isEmpty())done=prepared->label;
     if(done.size()>60)done=done.left(59)+QChar(0x2026);
     const size_t opsBefore=m_doc->doc.ops.size();  // what follows is what this commit made (its row lists them all)
-    m_committing=true;AppDocument::SnapshotBase base{revision,prepared->snapshot->docRevision,prepared->snapshot->baseIds?*prepared->snapshot->baseIds:std::vector<std::string>{}};
-    m_doc->commitRebased(*prepared->snapshot->doc,prepared->snapshot->scene,base,tr("%1: %2").arg(client,done),"agent");m_committing=false;
+    m_committing=true;m_doc->commitRebased(*prepared->snapshot->doc,prepared->snapshot->scene,base,tr("%1: %2").arg(client,done),"agent");m_committing=false;
     if(opsBefore<m_doc->doc.ops.size()){  // undo / redo replies keep naming it as before
       m_replyLabels.emplace_back(m_doc->doc.ops[opsBefore].id,tr("Agent: %1").arg(prepared->label));
       if(m_replyLabels.size()>100)m_replyLabels.pop_front();
@@ -524,11 +567,6 @@ void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::stri
       if(!m_panel || !m_panel->isVisible())++m_unseen;
       refreshRows();
     }
-  }catch(const std::exception& e){
-    m_committing=false;
-    m_running=prepared->event;  // failed() turns the call's row (running, or the staged preview or task) into the failure
-    if(prepared->event==m_staged){m_staged=0;m_group=0;}
-    fail(session,"commit_failed",QString::fromUtf8(e.what()),receipt);
-  }
-  release(prepared);emit statusChanged();
+  }catch(const std::exception& e){failCommit(session,std::move(prepared),receipt,QString::fromUtf8(e.what()));return;}
+  release(std::move(prepared));emit statusChanged();
 }

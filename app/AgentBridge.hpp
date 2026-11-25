@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include "opad/model_batch.hpp"
+#include "AppDocument.hpp"
 #include <QPointer>
 #include <QLocalServer>
 #include <QLockFile>
@@ -110,6 +111,9 @@ class AgentBridge : public QObject {
   void execute(const std::shared_ptr<Session>&,std::string,json,const std::string& receipt);
   void save(const std::shared_ptr<Session>&,const json&,const std::string& receipt);
   void commit(const std::shared_ptr<Session>&,const std::string&,const std::string&,unsigned long long);
+  void rebaseCommit(const std::shared_ptr<Session>&,std::shared_ptr<Prepared>,const std::string& receipt,AppDocument::SnapshotBase,int attempt);
+  void applyCommit(const std::shared_ptr<Session>&,std::shared_ptr<Prepared>,const std::string& receipt,const AppDocument::SnapshotBase&);
+  void failCommit(const std::shared_ptr<Session>&,std::shared_ptr<Prepared>,const std::string& receipt,const QString& error);
   void clearPrepared(bool cancelReceipts=true,bool dropRow=true);
   void publish();
   void activity(const QString&);  // the technical log (activityLines): today's exact lines
@@ -159,7 +163,8 @@ class AgentBridge : public QObject {
   std::shared_ptr<Publication> m_publication=std::make_shared<Publication>();
   std::vector<std::shared_ptr<Session>> m_sessions;
   bool m_enabled=false,m_edit=false,m_follow=false,m_busy=false,m_committing=false,m_seenClient=false;
-  int m_benchDelay=0;
+  int m_benchDelay=0,m_benchRebaseHold=0;
+  int m_rebasedCommits=0;  // commits whose scene was resolved again on a worker (the user's looks taken in)
   unsigned long long m_epoch=0;
   // The target is the document's identity, not its generation (UI-06): a reload of the same document (same uuid, same file:
   // a git switch, merge or pull, a change on disk, Reload) keeps it, so a bound connection follows it with a notice; any other

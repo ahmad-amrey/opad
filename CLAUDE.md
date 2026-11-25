@@ -467,7 +467,8 @@ roll-backs, the icons, detach); `live_state.revision_change` says what moved it 
 colour, opacity, lock: `AppDocument::viewOnly`) move only `docRevision` (`refreshLook`; `view_edits` in revision_change),
 which every other snapshot-and-swap caller checks (`commitSnapshot`: clipboard paste, recovery merge, version restore);
 the agent commits through `commitRebased` (the snapshot's op ids in `Snapshot::baseIds`): the user's looks made since stay
-and the agent's ops go after them, so staged work survives a hide or a roll-back. live_state gives the last command's
+and the agent's ops go after them, so staged work survives a hide or a roll-back (`AgentBridge::rebaseCommit`: `looksSince`
+on the UI thread, ids only; `rebase` + the resolve on a worker; a look made meanwhile starts it over). live_state gives the last command's
 changes (`change_history` for the kept 20); live `features`/`ops` are pages of compact items (`live_read_defaults`,
 core `commands::page_list`; the CLI keeps the plain list). Only a write's `preview` is staging: a read keeps its own
 (joint_set preview). The agent guide is served by `##`

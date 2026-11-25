@@ -71,6 +71,13 @@ int main(int argc, char** argv) {
         for (const auto& op : doc.doc.ops) out.push_back(op.id);
         return out;
       };
+      // As the agent's commit runs it: looks since (UI thread), rebase and resolve (a worker there), swap in.
+      const auto commitAgent = [&doc](opad::Document& agent, AppDocument::SnapshotBase base, const QString& label) {
+        opad::Scene agentScene;
+        if (auto looks = doc.looksSince(base)) AppDocument::rebase(agent, base, std::move(*looks));
+        agentScene = opad::resolve(agent);
+        doc.commitRebased(agent, agentScene, base, label);
+      };
       const auto content = doc.contentRevision, docRev = doc.docRevision;
       AppDocument::SnapshotBase base{content, docRev, ids()};
       opad::Document agent = doc.doc;  // what the agent copied, then its own op
@@ -83,7 +90,8 @@ int main(int argc, char** argv) {
       CHECK(doc.contentRevision == content && doc.docRevision == docRev + 3);
       opad::Scene agentScene = opad::resolve(agent);
       CHECK_THROWS(doc.commitSnapshot(agent, agentScene, docRev, "x"));  // the other callers stay strict
-      doc.commitRebased(agent, agentScene, base, "Agent: rename");
+      CHECK_THROWS(doc.commitRebased(agent, agentScene, base, "x"));  // not rebased onto the looks: refused
+      commitAgent(agent, base, "Agent: rename");
       CHECK(doc.contentRevision == content + 1 && doc.nodeName(body) == "Agent's" && !doc.scene.node(body)->visible);
       CHECK(doc.doc.ops.back().type == "rename" && doc.doc.ops[doc.doc.ops.size() - 2].type == "appearance");
       CHECK(doc.undoLabel() == "Agent: rename" && doc.revisionLog().back().value("cause", "") == "agent");
@@ -95,17 +103,33 @@ int main(int argc, char** argv) {
       opad::commands::run("rename", opad::json{{"target", body}, {"name", "Again"}}, &agent);
       doc.undo();  // the hide
       CHECK(doc.scene.node(body)->visible);
-      agentScene = opad::resolve(agent);
-      doc.commitRebased(agent, agentScene, base, "Agent: rename again");
+      commitAgent(agent, base, "Agent: rename again");
       CHECK(doc.nodeName(body) == "Again" && doc.scene.node(body)->visible && doc.doc.ops.back().type == "rename");
       // Content in between: refused, and the log names it.
       base = {doc.contentRevision, doc.docRevision, ids()};
       agent = doc.doc;
       opad::commands::run("rename", opad::json{{"target", body}, {"name", "Late"}}, &agent);
       doc.run("rename", opad::json{{"target", body}, {"name", "User's"}});
-      agentScene = opad::resolve(agent);
-      CHECK_THROWS(doc.commitRebased(agent, agentScene, base, "Agent: late"));
+      CHECK_THROWS(doc.looksSince(base));
+      CHECK_THROWS(commitAgent(agent, base, "Agent: late"));
       CHECK(doc.nodeName(body) == "User's" && doc.revisionLog().back().value("label", "") == AppDocument::tr("rename").toStdString());
+      // A look made while the rebased copy was being resolved: refused, the commit rebases again.
+      base = {doc.contentRevision, doc.docRevision, ids()};
+      agent = doc.doc;
+      opad::commands::run("rename", opad::json{{"target", body}, {"name", "Retried"}}, &agent);
+      doc.run("appearance", opad::json{{"target", body}, {"visible", false}});
+      auto looks = doc.looksSince(base);
+      CHECK(looks && looks->ops.size() == 1);
+      AppDocument::SnapshotBase rebased = base;
+      AppDocument::rebase(agent, rebased, std::move(*looks));
+      CHECK(rebased.ids.size() + 1 == agent.ops.size() && rebased.doc == doc.docRevision);
+      agentScene = opad::resolve(agent);
+      doc.run("appearance", opad::json{{"target", body}, {"color", {0.1, 0.9, 0.1}}});
+      CHECK_THROWS(doc.commitRebased(agent, agentScene, rebased, "Agent: retried"));
+      commitAgent(agent, rebased, "Agent: retried");
+      CHECK(doc.nodeName(body) == "Retried" && !doc.scene.node(body)->visible && doc.doc.ops.back().type == "rename");
+      CHECK(doc.doc.ops[doc.doc.ops.size() - 2].type == "appearance" && doc.doc.ops[doc.doc.ops.size() - 3].type == "appearance");
+      doc.run("appearance", opad::json{{"target", body}, {"visible", true}});  // shown again for what follows
     }
     // Undo/redo several steps at once (the quick-access Undo ▾ / Redo ▾): the labels the next one first, one refresh.
     {
