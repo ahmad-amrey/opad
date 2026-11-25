@@ -87,6 +87,9 @@ json asset_of(const Document& doc, const std::string& import_id);
 // Where an asset's file is on this machine, or empty: its path beside the document, the project's copy (assets/<name>),
 // then the absolute path. A network path (\\server\share) is not even looked at unless opt.trusted names it.
 std::filesystem::path locate_asset(const Document& doc, const json& asset, const AssetOptions& opt = {});
+// The files the document links (not embedded ones): where each is found, else where it is recorded (relative to the
+// document's folder, or absolute). Its .gitignore keeps them tracked (app Git.hpp keepTracked).
+std::vector<std::filesystem::path> linked_files(const Document& doc);
 // Whether `file` may be read for `doc` without asking: inside the document's folder or the git work tree it is in, inside
 // one of opt.trusted, or opt.trust_all. A document not saved yet holds only what was linked in this session: trusted.
 bool asset_trusted(const Document& doc, const std::filesystem::path& file, const AssetOptions& opt = {});

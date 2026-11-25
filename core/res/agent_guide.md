@@ -311,6 +311,13 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
 - `git_init` (live) on the document's folder refuses (`shared_folder`) when other files share it: ask the user, then
   call it again with `own_folder: true` (the document moves into a new folder of its own first, `moved_to`) or
   `own_folder: false` (the repository takes in the whole folder).
+- `git_init` writes OPAD's `.gitignore` block (an existing `.gitignore` keeps its own lines): by default the groups
+  `models` (exported STEP, IGES, STL, 3MF, OBJ, glTF, PLY, VRML), `drawings` (DXF, DWG, SVG, PDF), `images` (PNG),
+  `opad` (temporary saves, merge leftovers, caches) and `system` (Thumbs.db, .DS_Store...); `simulation` (solver results)
+  is off. `ignore: false` writes none, `ignore: ["opad", "system"]` only those groups (`ignore_groups` in the result).
+  Files a document links (a linked STEP, image or drawing) stay tracked whatever their type: `git_commit` and
+  `git_init` with `paths` keep a `!/<path>` line for each in OPAD's block and stage the `.gitignore` with them (unless it
+  had other changes), so an export is ignored and an asset is not. Do not edit those blocks by hand.
 - `git_commit` stages exactly `paths` (or everything with `all`); it refuses an empty commit. `git_switch`,
   `git_merge` and `git_pull` refuse uncommitted changes rather than carry or discard them: commit first.
 - Merges of `.opad` files go through OPAD's record-aware driver. Preview first (`preview: true`): it lists what

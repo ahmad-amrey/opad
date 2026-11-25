@@ -15,6 +15,7 @@
 #include "AppDocument.hpp"
 #include "BenchRegistry.hpp"
 #include "DocsArea.hpp"
+#include "Git.hpp"
 #include "IssueRevision.hpp"
 #include "SheetAnnotate.hpp"
 #include "SheetCanvas.hpp"
@@ -225,6 +226,20 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ISSUE, sheetIssue) {
     check(answered && docs->lastIssue.value("git", "") == "tagged Drawing-1-rev-C" && QFileInfo::exists(pdfC) &&
               gitSays({"tag", "-l"}).split('\n').contains("Drawing-1-rev-C") && !gitSays({"ls-files"}).contains("rev C.pdf"),
           "a PDF the repository ignores is left out: revision C committed and tagged (" + said + ")");
+    // Revision D where only OPAD's .gitignore block ignores PDFs (Set up repository's default, which keeps exports out): the
+    // issued PDF is the revision itself, added all the same.
+    {
+      QFile ignore(QDir(repo.path()).filePath(".gitignore"));
+      if (ignore.open(QIODevice::WriteOnly | QIODevice::Truncate)) ignore.write(("build/\n\n" + git::ignoreText("")).toUtf8());
+    }
+    const QString pdfD = QDir(repo.path()).filePath("Drawing 1 rev D.pdf");
+    docs->lastIssue = nullptr;
+    docs->issue({{"sheet", sheet}, {"description", "OPAD's ignore"}, {"tag", "Drawing-1-rev-D"}}, pdfD, true);
+    const bool answeredD = waitFor([&] { return docs->lastIssue.is_object() && (docs->lastIssue.contains("git") || docs->lastIssue.contains("error")); }, 60000);
+    const QString saidD = answeredD ? QString::fromStdString(docs->lastIssue.dump()).left(200) : QString("no answer");
+    check(answeredD && docs->lastIssue.value("git", "") == "tagged Drawing-1-rev-D" && gitSays({"ls-files"}).contains("rev D.pdf") &&
+              !gitSays({"ls-files"}).contains("rev C.pdf"),
+          "a PDF only OPAD's .gitignore block ignores goes in: revision D committed with its PDF and tagged (" + saidD + ")");
   } catch (const std::exception& e) {
     check(false, QString("bench: %1").arg(QString::fromUtf8(e.what())));
   }

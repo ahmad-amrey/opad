@@ -304,7 +304,8 @@ OPAD_BENCH(OPAD_BENCH_OWN_FOLDER_LINKED, own_folder_linked) {
         if (st->copy) {
           check(out.empty(), "set up: nothing is outside the repository");
           for (auto* t : w.findChildren<Toast*>()) check(!t->text().contains("outside the repository"), "no outside notice: " + t->text());
-          return finish(st->ok);
+          st->step = 6;
+          return;
         }
         check(out.size() == 1, QStringLiteral("set up: %1 linked file outside the repository").arg(out.size()));
         st->step = 4;
@@ -325,6 +326,19 @@ OPAD_BENCH(OPAD_BENCH_OWN_FOLDER_LINKED, own_folder_linked) {
         if (recorded() != "assets/part.step") return;
         check(QFileInfo::exists(st->folder + "/assets/part.step") && QFileInfo::exists(st->part), "Copy into the repository: copied and relinked by assets/part.step");
         check(assets->outside(git->repo().top).empty() || assets->monitor()->checking(), "nothing outside the repository now");
+        st->step = 6;
+        return;
+      }
+      case 6: {  // a linked STEP is of an ignored type (exported models): OPAD's .gitignore block keeps this one tracked
+        QFile ignore(git->repo().top + "/.gitignore");
+        const QString text = ignore.open(QIODevice::ReadOnly) ? QString::fromUtf8(ignore.readAll()) : QString();
+        if (!text.contains("!/assets/part.step") || !git->idle()) return;
+        const auto& entries = git->repo().status.entries;
+        if (std::none_of(entries.begin(), entries.end(), [](const git::Entry& e) { return e.kind == '?' && (e.path == "assets/" || e.path == "assets/part.step"); }))
+          return;  // the status read after the .gitignore changed
+        check(text.contains("# linked by " + git->repo().rel + "\n!/assets/part.step\n"), "the .gitignore keeps assets/part.step tracked for " + git->repo().rel);
+        check(git::ignoredBy(text, "part-export.step") && !git::ignoredBy(text, "assets/part.step"), "STEP exports ignored, the linked STEP not");
+        check(git->trackedRuns() > 0, QStringLiteral("kept by %1 quiet job(s)").arg(git->trackedRuns()));
         return finish(st->ok);
       }
     }

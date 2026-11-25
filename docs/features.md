@@ -680,8 +680,11 @@ git config diff.opad.cachetextconv true
 The desktop program does all of this for you: the git chip in the status bar (branch, untracked / uncommitted /
 conflict, ahead and behind its upstream, "not in git", "git not found") has **Set up repository…**, which runs
 `git init -b main` when needed, writes the `.gitattributes` line above (plus `assets/**` in Git LFS when git-lfs is
-installed, with `.opad` files kept out of LFS), a `.gitignore` for temporary saves, portable data, caches and recovery
-snapshots, runs `git lfs install --local`, and points this clone's `merge.opad.driver`, `diff.opad.textconv` (with
+installed, with `.opad` files kept out of LFS), a `.gitignore` (offered checked; **Customise** lists its groups: exported
+models, exported drawings, rendered images, OPAD's temporary saves and caches, system clutter, and, off by default,
+simulation results; an existing `.gitignore` keeps its own lines and gets a marked OPAD block, the dialog showing what
+it adds; the files a document links stay tracked whatever their type, through `!/<path>` lines OPAD keeps in a second
+block as they are linked, moved, packed or removed), runs `git lfs install --local`, and points this clone's `merge.opad.driver`, `diff.opad.textconv` (with
 `diff.opad.cachetextconv`) and `difftool.opad.cmd` at the running installation (`opad.managed=true`; OPAD rewrites them
 when that installation has moved), so `git difftool -t opad` opens two versions in OPAD's Compare. A clone whose
 `.gitattributes` asks for `merge=opad` but has no driver configured shows "set up merging" on the chip and a banner

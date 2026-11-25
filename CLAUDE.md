@@ -187,7 +187,16 @@ import's `source_path` saved relative too; an older document's absolute ones go 
 step via `followAssetPaths`; its old lines stay: append-only). `rebase_asset_paths` runs before the edits and leaves a relative
 path that only resolves from the destination (already written from there). In a repository, `Vcs::checkOutside` toasts the
 linked files outside it with Copy into the repository (`AssetsArea::copyIntoProject` = Pack, one step); the own-folder question
-offers the same copy (checked). Benches own-folder-linked(-keep), `ctest -R "assets|formats"`. `QMainWindow::separator:vertical` is the *upright* bar (named after its shape).
+offers the same copy (checked). Benches own-folder-linked(-keep), `ctest -R "assets|formats"`.
+`.gitignore` (Git.hpp "the OPAD blocks"): Set up repository offers it checked, groups under Customise (`git::ignoreGroups`:
+models, drawings, images, opad, system on; simulation off; exports per ExportDialog/Drawings/screenshot); OPAD writes only its
+two marked blocks (rules where first written, so the user's later lines win; linked block always last). Linked files stay
+tracked by `!/<path>` per document (`git::keepTracked`/`updateTracked`; app: `VcsArea::keepLinkedTracked` ->
+`GitWatch::keepTracked`, a quiet job on every refresh/asset look whose input changed; agents: `git_commit`/`git_init` paths
+via `opad::linked_files`, the .gitignore staged along when it had no other change), not `git add -f` (status would hide a new
+asset, renames would drop out, other git clients refuse to add it). A file inside an ignored *folder* cannot be re-included
+(git's rule). Issue revision adds its PDF with `-f` only when OPAD's block ignores it (`opadRuleAt`). `git_init` `ignore`:
+false or group ids. `ctest -R git-ignore` (matcher checked against git check-ignore), benches git, own-folder-linked(-keep), issue. `QMainWindow::separator:vertical` is the *upright* bar (named after its shape).
 
 UI check without driving the desktop (the user works on it, see memory): `OPAD_BENCH_UISHOT=<png>` with
 `--bench-select` saves `MainWindow::grab()` (widgets only, the native viewport is blank); `OPAD_BENCH_WORKSPACE=1`
