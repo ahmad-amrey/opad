@@ -294,6 +294,81 @@ TEST(motion_study_traces_the_piston) {
   CHECK_NEAR(e["joints"]["Crank pin"]["rotation"]["max_speed"].get<double>(), 360, 1e-6);
 }
 
+// MCP stress test #20: a study changed with id and part of its settings keeps the rest (sending only traces lost the
+// drivers); null drops a key.
+TEST(study_settings_merge_by_key) {
+  SliderCrank m;
+  const json made = commands::run("study", {{"kind", "motion"}, {"settings", {{"duration", 1}, {"frames", 11}, {"drivers", {{{"joint", m.j1}, {"to", 90}}}}}}}, &m.doc);
+  const std::string id = made["id"];
+  const json traced = commands::run("study", {{"id", id}, {"settings", {{"traces", {{{"part", m.piston}, {"point", {160, 0, 0}}, {"name", "Pin"}}}}}}}, &m.doc);
+  CHECK(traced.contains("traces"));
+  CHECK_NEAR(traced["joints"]["Crank pin"]["rotation"]["max"].get<double>(), 90, 1e-6);
+  json settings = resolve(m.doc).study(id)->def["settings"];
+  CHECK(settings.contains("drivers") && settings.contains("traces"));
+  CHECK_EQ(settings["frames"].get<int>(), 11);
+  // An array is replaced whole; null removes a key.
+  commands::run("study", {{"id", id}, {"settings", {{"drivers", {{{"joint", m.j1}, {"to", 45}}}}, {"traces", nullptr}}}}, &m.doc);
+  settings = resolve(m.doc).study(id)->def["settings"];
+  CHECK(!settings.contains("traces"));
+  CHECK_EQ(settings["drivers"].size(), 1u);
+  CHECK_EQ(settings["drivers"][0]["to"].get<int>(), 45);
+  CHECK_EQ(settings["duration"].get<int>(), 1);
+}
+
+// MCP stress test #21: a kinematic study checks interference along its path. An arm (x 0..100, 10 wide) swings about Z
+// over a ground plate it rests on, towards a block at x, y 50..70: its leading side meets the block's corner (70, 50)
+// when 50 cos(a) - 70 sin(a) = 5, at a = 32.2 deg, so frame 33 of a 1-degree sweep is the first collision; a 20 degree
+// sweep stays 50 cos 20 - 70 sin 20 - 5 = 18.04 mm away. The plate touches the arm from the start: listed, not followed.
+TEST(motion_study_checks_clearance_along_its_path) {
+  Document doc = Document::create();
+  const std::string arm = box(doc, {50, 0, 0}, 100, 10, 10, "Arm");
+  const std::string block = box(doc, {60, 60, 0}, 20, 20, 10, "Block");
+  const std::string plate = box(doc, {0, 0, -5}, 30, 30, 5, "Plate");
+  const std::string hinge = joint(doc, {{"kind", "revolute"}, {"name", "Hinge"}, {"part", arm}, {"at", axis_z({0, 0, 0})}})["id"];
+  joint(doc, {{"kind", "ground"}, {"part", block}, {"at", axis_z({60, 60, 0})}});
+  joint(doc, {{"kind", "ground"}, {"part", plate}, {"at", axis_z({0, 0, -5})}});
+  auto sweep = [&](double to, const json& clearance) {
+    return commands::run("study", {{"kind", "motion"}, {"run", true},
+                                   {"settings", {{"duration", 1}, {"frames", int(to) + 1}, {"drivers", {{{"joint", hinge}, {"to", to}}}}, {"clearance", clearance}}},
+                                   {"series", {"Minimum distance"}}, {"samples", int(to) + 1}},
+                         &doc);
+  };
+  const json hit = sweep(90, true);
+  const json& c = hit["clearance"];
+  CHECK_EQ(c["status"].get<std::string>(), std::string("collision"));
+  CHECK_EQ(c["first_collision"]["frame"].get<int>(), 33);
+  CHECK_NEAR(c["first_collision"]["t"].get<double>(), 33.0 / 90, 1e-6);
+  CHECK(c["first_collision"]["kind"] == "intersecting");
+  CHECK((c["first_collision"]["a"] == arm && c["first_collision"]["b"] == block) || (c["first_collision"]["a"] == block && c["first_collision"]["b"] == arm));
+  CHECK_EQ(c["in_contact_at_start_pairs"].get<int>(), 1);
+  // The series: the distance per frame, falling to the block and 0 once they cross.
+  const json* series = nullptr;
+  for (const auto& s : hit["series"])
+    if (s["name"] == "Minimum distance") series = &s["v"];
+  CHECK(series && series->size() == 91);
+  const double at32 = 50 * std::cos(rad(32)) - 70 * std::sin(rad(32)) - 5;
+  CHECK_NEAR((*series)[32].get<double>(), at32, 0.05);
+  CHECK_NEAR((*series)[40].get<double>(), 0, 1e-9);
+  // Clear: the closest approach at the end of the sweep, exact.
+  const json clear = sweep(20, json{{"clearance_mm", 20}})["clearance"];
+  CHECK_EQ(clear["status"].get<std::string>(), std::string("too_close"));
+  CHECK(clear["first_collision"].is_null());
+  const double gap20 = 50 * std::cos(rad(20)) - 70 * std::sin(rad(20)) - 5;
+  CHECK_NEAR(clear["min_distance_mm"].get<double>(), gap20, 1e-4);
+  CHECK_EQ(clear["closest"]["frame"].get<int>(), 20);
+  CHECK_EQ(clear["too_close_pairs"].get<int>(), 1);
+  const json far = sweep(20, true)["clearance"];
+  CHECK_EQ(far["status"].get<std::string>(), std::string("clear"));
+  // Named sides: only the pairs across, the plate's contact at the start listed apart as before; the block still hit.
+  const json named = sweep(20, json{{"a", {arm}}, {"b", {block, plate}}})["clearance"];
+  CHECK_EQ(named["pairs"].get<int>(), 1);
+  CHECK_EQ(named["in_contact_at_start_pairs"].get<int>(), 1);
+  CHECK(named["status"] == "clear");
+  const json named_hit = sweep(90, json{{"a", {arm}}, {"b", {block}}})["clearance"];
+  CHECK_EQ(named_hit["first_collision"]["frame"].get<int>(), 33);
+  CHECK(error_of([&] { sweep(20, "yes"); }).find("clearance") != std::string::npos);
+}
+
 TEST(errors_say_what_to_do) {
   SliderCrank m;
   CHECK(error_of([&] { joint(m.doc, {{"kind", "hinge"}, {"part", m.crank}, {"at", axis_z({0, 0, 0})}}); }).find("unknown kind") != std::string::npos);
@@ -302,6 +377,177 @@ TEST(errors_say_what_to_do) {
   CHECK(error_of([&] { commands::run("joint_set", {{"values", {{m.j4, 500}}}}, &m.doc); }).find("cannot all be met") != std::string::npos);
   // A refused move leaves the document as it was.
   CHECK_NEAR(value(m.doc, m.j4), 0, 1e-12);
+}
+
+namespace {
+
+// A frame held to the world, two sliders on it (cylindrical: slide and swivel along X) and a cup turning on each (revolute
+// about Y): an open chain with no loop, so nothing is redundant.
+struct TwoCups {
+  Document doc = Document::create();
+  std::string frame, slide_l, slide_r, cup_l, cup_r, ground, jl, jr, tl, tr;
+  TwoCups() {
+    frame = box(doc, {0, 0, 0}, 100, 10, 10, "Frame");
+    slide_l = box(doc, {-60, 0, 0}, 20, 8, 8, "Slide L");
+    slide_r = box(doc, {60, 0, 0}, 20, 8, 8, "Slide R");
+    cup_l = box(doc, {-70, 0, -20}, 10, 30, 30, "Cup L");
+    cup_r = box(doc, {70, 0, -20}, 10, 30, 30, "Cup R");
+    ground = joint(doc, {{"kind", "ground"}, {"part", frame}})["id"];  // no at: held where it is
+    const json along_x = {{"origin", {0, 0, 0}}, {"z", {1, 0, 0}}};
+    jl = joint(doc, {{"kind", "cylindrical"}, {"name", "Slide L"}, {"base", frame}, {"part", slide_l}, {"at", along_x},
+                     {"limits", {{"rotation", {-30, 30}}, {"translation", {0, 20}}}}})["id"];
+    jr = joint(doc, {{"kind", "cylindrical"}, {"name", "Slide R"}, {"base", frame}, {"part", slide_r}, {"at", along_x}})["id"];
+    tl = joint(doc, {{"kind", "revolute"}, {"name", "Tilt L"}, {"base", slide_l}, {"part", cup_l}, {"at", {{"origin", {-70, 0, 0}}, {"z", {0, 1, 0}}}}})["id"];
+    tr = joint(doc, {{"kind", "revolute"}, {"name", "Tilt R"}, {"base", slide_r}, {"part", cup_r}, {"at", {{"origin", {70, 0, 0}}, {"z", {0, 1, 0}}}}})["id"];
+  }
+};
+
+bool near_mat(const Mat4& a, const Mat4& b, double tol = 1e-6) {
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 4; ++j)
+      if (std::fabs(a.at(i, j) - b.at(i, j)) > tol) return false;
+  return true;
+}
+
+}  // namespace
+
+TEST(ground_needs_no_at_and_holds_the_part_where_it_is) {
+  Document doc = Document::create();
+  const std::string frame = box(doc, {30, 20, 0}, 40, 20, 10, "Frame");
+  const std::string arm = box(doc, {80, 20, 0}, 40, 6, 6, "Arm");
+  // Turned and moved off the world's origin first: the ground takes the part's own frame, and nothing moves.
+  commands::run("transform", {{"target", frame}, {"matrix", {0, -1, 0, 5, 1, 0, 0, -7, 0, 0, 1, 3, 0, 0, 0, 1}}}, &doc);
+  const Mat4 before = resolve(doc).world(frame);
+  const json g = joint(doc, {{"kind", "ground"}, {"part", frame}});
+  CHECK(!g.contains("moved"));
+  CHECK_EQ(g["dof"].get<int>(), 0);
+  CHECK(near_mat(resolve(doc).world(frame), before));
+  CHECK_NEAR(g["frame"]["origin"][0].get<double>(), 5, 1e-9);
+  CHECK_NEAR(g["frame"]["x"][1].get<double>(), 1, 1e-9);  // the part's own x, turned onto the world's y
+  // A rigid joint without at fixes a part to its base as they stand.
+  const json r = joint(doc, {{"kind", "rigid"}, {"base", frame}, {"part", arm}});
+  CHECK(!r.contains("moved"));
+  CHECK_EQ(r["dof"].get<int>(), 0);
+  // Joints with coordinates still need their frame.
+  CHECK(error_of([&] { joint(doc, {{"kind", "revolute"}, {"part", arm}}); }).find("give at") != std::string::npos);
+}
+
+TEST(a_grounded_mechanism_counts_no_redundant_equations) {
+  TwoCups m;
+  json a = commands::run("mechanism", json::object(), &m.doc);
+  CHECK_EQ(a["dof"].get<int>(), 6);           // 2 + 2 + 1 + 1
+  CHECK_EQ(a["redundant"].get<int>(), 0);     // the ground's six equations are what holds the frame, not constraints
+  CHECK_EQ(a["constraints"].get<int>(), 18);  // 4 + 4 + 5 + 5
+  CHECK(!a.contains("redundant_joints"));
+  CHECK(a["problems"].empty());
+  // A second ground on the same frame repeats all six, and is named.
+  const std::string again = joint(m.doc, {{"kind", "ground"}, {"name", "Ground again"}, {"part", m.frame}})["id"];
+  a = commands::run("mechanism", json::object(), &m.doc);
+  CHECK_EQ(a["redundant"].get<int>(), 6);
+  CHECK_EQ(a["redundant_joints"].size(), 1u);
+  CHECK_EQ(a["redundant_joints"][0]["id"].get<std::string>(), again);
+  CHECK_EQ(a["redundant_joints"][0]["equations"].get<int>(), 6);
+  // A loop's redundant equations are named too: the slider-crank's out-of-plane ones.
+  SliderCrank s;
+  a = commands::run("mechanism", json::object(), &s.doc);
+  CHECK(a["redundant"].get<int>() >= 1);
+  int named = 0;
+  for (const auto& j : a["redundant_joints"]) named += j["equations"].get<int>();
+  CHECK_EQ(named, a["redundant"].get<int>());
+}
+
+TEST(limit_notes_name_the_coordinate_its_limit_and_the_ask) {
+  TwoCups m;
+  const json r = commands::run("joint_set", {{"values", {{m.jl, {45, 25}}}}}, &m.doc);
+  const std::string notes = r.value("notes", json::array()).dump();
+  CHECK(notes.find("\\\"Slide L\\\" rotation held at its upper limit 30 deg (asked 45 deg)") != std::string::npos);
+  CHECK(notes.find("\\\"Slide L\\\" translation held at its upper limit 20 mm (asked 25 mm)") != std::string::npos);
+  CHECK_NEAR(value(m.doc, m.jl, 0), 30, 1e-6);
+  CHECK_NEAR(value(m.doc, m.jl, 1), 20, 1e-6);
+  const json low = commands::run("joint_set", {{"values", {{m.jl, {-40.5, nullptr}}}}}, &m.doc);
+  CHECK(low["notes"].dump().find("rotation held at its lower limit -30 deg (asked -40.5 deg)") != std::string::npos);
+  // A coordinate stopped by a limit through a relation is named as well (the rack pinion test's rack).
+  Document doc = Document::create();
+  const std::string pinion = box(doc, {0, 0, 0}, 10, 10, 4, "Pinion");
+  const std::string rack = box(doc, {0, -20, 0}, 200, 6, 4, "Rack");
+  const std::string jp = joint(doc, {{"kind", "revolute"}, {"part", pinion}, {"at", axis_z({0, 0, 0})}})["id"];
+  const std::string jrk = joint(doc, {{"kind", "slider"}, {"name", "Rack way"}, {"part", rack}, {"at", {{"origin", {0, -20, 0}}, {"z", {1, 0, 0}}}}, {"limits", {{"translation", {-50, 50}}}}})["id"];
+  joint(doc, {{"kind", "rack_pinion"}, {"joints", {jp, jrk}}, {"radius", 20}});
+  const json st = commands::run("joint_set", {{"values", {{jp, 360}}}}, &doc);
+  CHECK(st["notes"].dump().find("\\\"Rack way\\\" translation stopped at its upper limit 50 mm") != std::string::npos);
+}
+
+TEST(a_joint_is_re_anchored_keeping_its_id_values_and_limits) {
+  TwoCups m;
+  commands::run("joint_set", {{"values", {{m.tl, 20}}}}, &m.doc);
+  commands::run("joint", {{"id", m.tl}, {"limits", {{"rotation", {-45, 45}}}}}, &m.doc);
+  const Mat4 cup_before = resolve(m.doc).world(m.cup_l);
+  // The tilt axis moved 5 mm down (onto a pin, say): the cup stays, its angle stays, and it now turns about the new axis.
+  const json pin = {{"origin", {-70, 0, -5}}, {"direction", {0, 1, 0}}};
+  const json e = joint(m.doc, {{"id", m.tl}, {"at", pin}});
+  CHECK_EQ(e["id"].get<std::string>(), m.tl);
+  CHECK(!e.contains("moved"));
+  CHECK_NEAR(e["values"][0].get<double>(), 20, 1e-6);
+  CHECK_NEAR(e["frame"]["origin"][2].get<double>(), -5, 1e-6);
+  Scene s = resolve(m.doc);
+  CHECK(near_mat(s.world(m.cup_l), cup_before));
+  CHECK_EQ(s.joint(m.tl)->def["limits"]["rotation"][1].get<double>(), 45);
+  CHECK_EQ(s.joint(m.tl)->def["refs"]["at"], pin);
+  CHECK_EQ(s.joints.size(), 5u);
+  const Vec3 on_axis = s.world(m.cup_l).inverse().apply({-70, 0, -5});
+  // The slide held still, so the tilt alone moves the cup (a free slide may share an off-axis turn's travel).
+  commands::run("joint", {{"id", m.jl}, {"locked", true}}, &m.doc);
+  commands::run("joint_set", {{"values", {{m.tl, 40}}}}, &m.doc);
+  s = resolve(m.doc);
+  const Vec3 still = s.world(m.cup_l).apply(on_axis);
+  CHECK_NEAR(still[0], -70, 1e-6);
+  CHECK_NEAR(still[2], -5, 1e-6);
+  CHECK_NEAR(value(m.doc, m.tl), 40, 1e-6);
+  // A limit still applies to the joint as re-anchored.
+  commands::run("joint_set", {{"values", {{m.tl, 60}}}}, &m.doc);
+  CHECK_NEAR(value(m.doc, m.tl), 45, 1e-6);
+  commands::run("joint", {{"id", m.jl}, {"locked", false}}, &m.doc);
+  // Base: the left cup now tilts on the frame itself; the slide no longer carries it.
+  const Mat4 cup_now = resolve(m.doc).world(m.cup_l);
+  const json b = joint(m.doc, {{"id", m.tl}, {"base", m.frame}});
+  CHECK(b["changed"]["base"] == m.frame);
+  s = resolve(m.doc);
+  CHECK_EQ(s.joint(m.tl)->base, m.frame);
+  CHECK(near_mat(s.world(m.cup_l), cup_now));
+  CHECK_NEAR(value(m.doc, m.tl), 45, 1e-6);
+  commands::run("joint_set", {{"values", {{m.jl, {0, 10}}}}}, &m.doc);
+  CHECK(near_mat(resolve(m.doc).world(m.cup_l), cup_now));  // the slide moved without it
+  // Part: the right tilt joint moves the right slide's cup... onto the left cup instead.
+  const json p = joint(m.doc, {{"id", m.tr}, {"part", m.cup_l}, {"base", m.slide_l}});
+  CHECK(p["changed"]["part"] == m.cup_l);
+  CHECK_EQ(resolve(m.doc).joint(m.tr)->part, m.cup_l);
+  // Refusals: a ground has no base, a relation no frame, a part not inside its base.
+  CHECK(error_of([&] { joint(m.doc, {{"id", m.ground}, {"base", m.slide_l}}); }).find("no base") != std::string::npos);
+  CHECK(error_of([&] { joint(m.doc, {{"id", m.tl}, {"base", m.cup_l}}); }).find("same node") != std::string::npos);
+  CHECK(error_of([&] { joint(m.doc, {{"id", m.tl}, {"at_part", pin}}); }).find("re-anchor") != std::string::npos);
+  // Undo of the edit (truncating it) brings the joint back as it was.
+  const size_t ops = m.doc.ops.size();
+  joint(m.doc, {{"id", m.jr}, {"at", {{"origin", {0, 3, 0}}, {"direction", {1, 0, 0}}}}});
+  CHECK(m.doc.ops.size() > ops);
+  m.doc.truncate_ops(ops);
+  const Scene undone = resolve(m.doc);
+  CHECK_NEAR(undone.joint(m.jr)->at_base.origin[1], 0, 1e-9);
+}
+
+TEST(a_study_whose_engine_is_missing_says_why) {
+  SliderCrank m;
+  const json engines = commands::run("mechanism", json::object(), &m.doc)["engines"];
+  const json why = engines.value("unavailable", json::object());
+  CHECK_EQ(engines["dynamic"].get<bool>(), !why.contains("dynamic"));
+  if (!engines["dynamic"].get<bool>()) CHECK(why["dynamic"].get<std::string>().find("no dynamics engine (Project Chrono)") != std::string::npos);
+  for (const auto& [kind, reason] : why.items()) {
+    const size_t ops = m.doc.ops.size();
+    const std::string err = error_of([&] { commands::run("study", {{"kind", kind}}, &m.doc); });
+    CHECK(err.find(reason.get<std::string>()) != std::string::npos);
+    CHECK_EQ(m.doc.ops.size(), ops);  // nothing written
+    const json kept = commands::run("study", {{"kind", kind}, {"run", false}}, &m.doc);
+    CHECK_EQ(kept["warning"].get<std::string>(), reason.get<std::string>());
+  }
 }
 
 CHECK_MAIN()

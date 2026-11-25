@@ -332,7 +332,7 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
 - Kinds and their coordinates (degrees and mm): `revolute` (rotation about z), `slider` (translation along z),
   `cylindrical` (rotation, translation), `pin_slot` (rotation about z, translation along x), `planar` (x, y, rotation in
   the plane normal to z), `ball` (none tracked), `screw` (rotation; advances `pitch` mm per turn), `rigid` (none),
-  `ground` (fixes `part` where it is). A part joined to nothing that holds it keeps still while its mechanism moves
+  `ground` (fixes `part` where it is; `rigid` and `ground` need no `at`). A part joined to nothing that holds it keeps still while its mechanism moves
   around it; ground one part of every mechanism.
 - `at_part` snaps: the part moves so its own frame meets `at`, turned against it (faces meet; `mate: false` keeps them
   the same way), at `angle` (deg) and `offset` (mm). A knob into a panel's hole: `at` the hole's rim edge on the panel's
@@ -342,11 +342,13 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   `lead_screw` (`lead` mm per turn of the first). `joints: [first, second]`. Planet gears: `carrier: <arm part>` counts
   both joints' turns relative to the carrier arm (sun-planet and planet-ring pairs of a planetary set).
 - `limits: {"rotation": [-90, 90]}` bounds a coordinate (driving past a limit stops there and says so); `locked: true`
-  holds a joint at its values. `joint` with `id` changes name, limits, lock, drive, spring, friction, pitch or ratio.
+  holds a joint at its values. `joint` with `id` changes name, limits, lock, drive, spring, friction, pitch or ratio, and re-anchors
+  it with `at`, `part` or `base` (parts, values, poses and limits stay; `base` is kept unless given).
 - `joint_set` drives joints (`values: {joint: 30}` or `[rotation, translation]`, null leaves one free) or drags a part
   (`part` + world `matrix`); every other part follows through the joints and one pose op is written (`preview: true` only
   reports). A position the joints cannot reach is refused with the joints that cannot all be met.
-- `mechanism` lists joints, values, which coordinates are free, degrees of freedom and redundant equations.
+- `mechanism` lists joints, values, which coordinates are free, degrees of freedom and redundant equations (the
+  ground's are not counted; `redundant_joints` names the joints that repeat others, e.g. the one closing a loop).
 - Gears for mechanisms: `feature kind=gear` (`type` spur | internal | rack, `module`, `teeth`, `width`, `bore`,
   `phase`). Pitch diameter = module x teeth; two spur gears mesh with their centres the sum of their pitch radii apart
   (an internal pair: the difference) and the second's `phase` = 180 + 180/teeth deg when it sits on the first's +X side.
@@ -355,7 +357,14 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   - `motion` (kinematic): `duration` s, `frames`, `drivers: [{"joint", "coordinate"?, "to": 360 (from its value now;
     `profile`: linear | smooth | cycloidal) | "speed": deg/s or mm/s | "expr": "360 deg * t" | "table": [[t, v], ...]}]`,
     `traces: [{"part", "point": [x, y, z] now, "name"}]`. Without drivers, joints with a position or speed `drive` run.
-    Returns each coordinate's range, speed and acceleration, and the traced paths.
+    Returns each coordinate's range, speed and acceleration, and the traced paths. `clearance: true` (or `{"a", "b",
+    "ignore", "clearance_mm"}`: bodies or components; a alone: against the mechanism's other bodies) checks every frame:
+    `clearance.status` collision | too_close | clear, `first_collision` (t, pair, kind intersecting | touching | inside),
+    `min_distance_mm` and `closest` (exact), `too_close` pairs, and the series "Minimum distance" (meshes: within
+    `mesh_tolerance_mm`, over 1 mm up to 5% high). Pairs already touching at the start (a pin in its bore)
+    are listed in `in_contact_at_start` and not followed; collisions between frames are not seen (raise `frames` for
+    fast motion).
+  - `id` with `settings` merges them key by key (an array, such as drivers, is replaced whole; null removes a key).
   - `dynamic` (Project Chrono): masses and inertias from the solids and their materials (steel when none, said in
     warnings), `gravity` (true: 9.81 m/s2 down -Z; false; or [x, y, z] mm/s2), joints with their `drive` (`mode`
     position deg|mm, speed deg/s|mm/s, torque N.mm, force N; `value`, `expr` of t, or `to`), `spring` (stiffness N/mm or
@@ -416,7 +425,7 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   `ambient`) and `fan` (`on: [heatsink body]`, `fan`: an id (40x10, 40x28-server, 60x15, 80x25, 92x25, 120x25,
   120x25-high, 140x25) or `{"flow" m3/h | "cfm", "pressure" Pa | "mmH2O", "curve": [[m3/h, Pa], ...]}`, `vector` the
   air's way along the fins, `count`, `ambient` inlet degC): its plate fins are found in the geometry, the fan's curve
-  meets the fins' pressure drop, and the air warms along them; the air is taken as ducted through the fins. `mechanism` reports which engines this machine has (`engines`).
+  meets the fins' pressure drop, and the air warms along them; the air is taken as ducted through the fins. `mechanism` reports which engines this machine has (`engines`; `unavailable` says why a study kind cannot run).
 - Typical: ground the frame, joint the parts, `mechanism` to check the degrees of freedom, `joint_set` to try a
   position, a `motion` study for the travel, a `dynamic` study for forces, then `load` + `static` on the most loaded
   part with the reaction forces as its loads.

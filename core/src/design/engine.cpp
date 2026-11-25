@@ -1479,12 +1479,21 @@ json map_expressions(const std::string& type, const json& data, const std::funct
     const json original = solved_geometry(data);
     json geometry = original;
     bool changed = false;
-    if (geometry.contains("constraints"))
-      for (auto& c : geometry["constraints"])
-        if (c.contains("expr") && c["expr"].is_string()) {
-          const std::string e = c["expr"].get<std::string>();
-          if (fn(e) != e) { c["expr"] = fn(e); changed = true; }
-        }
+    auto text = [&](json& value) {
+      if (!value.is_string()) return;
+      const std::string e = value.get<std::string>();
+      if (fn(e) != e) { value = fn(e); changed = true; }
+    };
+    // Dimensions (the offset relationship's among the joins kept apart for older builds) and equation curves' x, y, t0, t1.
+    for (const char* key : {"constraints", "more_constraints"})
+      if (geometry.contains(key) && geometry[key].is_array())
+        for (auto& c : geometry[key])
+          if (c.contains("expr")) text(c["expr"]);
+    if (geometry.contains("entities") && geometry["entities"].is_array())
+      for (auto& e : geometry["entities"])
+        if (e.contains("equation") && e["equation"].is_object())
+          for (const char* key : {"x", "y", "t0", "t1"})
+            if (e["equation"].contains(key)) text(e["equation"][key]);
     if(geometry.contains("patterns"))for(auto& pattern:geometry["patterns"])for(auto& value:pattern["inputs"])
       if(value.is_string()){const std::string e=value.get<std::string>();if(fn(e)!=e){value=fn(e);changed=true;}}
     if (changed) set["geometry_delta"] = sketch_delta(original,geometry);

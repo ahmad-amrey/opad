@@ -177,6 +177,12 @@ void Viewport::handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,con
     const gp_Trsf tr=owner->Selectable()->Transformation();
     const TopoDS_Shape& sub=owner->Shape();
     if(sub.ShapeType()==TopAbs_VERTEX) {out.push_back(BRep_Tool::Pnt(TopoDS::Vertex(sub)).Transformed(tr));return out;}
+    if(sub.ShapeType()==TopAbs_FACE) {  // a mesh's triangle (BodyPrs::meshGroups): its corners, then its middle (tried first)
+      gp_XYZ sum(0,0,0);
+      for(TopExp_Explorer v(sub,TopAbs_VERTEX);v.More();v.Next()) {out.push_back(BRep_Tool::Pnt(TopoDS::Vertex(v.Current())).Transformed(tr));sum+=out.back().XYZ();}
+      if(!out.empty()) out.push_back(gp_Pnt(sum/double(out.size())));
+      return out;
+    }
     if(sub.ShapeType()!=TopAbs_EDGE) return out;
     std::vector<gp_Pnt> line=owner->curve?*owner->curve:edgePolyline(TopoDS::Edge(sub));
     auto screen=[&](const gp_Pnt& p) {Standard_Integer x=0,y=0;view->Convert(p.X(),p.Y(),p.Z(),x,y);return QPointF(x,y);};

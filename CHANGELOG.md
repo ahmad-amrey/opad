@@ -32,6 +32,10 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - **Sharper edge and face rules.** A rule can take what reaches into a box (`bounds_mode` "intersects") or stays out of it
   ("outside"), leave a side of the box open, pick edges and faces by length or area, and tell a ring's inner rim from its
   outer one (`loop` "inner" / "outer").
+- **Motion studies check clearance along the way.** Turn on *clearance* in a motion study's settings and it measures
+  how close the moving parts come at every frame: the first collision (when, which two parts, and whether they cross or
+  only touch), the closest approach, the pairs closer than a gap you set, and a minimum-distance curve over time. Parts
+  that already touch at the start, like a pin in its bore, are listed apart. No more posing the worst frames one by one.
 
 ### Changed
 - **AI activity in plain words.** The panel now reads like a log of what was done, with your part and step names and
@@ -79,6 +83,10 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
   limits) may be expressions such as `height` or `w / 2`, and the rule matches again when a parameter changes.
 
 ### Fixed
+- **3D scans and other big meshes no longer freeze OPAD.** Choosing the axis in *Move / copy*, or switching to the
+  Face, Edge or Vertex filter, used to make OPAD wait while it prepared every triangle of the mesh for picking: over
+  three minutes on a 3-million-triangle scan. It now takes no noticeable time, picking a scan's edges, points and
+  triangles works as on any part, committing a move no longer pauses, and scans open faster.
 - **Sketch fillet says why a corner can't be rounded:** two ends that only touch (common in DXF drawings: merge the
   points), a tangent join, more than two curves meeting, or a radius too big, with the largest that fits. Any sketch
   change OPAD refuses now shows its reason in a notice, not only on the status line.
@@ -120,6 +128,22 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
 - **Shell after a pocket near a fillet.** A body whose pocket comes close to a rim fillet, closer than the shell's
   thickness, now shells, where it used to say it "cannot be shelled by that thickness". When it still cannot, the
   message names the two faces that come too close and how far apart they are.
+- **Joints made by an AI assistant or a script:**
+  - A ground or rigid joint no longer asks where it is: it holds the part where it stands.
+  - A joint can be moved onto another axis (the cylinder face of a pin, say), another part or another base and stays
+    the same joint, with its name, limits, drive and poses; the parts stay where they are. Before, it had to be deleted
+    and made again.
+  - Driving a joint past a limit says which coordinate stopped (rotation or translation), at what value, and what was
+    asked: "Slide rotation held at its upper limit 30 deg (asked 45 deg)".
+  - The mechanism no longer counts the ground's equations as redundant (a clean mechanism read "6 redundant"), and
+    names the joints whose equations repeat others, such as the one closing a loop. Dynamic studies of a grounded
+    mechanism no longer warn about redundant equations either.
+  - A dynamic study in a build without its dynamics engine (Project Chrono) says so, and what still works, instead of
+    a bare "not available"; static, modal and thermal studies say what they are missing the same way.
+- Changing part of a study's settings (an AI assistant adding traces, say) keeps the rest: the drivers are no longer
+  lost. The settings given are merged in, and an empty value removes one.
+- A parameter used only in a sketch's equation curve (an ellipse's half axes, for example) is now listed as used by
+  that sketch, can't be deleted while the sketch needs it, and renaming it updates the equation.
 
 ## [0.10.0] - 2026-11-21
 

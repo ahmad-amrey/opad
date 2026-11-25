@@ -129,9 +129,10 @@ int main(){try {
   // as a heading in the activity panel (both merged: measured 160021).
   // Rules, mirror names and ellipse dimensions (measured 159596 live, 90277 headless): query_entities' length/area/loop/bounds_mode filters and
   // expressions, the mirror's name_map, the major_radius/minor_radius ellipse dimensions.
+  // Joint re-anchoring (joint's id says at/part/base re-anchor it): measured 160816 live, 90304 headless, within the limits.
   // Second MCP stress test (#17, #25, #26; measured 161670 live, 90918 headless): features and ops take offset, limit and
   // detail (compact pages by default live: replies of 52 KB and 67 KB before), live_state's change_history, joint_set's
-  // preview said to have no id.
+  // preview said to have no id. With joint re-anchoring merged: measured 161693 live, 90946 headless.
   CHECK(live<161800);  // 160900 before paging; all three merged: measured 160762; 160200 before rules, mirror names and ellipse radii; 159300 before set_phase; 159100 before the guide by section; 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
   CHECK(headless<91050);  // 90450 before paging; 89950 before rules, mirror names and ellipse radii; 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.

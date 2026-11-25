@@ -66,7 +66,7 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
        {"kind", "motion|dynamic|static|modal|thermal|sweep"},
        {"name", "string"},
        {"settings", {{"type", "object"}, {"description", "see the agent guide, Motion and simulation"}}},
-       {"id", "string - an existing study: run it again (with settings: changed first)"},
+       {"id", "string - an existing study: run it again (settings: merged by key first)"},
        {"run", "bool - run it now (default true)"},
        {"series", {{"anyOf", {{{"type", "boolean"}}, {{"type", "array"}, {"items", {{"type", "string"}}}}}}, {"description", "also return sampled series: true, or names / groups"}}},
        {"samples", "int - points per series (default 21)"},
@@ -81,14 +81,35 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
         Scene s = resolve(doc);
         std::string id;
         json def;
+        // A kind whose engine this build or machine lacks: refused before anything is written, saying why; run: false
+        // still defines it (for a build that has the engine) with that as a warning.
+        std::string missing;
+        auto check_engine = [&](const std::string& kind) {
+          const json why = sim::engines().value("unavailable", json::object()).value(kind, json());
+          if (!why.is_string()) return;
+          missing = why.get<std::string>();
+          if (a.value("run", true)) throw Error("study: " + missing + " (run: false defines it without running it)");
+        };
         if (a.contains("id")) {
           const Study* st = s.study(a["id"].get<std::string>());
           if (!st) throw Error("no study " + a["id"].get<std::string>());
+          check_engine(st->kind);
           id = st->id;
           def = st->def;
           json set = json::object();
-          for (const char* k : {"name", "settings"})
-            if (a.contains(k)) set[k] = a[k];
+          if (a.contains("name")) set["name"] = a["name"];
+          // Settings merge key by key (an array such as drivers is replaced whole; null drops a key): sending only traces
+          // keeps the drivers (MCP stress test #20).
+          if (a.contains("settings")) {
+            if (!a["settings"].is_object()) throw Error("study: settings is an object");
+            const json before = def.value("settings", json::object());
+            json merged = before.is_object() ? before : json::object();
+            for (const auto& [k, v] : a["settings"].items()) {
+              if (v.is_null()) merged.erase(k);
+              else merged[k] = v;
+            }
+            if (merged != before) set["settings"] = merged;
+          }
           if (!set.empty()) {
             for (const auto& [k, v] : set.items()) def[k] = v;
             Document::validate_op(def);
@@ -99,6 +120,7 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           const std::string kind = a.at("kind").get<std::string>();
           const auto& kinds = sim::study_kinds();
           if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end()) throw Error("study: kind is motion, dynamic, static, modal, thermal or sweep");
+          check_engine(kind);
           std::vector<std::string> taken;
           for (const auto& st : s.studies) taken.push_back(st.name);
           def = {{"op", "study"}, {"name", a.value("name", free_name(taken, capital(kind) + " study "))}, {"kind", kind},
@@ -106,6 +128,7 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           Document::validate_op(def);
         }
         json out = {{"name", def["name"]}, {"kind", def["kind"]}};
+        if (!missing.empty()) out["warning"] = missing;
         if (!a.value("run", true)) {
           if (id.empty()) id = doc.append(def, by).id;
           out["id"] = id;
