@@ -423,7 +423,7 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
     free_flow, shutoff_pressure; unit (of q, m3/h default), pressure_unit (Pa | inH2O | mmH2O), speed %}` (or a fan
     library id) where the fan finds its operating point, `fluid` air | water, `ambient` degC (20), `quality` quick |
     normal | fine, `mesh` auto | axisymmetric | 3d, `extend: {inlet, outlet}` (diameters of straight pipe added before and
-    after, 2 and 6 by default; 0 for none), `iterations`, `turbulence` auto | sst | laminar, `streamlines` (seeds across).
+    after, 2 and 12 by default; 0 for none), `iterations`, `turbulence` auto | sst | laminar, `streamlines` (seeds across).
     A part round about the line between its openings' centres is solved as a 5-degree wedge (seconds to a minute);
     otherwise the full part (snappyHexMesh, minutes); `plan.why_3d` says why not round. `run: false` checks the settings
     and openings and returns `plan` (mesh, mode, axis, openings, cells) without OpenFOAM. Summary: `pressure_drop_pa`

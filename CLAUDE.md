@@ -155,7 +155,7 @@ padding the spine range beyond 2%. State: 33 of 1036 solids invalid in the 196-f
 
 OpenFOAM's simpleFoam, k-omega SST + Spalding wall functions (laminar below Re 2000), isothermal air or water. `inlet`/`outlet`
 = one flat face each: a wall's rim (its hole is the opening, mode "wall") or the end of a body that is the fluid ("volume").
-Stubs of straight pipe (`extend`, 2 and 6 diameters) go before and after; `pressure_drop_pa` = mass-weighted total pressure
+Stubs of straight pipe (`extend`, 2 and 12 diameters: an expansion's jet is still mixing at 6, and the stub's friction slope read there took 1.5 Pa of its loss) go before and after; `pressure_drop_pa` = mass-weighted total pressure
 at the inlet face minus 0.9 of the way down the outlet stub, the stub's own friction added back (its total-pressure slope
 from 0.6 to 0.9 carried back to the outlet face; Haaland when the stub is short). Round about the openings' axis (rays at
 six angles every 0.25 mm; Douglas-Peucker, corners put back where the lines meet; a wall steeper than 60 degrees, a sudden

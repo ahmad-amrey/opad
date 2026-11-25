@@ -4,7 +4,7 @@
 //
 //   inside   the fluid is the inside of the walls between an inlet and an outlet face. A face picked at an end is either
 //            the rim of a wall (a flat face with one hole: the hole is the opening) or the end of a body that is the fluid
-//            itself (a flat face without holes). Straight stubs of pipe go before the inlet and after the outlet (2 and 6
+//            itself (a flat face without holes). Straight stubs of pipe go before the inlet and after the outlet (2 and 12
 //            diameters by default, `extend`): the flow comes in developed and an expansion's jet mixes out before the
 //            outlet, as in a real duct. Measured as a handbook measures a fitting: the total pressure at the inlet face
 //            less the total pressure far downstream, the straight stub's own friction (smooth pipe) taken back out.
@@ -47,7 +47,7 @@ struct FlowSettings {
   double rho = 0, nu = 0;           // kg/m3, m2/s at the ambient temperature
   std::string quality = "normal";
   std::string mesh = "auto";
-  double extend_inlet = 2, extend_outlet = 6;  // diameters of straight pipe before the inlet and after the outlet
+  double extend_inlet = 2, extend_outlet = 12;  // diameters of straight pipe before the inlet and after the outlet
   int iterations = 0;               // 0: the quality's
   std::string turbulence = "auto";  // auto: laminar below Re 2000, else k-omega SST
 };

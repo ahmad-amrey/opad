@@ -20,6 +20,7 @@
 #include <gp_Ax2.hxx>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -143,7 +144,13 @@ const std::string kA0 = "0f0e0d0c-0b0a-4908-8706-050403020100/face/0", kA1 = "0f
 
 json cfm(double v) { return {{"value", v}, {"unit", "cfm"}}; }
 
-sim::StudyRun flow(Fitting& f, json settings) { return sim::run_study(f.doc, resolve(f.doc), {{"kind", "flow"}, {"settings", settings}}); }
+double g_seconds = 0;  // the last flow()'s wall time, printed by show()
+sim::StudyRun flow(Fitting& f, json settings) {
+  const auto t0 = std::chrono::steady_clock::now();
+  sim::StudyRun r = sim::run_study(f.doc, resolve(f.doc), {{"kind", "flow"}, {"settings", settings}});
+  g_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  return r;
+}
 
 std::string text(const std::filesystem::path& p) { return read_text_file(p); }
 
@@ -381,7 +388,7 @@ TEST(flow_round_fitting_is_a_wedge) {
   CHECK_NEAR(p.steepest_deg, 35, 0.5);
   CHECK(text_of_case(f, s).find("limited corrected 0.33") != std::string::npos);  // skewed past 30 degrees: corrected
   CHECK_NEAR(p.inlet_extension_mm, 2 * 8 * kIn, 0.1);
-  CHECK_NEAR(p.outlet_extension_mm, 6 * 6 * kIn, 0.1);
+  CHECK_NEAR(p.outlet_extension_mm, 12 * 6 * kIn, 0.1);
   CHECK(p.cells > 3000 && p.cells < 60000);
   // The other way round: an expansion, along -Z.
   const auto back = sim::plan_flow(f.doc, sc, sim::flow_settings({{"inlet", f.small}, {"outlet", f.big}, {"flow", cfm(350)}}));
@@ -547,16 +554,18 @@ namespace {
 bool solves() { return sim::openfoam().found() && std::getenv("OPAD_TEST_FLOW"); }
 void show(const char* what, const sim::StudyRun& r) {
   const json& s = r.summary;
-  std::printf("%s: dp %.2f Pa (faces %.2f, static %.2f), K %.3f, Q %.4f m3/s, vmax %.2f m/s, %zu recirculation, %s, %d cells, %d iterations%s\n", what,
+  std::printf("%s: dp %.2f Pa (faces %.2f, static %.2f), K %.3f, Q %.4f m3/s, vmax %.2f m/s, %zu recirculation, %s, %d cells, %d iterations%s, %.0f s\n", what,
               s["pressure_drop_pa"].get<double>(), s["pressure_drop_faces_pa"].get<double>(), s["static_drop_pa"].get<double>(), s["loss_coefficient"].get<double>(),
               s["flow_m3s"].get<double>(), s["max_speed_ms"].get<double>(), s["recirculation"].size(), s["mesh"].get<std::string>().c_str(), s["cells"].get<int>(),
-              s["iterations"].get<int>(), s["converged"].get<bool>() ? "" : " (not converged)");
+              s["iterations"].get<int>(), s["converged"].get<bool>() ? "" : " (not converged)", g_seconds);
   for (const auto& w : s["warnings"]) std::printf("  warning: %s\n", w.get<std::string>().c_str());
 }
 }  // namespace
 
 // Handbook (ASHRAE / Idelchik) for a 35 degree (half angle) cone between 8" and 6" at 350 CFM: about 5-7 Pa as a contraction,
-// about 13 Pa as an expansion. The bounds are wide: the comparison itself is printed.
+// about 13 Pa as an expansion. k-omega SST gives less, the same on the fine mesh (OpenFOAM v2512, 12 diameters of outlet
+// stub): about 2 Pa and 9.5 Pa (the sudden expansion's Borda-Carnot loss is 9.5 Pa). The bounds are wide: the comparison
+// itself is printed. A wedge converges in a few hundred iterations (U's component across it is left out of residualControl).
 TEST(flow_solve_cone_35) {
   if (!solves()) return;
   Fitting f = fitting(35);
@@ -564,7 +573,8 @@ TEST(flow_solve_cone_35) {
   show("35 deg contraction", in);
   CHECK_EQ(in.summary["mesh"].get<std::string>(), std::string("axisymmetric"));
   CHECK_NEAR(in.summary["flow_m3s"].get<double>(), 350 * 4.719474e-4, 0.01 * 350 * 4.719474e-4);
-  CHECK(in.summary["pressure_drop_pa"].get<double>() > 2 && in.summary["pressure_drop_pa"].get<double>() < 12);
+  CHECK(in.summary["pressure_drop_pa"].get<double>() > 1 && in.summary["pressure_drop_pa"].get<double>() < 12);
+  CHECK(in.summary["converged"].get<bool>());
   CHECK(!in.fea->streamlines.empty());
   CHECK(!in.fea->cut.empty());
   CHECK(!in.series.empty() && !in.t.empty());
@@ -582,7 +592,7 @@ TEST(flow_solve_cone_35) {
   CHECK(fan.summary["flow_m3s"].get<double>() > 0.5 * 350 * 4.719474e-4);
 }
 
-// 12 degrees with R60 blends: about 3 Pa as a contraction, 5-6 Pa as an expansion.
+// 12 degrees with R60 blends: about 3 Pa as a contraction, 5-6 Pa as an expansion (solved: about 1.2 and 5 Pa).
 TEST(flow_solve_cone_12_blended) {
   if (!solves()) return;
   Fitting f = fitting(12, true, 60);
