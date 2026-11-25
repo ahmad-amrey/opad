@@ -1142,5 +1142,12 @@
  "Claude is working": "Claude يعمل",
  "Adding a fillet to Bracket…": "جارٍ إضافة تدوير حواف إلى حامل…",
  "You stopped Claude": "أوقفتَ Claude",
- "Changes it already made stay; Undo removes them.": "تبقى التغييرات التي أجراها؛ والتراجع يزيلها."
+ "Changes it already made stay; Undo removes them.": "تبقى التغييرات التي أجراها؛ والتراجع يزيلها.",
+ "Connect your AI app with one button": "اربط تطبيق الذكاء الاصطناعي بزر واحد",
+ "Choose what it may do": "اختر ما يُسمح له به",
+ "Claude Desktop · Not connected yet": "Claude Desktop · لم يُربط بعد",
+ "Using another AI app? Copy setup message": "تطبيق آخر؟ نسخ رسالة الإعداد",
+ "What may it do? Nothing": "ماذا يجوز له؟ لا شيء",
+ "Claude Desktop · Connected": "Claude Desktop · مربوط",
+ "What may it do? Look and edit": "ماذا يجوز له؟ النظر والتحرير"
 }

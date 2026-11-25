@@ -28,8 +28,8 @@ class AgentBridge : public QObject {
  public:
   AgentBridge(AppDocument*,DesignController*,Viewport*,JobRunner*,QWidget*);
   ~AgentBridge() override;
-  // Settings > AI assistants. page: 0 Connect, 1 Access, 2 Other AI apps; -1: Connect while no assistant is connected,
-  // else Access (AgentSettings.cpp).
+  // Settings > AI assistants, one screen (AgentSettings.cpp). page: 1 opens its Details page (program paths, raw settings,
+  // Check OPAD is listening, who is connected now); anything else the screen itself.
   void settings(int page = -1);
   bool clientConnected() const;  // a client is bound to this window now
   void showActivity();  // the AI activity panel (it never opens by itself)
