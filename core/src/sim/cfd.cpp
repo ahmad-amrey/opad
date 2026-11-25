@@ -95,19 +95,91 @@ std::string set_flow_rate(std::string U, const std::string& patch, double Q) {
 }  // namespace
 
 // ---------------------------------------------------------------- where OpenFOAM is
+namespace {
+bool has_solver(const fs::path& dir) {
+  std::error_code ec;
+  return fs::is_regular_file(dir / "simpleFoam", ec) || fs::is_regular_file(dir / "simpleFoam.exe", ec);
+}
+
+// A project directory's programs: bin/ (blueCFD, a folder of its own), else platforms/<build>/bin (OpenCFD's MinGW build
+// keeps its programs and DLLs there; bin/ holds only its shell scripts).
+fs::path project_bin(const fs::path& project) {
+  if (has_solver(project / "bin")) return project / "bin";
+  std::error_code ec;
+  std::vector<fs::path> found;
+  for (const auto& e : fs::directory_iterator(project / "platforms", ec))
+    if (has_solver(e.path() / "bin")) found.push_back(e.path() / "bin");
+  std::sort(found.begin(), found.end());
+  return found.empty() ? fs::path() : found.back();
+}
+
+// OpenCFD's Windows installer: <root>/msys64/home/ofuser/OpenFOAM/OpenFOAM-v<N> holds the project.
+fs::path installer_project(const fs::path& root) {
+  std::error_code ec;
+  std::vector<fs::path> found;
+  for (const auto& e : fs::directory_iterator(root / "msys64" / "home" / "ofuser" / "OpenFOAM", ec))
+    if (e.path().filename().string().rfind("OpenFOAM-", 0) == 0 && !project_bin(e.path()).empty()) found.push_back(e.path());
+  std::sort(found.begin(), found.end());
+  return found.empty() ? fs::path() : found.back();
+}
+
+#ifdef _WIN32
+// OpenCFD's MinGW build links its Pstream against MS-MPI, which its installer leaves to a separate (administrator) setup:
+// without msmpi.dll every program stops before it starts (0xC0000135). Seen in the DLL's import names.
+std::string mpi_problem(const fs::path& bin, const fs::path& project) {
+  std::string data;
+  try {
+    data = read_text_file(bin / "libPstream.dll");
+  } catch (...) {
+    return {};
+  }
+  std::transform(data.begin(), data.end(), data.begin(), [](char c) { return char(std::tolower(static_cast<unsigned char>(c))); });
+  if (data.find("msmpi.dll") == std::string::npos) return {};
+  std::vector<fs::path> dirs = {bin};
+  if (const char* root = std::getenv("SystemRoot")) dirs.push_back(fs::path(path_from_utf8(root)) / "System32");
+  if (const char* mpi = std::getenv("MSMPI_BIN")) dirs.push_back(path_from_utf8(mpi));
+  if (const char* path = std::getenv("PATH"))
+    for (std::string s = path; !s.empty();) {
+      const size_t b = std::min(s.find(';'), s.size());
+      if (b > 0) dirs.push_back(path_from_utf8(s.substr(0, b)));
+      s.erase(0, std::min(b + 1, s.size()));
+    }
+  for (const auto& d : dirs)
+    if (std::error_code ec; fs::is_regular_file(d / "msmpi.dll", ec)) return {};
+  std::string setup;
+  for (fs::path at = project; !at.empty() && at != at.parent_path(); at = at.parent_path())
+    if (std::error_code ec; fs::is_regular_file(at / "thirdParty" / "msmpisetup.exe", ec)) {
+      setup = path_to_utf8(at / "thirdParty" / "msmpisetup.exe");
+      break;
+    }
+  return "OpenFOAM is installed (" + path_to_utf8(bin) + ") but cannot start: it needs Microsoft MPI (msmpi.dll), which is not installed. " +
+         (setup.empty() ? std::string("Install MS-MPI 10 from Microsoft") : "Run " + setup + " (MS-MPI 10, as administrator)") +
+         ", then try again";
+}
+#endif
+
+OpenFoam checked(OpenFoam f) {
+#ifdef _WIN32
+  if (!f.bin.empty() && f.wrapper.empty()) f.problem = mpi_problem(f.bin, f.project);
+#endif
+  return f;
+}
+}  // namespace
+
 OpenFoam openfoam() {
   OpenFoam f;
-  auto has_bin = [](const fs::path& dir) {
-    std::error_code ec;
-    return fs::is_regular_file(dir / "simpleFoam", ec) || fs::is_regular_file(dir / "simpleFoam.exe", ec);
-  };
+  auto has_bin = [](const fs::path& dir) { return has_solver(dir); };
   if (const char* env = std::getenv("OPAD_OPENFOAM"); env && *env) {
-    const fs::path p = path_from_utf8(env);
+    fs::path p = path_from_utf8(env);
     std::error_code ec;
+#ifndef _WIN32
+    // etc/openfoam is a shell script: it sets the environment where a shell runs it, never from a Windows program.
     if (fs::is_regular_file(p / "etc" / "openfoam", ec) && fs::is_regular_file(p / "bin" / "foamEtcFile", ec)) f.wrapper = p / "etc" / "openfoam";
-    if (has_bin(p / "bin")) f.bin = p / "bin";
+#endif
+    if (const fs::path inner = installer_project(p); !inner.empty() && project_bin(p).empty()) p = inner;
+    f.bin = project_bin(p);
     f.project = p;
-    return f;
+    return checked(f);
   }
   // On the PATH, with the project directory from the environment or where packages put it.
   if (const char* path = std::getenv("PATH")) {
@@ -127,6 +199,24 @@ OpenFoam openfoam() {
       a = b + 1;
     }
   }
+#ifdef _WIN32
+  if (f.bin.empty()) {
+    // OpenCFD's installer: per user (its default) or for everyone, the newest version first.
+    std::vector<fs::path> roots;
+    for (const char* var : {"APPDATA", "ProgramFiles", "ProgramW6432"})
+      if (const char* base = std::getenv(var); base && *base) {
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(fs::path(path_from_utf8(base)) / "ESI-OpenCFD" / "OpenFOAM", ec)) roots.push_back(e.path());
+      }
+    std::sort(roots.begin(), roots.end(), [](const fs::path& a, const fs::path& b) { return a.filename() > b.filename(); });
+    for (const auto& root : roots)
+      if (const fs::path project = installer_project(root); !project.empty()) {
+        f.project = project, f.bin = project_bin(project);
+        return checked(f);
+      }
+    return f;
+  }
+#endif
   if (f.bin.empty()) {
     // An OpenCFD package's own wrapper (openfoam2306, ...), which sets everything up.
     std::error_code ec;
@@ -140,10 +230,13 @@ OpenFoam openfoam() {
     return f;
   }
   if (const char* wm = std::getenv("WM_PROJECT_DIR"); wm && *wm) f.project = path_from_utf8(wm);
+  else if (std::error_code ec; f.bin.parent_path().parent_path().filename() == "platforms" &&
+                               fs::is_regular_file(f.bin.parent_path().parent_path().parent_path() / "etc" / "controlDict", ec))
+    f.project = f.bin.parent_path().parent_path().parent_path();  // platforms/<build>/bin on the PATH
   else
     for (const char* guess : {"/usr/share/openfoam", "/usr/lib/openfoam"})
       if (std::error_code ec; fs::is_regular_file(fs::path(guess) / "etc" / "controlDict", ec)) f.project = guess;
-  return f;
+  return checked(f);
 }
 
 BodyBoxes body_boxes(const Document& doc, const Scene& scene) {
@@ -1051,6 +1144,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     if (progress && !progress(f, phase)) throw Error("cancelled");
   };
   const OpenFoam foam = openfoam();
+  if (!foam.problem.empty()) throw Error(foam.problem);
   if (!foam.found())
     throw Error("the CFD air needs OpenFOAM: install it (Ubuntu: apt install openfoam; or OpenCFD's packages) or set OPAD_OPENFOAM to its directory");
   // The parts' heat is solved in CalculiX on a Netgen mesh: said now, not after the air has taken its minutes.

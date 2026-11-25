@@ -23,6 +23,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -272,6 +274,57 @@ TEST(flow_kind_is_registered) {
       CHECK(std::string(err.what()).find("give flow") != std::string::npos);
     }
   }
+}
+
+// OPAD_OPENFOAM naming OpenCFD's Windows installer root or the OpenFOAM-v<N> folder in it: the programs are in
+// platforms/<build>/bin (bin/ holds shell scripts only), and a Pstream built against MS-MPI without msmpi.dll is a problem.
+TEST(flow_openfoam_installer_layout) {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / ("opad-test-foam-" + new_uuid().substr(0, 8));
+  const fs::path project = root / "msys64" / "home" / "ofuser" / "OpenFOAM" / "OpenFOAM-v2512";
+  const fs::path bin = project / "platforms" / "win64MingwDPInt32Opt" / "bin";
+  fs::create_directories(bin);
+  fs::create_directories(project / "bin");
+  fs::create_directories(project / "etc");
+  auto touch = [](const fs::path& p, const std::string& text = "x") { std::ofstream(p, std::ios::binary) << text; };
+  touch(bin / "simpleFoam.exe");
+  touch(project / "bin" / "foamEtcFile");
+  touch(project / "etc" / "openfoam");
+  touch(project / "etc" / "controlDict");
+  const char* old = std::getenv("OPAD_OPENFOAM");
+  const std::string saved = old ? old : "";
+  auto use = [](const fs::path& p) {
+#ifdef _WIN32
+    _putenv_s("OPAD_OPENFOAM", path_to_utf8(p).c_str());
+#else
+    setenv("OPAD_OPENFOAM", path_to_utf8(p).c_str(), 1);
+#endif
+  };
+  for (const fs::path& given : {root, project}) {
+    use(given);
+    const auto f = sim::openfoam();
+    CHECK(f.bin == bin);
+    CHECK(f.project == project);
+#ifdef _WIN32
+    CHECK(f.wrapper.empty());  // a shell script: never run from Windows
+    CHECK(f.found());
+#endif
+  }
+#ifdef _WIN32
+  touch(bin / "libPstream.dll", std::string("MZ\0\0...MSMPI.DLL\0...", 22));
+  fs::create_directories(root / "thirdParty");
+  touch(root / "thirdParty" / "msmpisetup.exe");
+  use(root);
+  const auto f = sim::openfoam();
+  // A machine with MS-MPI installed has no problem; one without is told to run the installer's own MS-MPI setup.
+  if (!f.problem.empty()) {
+    CHECK(!f.found());
+    CHECK(f.problem.find("msmpisetup.exe") != std::string::npos);
+  }
+#endif
+  use(saved);
+  std::error_code ec;
+  fs::remove_all(root, ec);
 }
 
 TEST(flow_round_fitting_is_a_wedge) {

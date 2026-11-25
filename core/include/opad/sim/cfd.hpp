@@ -36,10 +36,14 @@
 
 namespace opad::sim {
 
-// Where OpenFOAM is: the directory of its programs and its project directory; empty when none.
+// Where OpenFOAM is: the directory of its programs and its project directory; empty when none. `problem`: why an install
+// that is there cannot run (OpenCFD's Windows build without the MS-MPI it links against); found() is false then.
+// Windows: OpenCFD's installer (per user under %APPDATA%\ESI-OpenCFD\OpenFOAM\v<N>, or Program Files) is found by itself;
+// OPAD_OPENFOAM may name its root, the OpenFOAM-v<N> folder inside it, or a folder with bin/simpleFoam.
 struct OpenFoam {
   std::filesystem::path bin, project, wrapper;  // wrapper: a full install's etc/openfoam, which sets the environment itself
-  bool found() const { return !bin.empty() || !wrapper.empty(); }
+  std::string problem;
+  bool found() const { return (!bin.empty() || !wrapper.empty()) && problem.empty(); }
 };
 OpenFoam openfoam();
 
