@@ -397,7 +397,10 @@ the panel's choices (load ids by role included), `settings.case` its own case; `
 changes in place only what differs, or deletes those loads; same choices again write nothing. Proposals (bottom faces as
 supports, top faces for the load, a duct's open ends) are read with `readAsync` (designBusy meanwhile: a bench's own commands
 wait for it); heat sources by name on the UI thread. Readiness from `sim::engines()` read by a `quiet` job; a kind not in
-`sim::study_kinds()` (flow before core has it) is Coming and writes nothing. `SolverWindow` opens the official page or takes a
+`sim::study_kinds()` is Coming and writes nothing. Airflow checks: core's `flow_settings` accepts `check`/`guided`; a flow
+study is validated on every `study` write, so a check is saved only once inlet and outlet are known (made with its whole
+settings, nulls dropped) and shows core's mesh plan (`plan`, or `validateFlow` on a worker after a reload) before Run;
+`Simulate::showFlow` draws the cut through the fluid by speed or pressure, or streamlines. `SolverWindow` opens the official page or takes a
 folder/program (`simulate/solvers/<id>` + OPAD_OPENFOAM / OPAD_CCX, `applySaved` in Simulate::ready); it never downloads. Thermal
 setup's frame is `GuidedSteps`. A run's done callback calls `followStudy` before `refresh` (refresh drops a study of another
 panel subject). Clip element `simpic` draws a check's picture. Bench `simulate-checks(-rtl)` (OPAD_BENCH_SIMCHECKS), test

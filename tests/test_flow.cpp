@@ -239,6 +239,28 @@ TEST(flow_settings_refused) {
   CHECK(ok);
 }
 
+// Simulate's guided checks (app/SimulateCheck.cpp) keep which check it is and the panel's choices in the settings: they
+// pass, as the panel writes them (a known airflow or a fan's label), and a study made from them returns its mesh plan.
+TEST(flow_guided_check_settings_pass) {
+  Fitting f = fitting(35);
+  const json guided = {{"bodies", json::array({f.body})}, {"inlet", json::array({f.big})}, {"air", {{"mode", "flow"}, {"value", 350}, {"unit", "cfm"}}}};
+  json st = {{"check", "fitting"}, {"guided", guided}, {"inlet", json::array({f.big})}, {"outlet", json::array({f.small})},
+             {"flow", cfm(350)}, {"fluid", "air"}, {"ambient", 25}, {"quality", "normal"}};
+  CHECK_NEAR(sim::flow_settings(st).flow_m3s, 350 * 0.000471947443, 1e-9);
+  const json r = commands::run("study", {{"kind", "flow"}, {"run", false}, {"settings", st}}, &f.doc);
+  CHECK(r.contains("plan") && r["plan"].value("mesh", "") == "axisymmetric");
+  json fan = st;
+  fan.erase("flow");
+  fan["check"] = "fan";
+  fan["fan"] = {{"free_flow", 350}, {"unit", "cfm"}, {"shutoff_pressure", 120}, {"pressure_unit", "Pa"}};
+  const auto s = sim::flow_settings(fan);
+  CHECK(s.drive == sim::FlowSettings::Drive::Fan);
+  CHECK_NEAR(s.fan.Qmax, 350 * 0.000471947443, 1e-6);
+  CHECK_NEAR(s.fan.Pmax, 120, 1e-6);
+  const json m = commands::run("study", {{"id", r["id"]}, {"run", false}, {"settings", {{"flow", nullptr}, {"fan", fan["fan"]}, {"check", "fan"}}}}, &f.doc);
+  CHECK(m.contains("plan"));
+}
+
 TEST(flow_kind_is_registered) {
   const auto& kinds = sim::study_kinds();
   CHECK(std::find(kinds.begin(), kinds.end(), "flow") != kinds.end());

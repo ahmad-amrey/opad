@@ -889,8 +889,10 @@ void water_properties(double T, double& rho, double& nu) {
 
 FlowSettings flow_settings(const json& st) {
   if (!st.is_object()) throw Error("flow: settings is an object");
+  // check / guided: what Simulate's guided checks keep with their study (which check, the panel's choices: read back by
+  // the panel after an undo or a reopen); nothing here reads them.
   static const std::set<std::string> known = {"domain", "inlet", "outlet", "bodies", "flow", "fan", "direction", "speed", "fluid", "ambient", "quality",
-                                              "mesh", "extend", "iterations", "turbulence", "streamlines", "timeout"};
+                                              "mesh", "extend", "iterations", "turbulence", "streamlines", "timeout", "check", "guided"};
   for (const auto& [k, v] : st.items())
     if (!known.count(k)) throw Error("flow: unknown setting \"" + k + "\"");
   FlowSettings s;
