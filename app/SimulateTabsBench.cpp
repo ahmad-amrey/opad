@@ -1,10 +1,11 @@
-// The Simulation panel follows the ribbon's tab; case in tools/bench_cases/simulate.py.
+// The Simulation panel's subject follows its own bar (the Advanced tab holds every raw tool); case in tools/bench_cases/simulate.py.
 #include <QAction>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QPushButton>
+#include <QTabBar>
 #include <QTimer>
 #include <functional>
 
@@ -38,7 +39,7 @@ QStringList kinds(QComboBox* box) {
 }  // namespace
 
 // OPAD_BENCH_SIMTABS=1 on an empty document with a motion, a static and a thermal study (not run): the Simulation panel opened
-// on the Mechanism tab shows the mechanism, its joints and only the motion study, New study offering motion and dynamic; on
+// from Simulate's Advanced tab, its bar on Mechanism, shows the mechanism, its joints and only the motion study, New study offering motion and dynamic; on
 // Structure no mechanism, the static study, static and vibration; on Thermal the thermal study, Thermal setup (its button opens
 // its panel in the Simulation panel's place), thermal alone. The panel stays open across the tabs, and each tab's study is the one chosen.
 OPAD_BENCH(OPAD_BENCH_SIMTABS, simtabs) {
@@ -56,7 +57,7 @@ OPAD_BENCH(OPAD_BENCH_SIMTABS, simtabs) {
   auto study = [doc](const char* kind, const char* name) { return doc->run("study", {{"kind", kind}, {"name", name}, {"run", false}}).value("id", std::string()); };
   const std::string motion = study("motion", "Travel"), stat = study("static", "Bracket"), thermal = study("thermal", "Cooling");
   w.setWorkspace("simulate");
-  require(w.m_ribbon->setCurrentTabId("simulate.mechanism"), "the Simulate workspace, its Mechanism tab");
+  require(w.m_ribbon->setCurrentTabId("simulate.advanced"), "the Simulate workspace, its Advanced tab");
   w.action("simulate.panel")->trigger();
   SimulatePanel* form = area->form();
   require(until([area] { return area->panel()->isVisible(); }, 5000), "the Simulation panel opens");
@@ -69,6 +70,9 @@ OPAD_BENCH(OPAD_BENCH_SIMTABS, simtabs) {
     for (int i = 0; i < studies->count(); ++i) out.push_back(studies->itemData(i).toString().toStdString());
     return out;
   };
+  auto* modes = form->findChild<QTabBar*>("simModes");
+  require(modes && modes->count() == 3, "the panel's Mechanism / Structure / Thermal bar");
+  if (!modes) return QCoreApplication::exit(2), true;
   struct Tab {
     const char* id;
     SimulatePanel::Mode mode;
@@ -81,7 +85,7 @@ OPAD_BENCH(OPAD_BENCH_SIMTABS, simtabs) {
                       {"simulate.structure", SimulatePanel::Mode::Structure, stat, {"static", "modal"}, false, false},
                       {"simulate.mechanism", SimulatePanel::Mode::Mechanism, motion, {"motion", "dynamic"}, true, false}};
   for (const Tab& t : tabs) {
-    require(w.m_ribbon->setCurrentTabId(t.id), QString("the %1 tab").arg(t.id));
+    modes->setCurrentIndex(int(t.mode));
     QCoreApplication::processEvents();
     const QString on = QString(t.id).mid(9) + ": ";
     require(area->panel()->isVisible() && form->mode() == t.mode, on + "the panel stays open, about this tab");

@@ -289,6 +289,10 @@ struct PathParser {
         QPointF p1 = (lastCmd.toUpper() == 'S' || lastCmd.toUpper() == 'C') ? cur * 2 - lastCtrl : cur;
         QPointF p2 = pt(a, b), p3 = pt(c2, d2);
         path.cubicTo(p1, p2, p3); lastCtrl = p2; cur = p3;
+      } else if (u == 'Q') {  // the quadratic curves of Simulate's pictures (SimPictures)
+        if (!number(a) || !number(b) || !number(c2) || !number(d2)) break;
+        QPointF p1 = pt(a, b), p2 = pt(c2, d2);
+        path.quadTo(p1, p2); cur = p2;
       } else if (u == 'A') {
         int large, sweep;
         if (!number(a) || !number(b) || !number(c2) || !flag(large) || !flag(sweep) || !number(e) || !number(f)) break;
@@ -412,6 +416,12 @@ class LazyIcon : public QIconEngine {
 }  // namespace
 
 namespace icons {
+
+QPainterPath svgPath(const QString& d) {
+  PathParser parser{d};
+  parser.parse();
+  return parser.path;
+}
 
 IconTable::IconTable(std::initializer_list<std::pair<const char*, const char*>> rows) {
   for (const auto& [name, markup] : rows) {

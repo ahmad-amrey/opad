@@ -165,8 +165,8 @@ class CoolingAssistant : public QWidget {
   std::string studyId() const;
 
   Hooks m_hooks;
-  class QTabBar* m_steps = nullptr;  // Box, Heat, Air, Run
-  QStackedWidget* m_pages = nullptr;
+  class GuidedSteps* m_frame = nullptr;  // the steps' frame, shared with Simulate's checks
+  class QTabBar* m_steps = nullptr;  // its tabs: Box, Heat, Air, Run
   QLabel* m_engine = nullptr;
   QListWidget* m_walls = nullptr;   // the box's bodies, by name
   QPushButton* m_boxAdd = nullptr;  // on: clicks in the view and the browser add bodies to it

@@ -34,11 +34,15 @@
 #include "KeyText.hpp"
 #include "PanelFooter.hpp"
 #include "Ribbon.hpp"
+#include "SimChecks.hpp"
 #include "SimPlot.hpp"
+#include "SimulateCheck.hpp"
 #include "SimulateCooling.hpp"
 #include "SimulateGuide.hpp"
 #include "SimulatePanel.hpp"
 #include "SimulatePrint.hpp"
+#include "SimulateSolver.hpp"
+#include "SimulateStart.hpp"
 #include "Theme.hpp"
 #include "ToolPanel.hpp"
 #include "Tracking.hpp"
@@ -82,7 +86,11 @@ OPAD_ICON_TABLE(simulate,
                 {"simBox", R"(<path d="M3 8l9-4 9 4v9l-9 4-9-4z"/><path d="M3 8l9 4 9-4M12 12v9"/><path d="M15 15.5h3M15 13.5h3" opacity=".55"/>)"},
                 {"simBoard", R"(<rect x="3" y="6" width="18" height="12" rx="1"/><rect x="9" y="9" width="6" height="6"/><path d="M5 9h2M5 12h2M5 15h2M17 9h2M17 12h2M17 15h2"/>)"},
                 {"simHeatsink", R"(<path d="M3 19h18v2H3z"/><path d="M5 19V5M9 19V5M13 19V5M17 19V5"/><path d="M20 8c1 1 1 2 0 3" opacity=".55"/>)"},
-                {"simNatural", R"(<path d="M8 20c-2-3 2-5 0-8s2-5 0-8M16 20c-2-3 2-5 0-8s2-5 0-8"/><path d="M6 6l2-2 2 2M14 6l2-2 2 2"/>)"});
+                {"simNatural", R"(<path d="M8 20c-2-3 2-5 0-8s2-5 0-8M16 20c-2-3 2-5 0-8s2-5 0-8"/><path d="M6 6l2-2 2 2M14 6l2-2 2 2"/>)"},
+                {"simStart", R"(<circle cx="12" cy="12" r="9"/><path d="M12 7.5v9M7.5 12h9"/>)"},
+                {"simCompare", R"(<rect x="3" y="5" width="7.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="7.5" height="14" rx="1.5"/><path d="M5.5 15l2-3 1.5 1.5M16 14l1.5-4 1.5 2" opacity=".6"/>)"},
+                {"simSolvers", R"(<path d="M12 3l2 4.2 4.6.6-3.3 3.2.8 4.6L12 13.4 7.9 15.6l.8-4.6L5.4 7.8 10 7.2z"/><path d="M5 20h14" opacity=".55"/>)"},
+                {"simFitting", R"(<path d="M7 3h8v5l-2 4v9h-4v-9L7 8z"/><path d="M11 0.5v2M11 21.5v2" opacity=".6"/>)"});
 
 namespace {
 using opad::json;
@@ -398,6 +406,63 @@ void Simulate::buildActions() {
       {"temperature", "heat transfer", "heatsink", "cooling", "warm up", "transient", "steady state"});
   add("simulate.results", tr("Result map"), "simResults", [this] { showResults(!resultShown()); },
       [self](const CommandContext& c) { return c.document && self && self->m_run && self->m_run->fea; }, {"contour", "stress map", "colour map", "deformed"}, true);
+
+  // ---- the goal tabs: checks asked as plain questions (SimChecks), each opening its guided panel (SimulateCheck)
+  const auto words = [](const char* check) {
+    const simchecks::Check* c = simchecks::find(check);
+    return c ? c->words : QStringList();
+  };
+  add("simulate.start", tr("New check"), "simStart", [this] { showStart(); }, doc,
+      {"what do you want to find out", "start", "guided", "beginner", "simulation", "check", "FEA", "CFD"});
+  add("simulate.check.fitting", tr("How much pressure does a fitting lose?"), "simFitting", [this] { openCheck("fitting"); }, doc, words("fitting"));
+  add("simulate.check.fan", tr("How much air will my fan really push?"), "simFan", [this] { openCheck("fan"); }, doc, words("fan"));
+  add("simulate.check.overheat", tr("Will my electronics box overheat?"), "simBox", [this] { openCheck("overheat"); }, doc, words("overheat"));
+  add("simulate.check.heatsink", tr("Is my heatsink big enough?"), "simHeatsink", [this] { openCheck("heatsink"); }, doc, words("heatsink"));
+  add("simulate.check.warmup", tr("How fast does it warm up?"), "simTemperature", [this] { openCheck("warmup"); }, doc, words("warmup"));
+  add("simulate.check.bend", tr("Will it bend or break under a load?"), "simForce", [this] { openCheck("bend"); }, doc, words("bend"));
+  add("simulate.check.print", tr("Will my 3D print hold?"), "simPrint", [this] { openCheck("print"); }, doc, words("print"));
+  add("simulate.check.rattle", tr("Will it rattle or hum?"), "simModal", [this] { openCheck("rattle"); }, doc, words("rattle"));
+  add("simulate.check.clearance", tr("Does my mechanism move freely?"), "simJoint", [this] { openCheck("clearance"); }, doc, words("clearance"));
+  add("simulate.check.forces", tr("How strong a motor do I need?"), "simDynamic", [this] { openCheck("forces"); }, doc, words("forces"));
+  // Short names on the ribbon's buttons (the menus, the palette and help keep the question).
+  const std::pair<const char*, QString> shortNames[] = {
+      {"simulate.check.fitting", tr("Pressure loss in a fitting")}, {"simulate.check.fan", tr("Airflow from my fan")},
+      {"simulate.check.overheat", tr("Box overheat")},            {"simulate.check.heatsink", tr("Heatsink big enough")},
+      {"simulate.check.warmup", tr("Warm-up time")},              {"simulate.check.bend", tr("Bend or break")},
+      {"simulate.check.print", tr("3D print holds")},             {"simulate.check.rattle", tr("Rattle or hum")},
+      {"simulate.check.clearance", tr("Moves freely")},           {"simulate.check.forces", tr("Motor size")}};
+  for (const auto& [id, text] : shortNames)
+    if (QAction* a = services().action(id)) a->setIconText(text);
+  add("simulate.checkRun", tr("Run check"), "simRun", [this] { if (m_check) m_check->runNow(); },
+      [self, doc](const CommandContext& c) { return doc(c) && self && self->m_check && self->m_check->canRun(); }, {"solve", "compute", "check", "simulate"});
+  add("simulate.checkResults", tr("Check results"), "simResults", [this] {
+        openCheck(m_check->check(), m_check->study());
+        m_check->showStep("results");
+      },
+      [self](const CommandContext& c) { return c.document && self && self->m_check && !self->m_check->check().isEmpty() && self->m_check->hasResult(); },
+      {"verdict", "result", "safe", "too hot", "colour map"});
+  add("simulate.compare", tr("Compare designs"), "simCompare", [this] {
+        openCheck(m_check->check(), m_check->study());
+        m_check->showStep("compare");
+      },
+      [self](const CommandContext& c) { return c.document && self && self->m_check && !self->m_check->check().isEmpty() && self->m_check->hasResult(); },
+      {"compare", "before and after", "design change", "A B", "versions", "which is better"});
+  add("simulate.solvers", tr("Solvers"), "simSolvers", [this] {
+        // The first solver a check misses, else a word that every one is here.
+        QString missing;
+        for (const auto& c : simchecks::all())
+          if (const auto r = simchecks::readiness(c, m_engines); r.state == simchecks::Readiness::NeedsSolver && missing.isEmpty()) missing = r.solver;
+        if (missing.isEmpty()) {
+          QStringList found;
+          if (m_engines.value("static", false)) found << "CalculiX";
+          if (m_engines.value("cfd", false)) found << "OpenFOAM";
+          if (m_engines.value("dynamic", false)) found << "Project Chrono";
+          services().toast(tr("Every solver OPAD uses is here: %1").arg(found.join(", ")));
+          return;
+        }
+        askSolver(missing);
+      },
+      [](const CommandContext&) { return true; }, {"solver", "OpenFOAM", "CalculiX", "Chrono", "install", "engine", "missing"});
 }
 
 void Simulate::ribbon(RibbonLayout& layout) {
@@ -409,49 +474,49 @@ void Simulate::ribbon(RibbonLayout& layout) {
   const auto add = [&](const QString& group, const char* id, Size size = Size::Large) {
     if (QAction* a = services().action(id)) layout.addAction(group, a, size);
   };
-  layout.addTab("simulate", "simulate.mechanism", tr("Mechanism"));
-  layout.addGroup("simulate.mechanism", "simulate.mechanism.joints", tr("Joints"));
-  add("simulate.mechanism.joints", "simulate.joint");
-  add("simulate.mechanism.joints", "simulate.panel");
-  layout.addGroup("simulate.mechanism", "simulate.mechanism.studies", tr("Studies"));
-  add("simulate.mechanism.studies", "simulate.motion");
-  add("simulate.mechanism.studies", "simulate.dynamic");
-  layout.addGroup("simulate.mechanism", "simulate.mechanism.results", tr("Results"));
-  add("simulate.mechanism.results", "simulate.run");
-  add("simulate.mechanism.results", "simulate.play");
-  layout.addGroup("simulate.mechanism", "simulate.mechanism.help", tr("Help"));
-  add("simulate.mechanism.help", "simulate.guide");
-  layout.addTab("simulate", "simulate.structure", tr("Structure"));
-  layout.addGroup("simulate.structure", "simulate.structure.loads", tr("Loads and supports"));
-  add("simulate.structure.loads", "simulate.fixed");
-  add("simulate.structure.loads", "simulate.force");
-  for (const char* id : {"simulate.pressure", "simulate.boltPreload", "simulate.gravity"}) add("simulate.structure.loads", id, Size::Small);
-  layout.addGroup("simulate.structure", "simulate.structure.studies", tr("Studies"));
-  add("simulate.structure.studies", "simulate.static");
-  add("simulate.structure.studies", "simulate.modal");
-  add("simulate.structure.studies", "simulate.print");
-  add("simulate.structure.studies", "simulate.panel", Size::Small);
-  layout.addGroup("simulate.structure", "simulate.structure.results", tr("Results"));
-  add("simulate.structure.results", "simulate.run");
-  add("simulate.structure.results", "simulate.results");
-  layout.addGroup("simulate.structure", "simulate.structure.help", tr("Help"));
-  add("simulate.structure.help", "simulate.guide");
-  layout.addTab("simulate", "simulate.thermal", tr("Thermal"));
-  layout.addGroup("simulate.thermal", "simulate.thermal.loads", tr("Heat and cooling"));
-  add("simulate.thermal.loads", "simulate.heat");
-  add("simulate.thermal.loads", "simulate.fan");
-  add("simulate.thermal.loads", "simulate.convection");
-  for (const char* id : {"simulate.temperature", "simulate.radiation"}) add("simulate.thermal.loads", id, Size::Small);
-  layout.addGroup("simulate.thermal", "simulate.thermal.studies", tr("Studies"));
-  add("simulate.thermal.studies", "simulate.cooling");
-  add("simulate.thermal.studies", "simulate.thermal");
-  add("simulate.thermal.studies", "simulate.panel", Size::Small);
-  layout.addGroup("simulate.thermal", "simulate.thermal.results", tr("Results"));
-  add("simulate.thermal.results", "simulate.run");
-  add("simulate.thermal.results", "simulate.results");
-  add("simulate.thermal.results", "simulate.play", Size::Small);
-  layout.addGroup("simulate.thermal", "simulate.thermal.help", tr("Help"));
-  add("simulate.thermal.help", "simulate.guide");
+  // Goal tabs for people who are not engineers (each check a plain question), Advanced for every raw tool.
+  layout.addTab("simulate", "simulate.home", tr("Start"));
+  layout.addGroup("simulate.home", "simulate.home.checks", tr("Checks"));
+  add("simulate.home.checks", "simulate.start");
+  add("simulate.home.checks", "simulate.compare");
+  layout.addGroup("simulate.home", "simulate.home.help", tr("Help"));
+  add("simulate.home.help", "simulate.guide");
+  add("simulate.home.help", "simulate.solvers");
+  for (simchecks::Goal g : {simchecks::Goal::Air, simchecks::Goal::Heat, simchecks::Goal::Strength, simchecks::Goal::Movement}) {
+    const QString tab = simchecks::goalTab(g);
+    layout.addTab("simulate", tab, simchecks::goalName(g));
+    layout.addGroup(tab, tab + ".checks", tr("Checks"));
+    for (const simchecks::Check* c : simchecks::ofGoal(g)) add(tab + ".checks", c->command().toUtf8().constData());
+    layout.addGroup(tab, tab + ".this", tr("This check"));
+    add(tab + ".this", "simulate.checkRun");
+    add(tab + ".this", "simulate.checkResults");
+    add(tab + ".this", "simulate.compare");
+  }
+  layout.addTab("simulate", "simulate.advanced", tr("Advanced"));
+  layout.addGroup("simulate.advanced", "simulate.advanced.mechanism", tr("Mechanism"));
+  add("simulate.advanced.mechanism", "simulate.joint");
+  add("simulate.advanced.mechanism", "simulate.motion", Size::Small);
+  add("simulate.advanced.mechanism", "simulate.dynamic", Size::Small);
+  layout.addGroup("simulate.advanced", "simulate.advanced.loads", tr("Loads and supports"));
+  add("simulate.advanced.loads", "simulate.fixed");
+  add("simulate.advanced.loads", "simulate.force");
+  for (const char* id : {"simulate.pressure", "simulate.boltPreload", "simulate.gravity"}) add("simulate.advanced.loads", id, Size::Small);
+  layout.addGroup("simulate.advanced", "simulate.advanced.structure", tr("Structure"));
+  add("simulate.advanced.structure", "simulate.static", Size::Small);
+  add("simulate.advanced.structure", "simulate.modal", Size::Small);
+  add("simulate.advanced.structure", "simulate.print", Size::Small);
+  layout.addGroup("simulate.advanced", "simulate.advanced.thermal", tr("Heat and cooling"));
+  add("simulate.advanced.thermal", "simulate.heat");
+  add("simulate.advanced.thermal", "simulate.fan");
+  for (const char* id : {"simulate.convection", "simulate.temperature", "simulate.radiation"}) add("simulate.advanced.thermal", id, Size::Small);
+  add("simulate.advanced.thermal", "simulate.cooling");
+  add("simulate.advanced.thermal", "simulate.thermal", Size::Small);
+  layout.addGroup("simulate.advanced", "simulate.advanced.results", tr("Results"));
+  add("simulate.advanced.results", "simulate.panel");
+  add("simulate.advanced.results", "simulate.run");
+  for (const char* id : {"simulate.results", "simulate.play"}) add("simulate.advanced.results", id, Size::Small);
+  layout.addGroup("simulate.advanced", "simulate.advanced.help", tr("Help"));
+  add("simulate.advanced.help", "simulate.guide");
 }
 
 void Simulate::ready() {
@@ -488,6 +553,7 @@ void Simulate::ready() {
     openGuide(mode == SimulatePanel::Mode::Thermal ? 8 : mode == SimulatePanel::Mode::Structure ? 4 : !s.joints.empty() ? 1 : 0);
   });
   connect(m_form, &SimulatePanel::coolingRequested, this, [this] { openCooling(); });
+  connect(m_form, &SimulatePanel::modeChosen, this, [this](SimulatePanel::Mode mode) { showMode(mode); });
   connect(m_form, &SimulatePanel::playRequested, this, &Simulate::play);
   connect(m_form, &SimulatePanel::frameChosen, this, [this](int f) {
     pause();
@@ -517,9 +583,14 @@ void Simulate::ready() {
     services().guarded([&] {
       open();
       if (id.rfind("sim:j:", 0) == 0) {
-        if (services().workspace() != "simulate" || !services().setRibbonTab("simulate.mechanism")) showMode(SimulatePanel::Mode::Mechanism);
+        showMode(SimulatePanel::Mode::Mechanism);
         chooseJoint(id.substr(6));
       } else if (id.rfind("sim:s:", 0) == 0) {
+        if (const opad::Study* st = services().document()->scene.study(id.substr(6)))
+          if (const QString check = QString::fromStdString(st->def.value("settings", json::object()).value("check", std::string())); simchecks::find(check)) {
+            m_panel->hide();
+            return openCheck(check, st->id);  // a check: its guided panel, its verdict
+          }
         followStudy(id.substr(6));
         chooseStudy(id.substr(6));
         if (!m_run) runStudy();
@@ -527,13 +598,141 @@ void Simulate::ready() {
     });
   };
   services().browser()->addFolder(folder);
+
+  // The checks: the start page (in the view's place on the Start tab) and the guided panel each check opens.
+  SolverWindow::applySaved();  // solvers found by hand before: set for this run before they are looked for
+  m_start = new SimulateStart;
+  connect(m_start, &SimulateStart::checkChosen, this, [this](const QString& id) { services().guarded([&] { openCheck(id); }); });
+  connect(m_start, &SimulateStart::madeChosen, this, [this](const std::string& study, const QString& id) { services().guarded([&] { openCheck(id, study); }); });
+  connect(m_start, &SimulateStart::solverRequested, this, &Simulate::askSolver);
+  connect(m_start, &SimulateStart::advancedRequested, this, [this] { services().setRibbonTab("simulate.advanced"); });
+  GuidedCheck::Hooks hooks;
+  hooks.document = [this] { return services().document(); };
+  hooks.write = [this](const std::string& command, const json& args, const QString& label) { return write(command, args, label); };
+  hooks.run = [this](const std::string& id) {
+    services().guarded([&] {
+      followStudy(id);
+      chooseStudy(id);
+      runStudy();
+    });
+  };
+  hooks.busy = [this] { return bool(m_job); };
+  hooks.lastRun = [this](const std::string& id) { return id == m_study ? m_run : std::shared_ptr<const opad::sim::StudyRun>(); };
+  hooks.showField = [this](const QString& field) {
+    if (!m_run || !m_run->fea) return;
+    m_field = field == "speed" || field == "streamlines" ? QStringLiteral("air_speed") : field;
+    showRun();
+    services().guarded([&] { showResults(true); });
+  };
+  hooks.command = [this](const QString& id) {
+    if (QAction* a = services().action(id); a && a->isEnabled()) a->trigger();
+  };
+  hooks.solverNeeded = [this](const QString& solver) { askSolver(solver); };
+  hooks.engines = [this] { return m_engines; };
+  hooks.filter = [this](const QString& id) {
+    const Viewport::SelFilter f = services().viewport()->selectionFilter();
+    const QString was = f == Viewport::SelFilter::Face     ? "select.faces"
+                        : f == Viewport::SelFilter::Edge   ? "select.edges"
+                        : f == Viewport::SelFilter::Vertex ? "select.vertices"
+                                                           : "select.bodies";
+    if (!id.isEmpty() && id != was)
+      if (QAction* a = services().action(id)) a->trigger();
+    return was;
+  };
+  hooks.accumulate = [this](bool on) { services().viewport()->setPickAccumulate(on); };
+  hooks.selection = [this] { return services().selection().refs; };
+  hooks.select = [this](const std::vector<opad::Ref>& refs) { services().select(refs); };
+  hooks.light = [this](const std::vector<std::pair<opad::Ref, std::string>>& refs) { lightRefs(refs); };
+  hooks.jobs = [this] { return services().jobs(); };
+  m_check = new GuidedCheck(std::move(hooks));
+  m_checkPanel = new ToolPanel("simcheck", "simulate", &Tokens::sel, tr("Simulation check"), m_check, 760, services().window());
+  m_checkPanel->setDefaultWidth(400);
+  m_checkPanel->setObjectName("simCheckToolPanel");
+  m_checkPanel->setHelpId("simulate.start");
+  m_checkPanel->setEscapeHandler([this] { m_check->escape(); });
+  services().addPanel(m_checkPanel);
+  connect(m_check, &GuidedCheck::closeRequested, m_checkPanel, &QWidget::hide);
+  connect(m_check, &GuidedCheck::changed, this, [this] {
+    services().updateCommands();
+    showMade();
+  });
+  refreshEngines();
+  showMade();
   tabChanged(services().ribbonTab());
 }
 
+// ---------------------------------------------------------------- the checks
+void Simulate::refreshEngines() {
+  if (m_enginesJob) return;
+  // Which solvers are on this computer: a look along the PATH and in the usual places, on a worker.
+  auto found = std::make_shared<json>();
+  m_enginesJob = services().jobs()->quiet(tr("Looking for the solvers"), [found](Progress) { *found = opad::sim::engines(); },
+                                          [this, self = QPointer<Simulate>(this), found](bool ok, const QString&) {
+                                            if (!self) return;
+                                            m_enginesJob = nullptr;
+                                            if (ok && found->is_object()) m_engines = *found;
+                                            if (m_start) m_start->setEngines(m_engines);
+                                            if (m_check) m_check->enginesChanged();
+                                            services().updateCommands();
+                                          });
+}
+
+void Simulate::askSolver(const QString& solver) {
+  SolverWindow window(solver, [this] { refreshEngines(); }, services().window());
+  window.exec();
+}
+
+void Simulate::leaveStart() {
+  if (!m_start || services().centralPage() != m_start) return;
+  if (!services().setRibbonTab("simulate.advanced")) services().setCentralPage(nullptr);
+}
+
+void Simulate::showStart() {
+  if (services().workspace() != "simulate") services().setWorkspace("simulate");
+  if (services().ribbonTab() != "simulate.home") services().setRibbonTab("simulate.home");
+  else tabChanged("simulate.home");
+}
+
+void Simulate::openCheck(const QString& id, const std::string& study) {
+  const simchecks::Check* c = simchecks::find(id);
+  if (!c || !m_check) return;
+  if (!services().requireEditable()) return;
+  if (services().workspace() != "simulate") services().setWorkspace("simulate");
+  if (services().ribbonTab() != simchecks::goalTab(c->goal)) services().setRibbonTab(simchecks::goalTab(c->goal));
+  if (services().centralPage() == m_start) services().setCentralPage(nullptr);
+  // That study of it; or, no study named, the check shown already when it is this one (carried on), else a new one.
+  if (study.empty() ? m_check->check() != id : m_check->study() != study) m_check->open(id, study);
+  services().openPanel(m_checkPanel);
+  services().updateCommands();
+}
+
+void Simulate::showMade() {
+  if (!m_start) return;
+  std::vector<SimulateStart::Made> made;
+  const AppDocument* doc = services().document();
+  if (doc->hasDocument)
+    for (const auto& st : doc->scene.studies) {
+      const json settings = st.def.value("settings", json::object());
+      const QString check = QString::fromStdString(settings.value("check", std::string()));
+      if (!simchecks::find(check)) continue;
+      QString result = GuidedCheck::verdictLine(check, st.result, settings.value("guided", json()));
+      if (result.isEmpty()) result = tr("Not run");
+      made.push_back({st.id, check, QString::fromStdString(st.name), result});
+    }
+  m_start->setMade(made);
+}
+
 void Simulate::tabChanged(const QString& tabId) {
-  if (!m_form || !tabId.startsWith("simulate.")) return;
-  const QString tab = tabId.mid(9);
-  showMode(tab == "thermal" ? SimulatePanel::Mode::Thermal : tab == "structure" ? SimulatePanel::Mode::Structure : SimulatePanel::Mode::Mechanism);
+  if (!m_form || !m_start) return;
+  // Start: the page of checks in the view's place (while a document is open); any other tab: the view again.
+  const bool home = tabId == "simulate.home" && services().workspace() == "simulate" && services().document()->hasDocument;
+  if (home) {
+    showMade();
+    services().setCentralPage(m_start);
+    if (m_checkPanel && !m_checkPanel->pinned()) m_checkPanel->hide();
+  } else if (services().centralPage() == m_start) {
+    services().setCentralPage(nullptr);
+  }
 }
 
 void Simulate::showMode(SimulatePanel::Mode mode) {
@@ -558,10 +757,7 @@ SimulatePanel::Mode Simulate::studyMode(const opad::Study& st) const {
 void Simulate::followStudy(const std::string& id) {
   const opad::Study* st = services().document()->scene.study(id);
   if (!st || !m_form) return;
-  const SimulatePanel::Mode mode = studyMode(*st);
-  if (mode == m_form->mode()) return;
-  const QString tab = mode == SimulatePanel::Mode::Mechanism ? "simulate.mechanism" : mode == SimulatePanel::Mode::Structure ? "simulate.structure" : "simulate.thermal";
-  if (services().workspace() != "simulate" || !services().setRibbonTab(tab)) showMode(mode);  // the tab's change shows it
+  showMode(studyMode(*st));  // the panel's own bar (the Advanced tab holds every kind)
 }
 
 void Simulate::workspaceChanged(const QString& id) {
@@ -569,6 +765,10 @@ void Simulate::workspaceChanged(const QString& id) {
     pause();
     if (m_panel && !m_panel->pinned()) m_panel->hide();
     if (m_coolingPanel && !m_coolingPanel->pinned()) m_coolingPanel->hide();
+    if (m_checkPanel && !m_checkPanel->pinned()) m_checkPanel->hide();
+    if (m_start && services().centralPage() == m_start) services().setCentralPage(nullptr);
+  } else {
+    tabChanged(services().ribbonTab());
   }
 }
 
@@ -584,6 +784,7 @@ void Simulate::selectionChanged(const SelectionContext& selection) {
   // Thermal setup's box page picks the box's bodies from the selection (the view, the browser).
   if (auto* setup = services().window()->findChild<CoolingAssistant*>(); setup && setup->picking())
     setup->selectionChanged(selection.ids, selection.refs, services().viewport() ? services().viewport()->selectedCandidates() : std::vector<std::string>{});
+  if (m_check && m_check->picking()) m_check->selectionChanged(selection.refs);  // a check's list being picked in the view
   // Rows of the Simulation folder picked in the browser, in the order picked: the joints a relation couples.
   std::vector<std::string> now;
   for (const auto& id : selection.ids)
@@ -617,6 +818,9 @@ void Simulate::documentChanged(bool replaced) {
   }
   if (resultShown() && hiddenResultBodies() != m_mapHidden) showResults(true);
   if (m_panel && m_panel->isVisible()) refresh();
+  showMade();
+  if (replaced && m_check && m_checkPanel) m_checkPanel->hide();  // another document: its checks are not this one's
+  if (replaced) tabChanged(services().ribbonTab());
   if (!m_picked.empty() || !m_lit.empty())  // the targets may have moved or gone: lit again from what lit them (the browser, Thermal setup)
     QTimer::singleShot(0, this, [this] {
       if (m_litRefs.empty()) return lightRows(m_picked);
@@ -649,6 +853,7 @@ opad::json Simulate::write(const std::string& command, const opad::json& args, c
 }
 
 void Simulate::open() {
+  leaveStart();
   services().openPanel(m_panel);
   refresh();
 }
@@ -757,6 +962,7 @@ void Simulate::setJoint(double value) {
 
 void Simulate::addJoint(const QString& kind) {
   if (!services().requireEditable()) return;
+  leaveStart();
   const std::string k = kind.toStdString();
   json args = {{"kind", k}};
   if (opad::sim::is_relation(k)) {
@@ -789,6 +995,7 @@ void Simulate::addJoint(const QString& kind) {
 // ---------------------------------------------------------------- studies
 void Simulate::newStudy(const QString& kind) {
   if (!services().requireEditable()) return;
+  leaveStart();
   open();
   AppDocument* doc = services().document();
   const opad::Scene& s = doc->scene;
@@ -839,6 +1046,7 @@ void Simulate::newStudy(const QString& kind) {
 }
 
 void Simulate::openCooling(int step) {
+  leaveStart();
   QWidget* window = services().window();
   auto* assistant = window->findChild<CoolingAssistant*>();
   if (!assistant) {
@@ -931,6 +1139,7 @@ void Simulate::openGuide(int useCase) {
 
 // Nothing picked for a tool that needs picks: the selection filter it wants is turned on, and the hint says what to click.
 void Simulate::wantPicks(const char* filter, const char* hint) {
+  leaveStart();  // the picks are made in the view
   if (QAction* f = services().action(filter); f && !f->isChecked()) f->trigger();
   throw opad::UserHint(hint);
 }
@@ -1005,6 +1214,7 @@ void Simulate::runStudy() {
           const QString text = !error->empty() ? QString::fromStdString(*error) : why;
           if (!text.isEmpty()) services().toast(tr("The study did not run: %1").arg(i18n::t(text)), {}, {}, 8000);
           if (cooling) cooling->runFinished(id, nullptr, text.isEmpty() ? tr("cancelled") : i18n::t(text));
+          if (m_check) m_check->runFinished(id, nullptr, text.isEmpty() ? QString() : i18n::t(text));
           return;
         }
         // The run's summary into the study op (the cache answers at once).
@@ -1013,10 +1223,14 @@ void Simulate::runStudy() {
         m_run = *result;
         m_runState = stateOf(services().document());
         m_frame = 0;
+        followStudy(id);  // the panel about this study's kind (a check's study may be of another than the panel shows)
         refresh();
+        if (!m_run || m_study != id) return;  // put away meanwhile
         if (m_run->fea) showResults(true);
         else play();
         if (cooling) cooling->runFinished(id, m_run, {});
+        if (m_check) m_check->runFinished(id, m_run, {});
+        showMade();
       });
   if (!m_job) services().toast(tr("The document is busy: try again in a moment"));
   services().updateCommands();
@@ -1132,6 +1346,7 @@ void Simulate::tick() {
 // ---------------------------------------------------------------- loads and the result map
 void Simulate::addLoad(const QString& kind) {
   if (!services().requireEditable()) return;
+  leaveStart();
   AppDocument* doc = services().document();
   const std::string k = kind.toStdString();
   json on = json::array();
@@ -1245,6 +1460,7 @@ void Simulate::showResults(bool on) {
     m_legend->hide();
     viewoverlay::uncovered(view);
   }
+  if (on) leaveStart();  // the map is drawn in the view
   if (!on || !m_run || !m_run->fea) {
     if (m_form) m_form->setResultsShown(false);
     services().updateCommands();

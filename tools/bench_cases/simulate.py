@@ -18,7 +18,11 @@ def engine():
 CASES = [
     ("simulate", "empty", {"OPAD_BENCH_SIMULATE": "{prefix}"}),
     ("simulate-rtl", "empty", {"OPAD_BENCH_SIMULATE": "{prefix}", "OPAD_LANG": "ar"}),
-    ("simulate-tabs", "empty", {"OPAD_BENCH_SIMTABS": "1"}),  # the Simulation panel follows the ribbon's tab (app/SimulateTabsBench.cpp)
+    ("simulate-tabs", "empty", {"OPAD_BENCH_SIMTABS": "1"}),  # the Simulation panel's own Mechanism / Structure / Thermal bar (app/SimulateTabsBench.cpp)
+    # The goal tabs and guided checks: the start page, a strength, a motion, a heat and an airflow check, the solver window
+    # (app/SimulateChecksBench.cpp); the same in Arabic.
+    ("simulate-checks", "empty", {"OPAD_BENCH_SIMCHECKS": "{prefix}", "OPAD_BENCH_UISHOT": "{prefix}.window.png"}),
+    ("simulate-checks-rtl", "empty", {"OPAD_BENCH_SIMCHECKS": "{prefix}", "OPAD_LANG": "ar"}),
     # Thermal setup (the cooling assistant): its example built, the pages filled, the case written (app/CoolingBench.cpp).
     ("cooling", "empty", {"OPAD_BENCH_COOLING": "{prefix}"}),
     ("cooling-rtl", "empty", {"OPAD_BENCH_COOLING": "{prefix}", "OPAD_LANG": "ar"}),

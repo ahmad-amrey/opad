@@ -3,6 +3,7 @@
 // 24 px grid, 2 px stroke, round caps and joins, currentColor. No QtSvg dependency.
 #include <QColor>
 #include <QIcon>
+#include <QPainterPath>
 #include <QPixmap>
 #include <QString>
 #include <QStringList>
@@ -19,6 +20,8 @@ struct IconTable {
 };
 QStringList clashes();
 bool has(const QString& name);
+// An SVG path's "d" (M L H V C S Q A Z, absolute and relative) as a painter path.
+QPainterPath svgPath(const QString& d);
 QPixmap pixmap(const QString& name, const QColor& color, int size = 24, qreal dpr = 1.0);
 QIcon icon(const QString& name, const QColor& normal, const QColor& disabled = QColor(), const QColor& selected = QColor(), int size = 24);
 // fg for normal, fg3 for disabled, onsel for selected, using the current theme tokens.

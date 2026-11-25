@@ -106,7 +106,7 @@ QList<SimulateGuide::UseCase> SimulateGuide::useCases() {
       {tr("Keep a part cool (thermal study)"),
        tr("How hot a chip, a motor or an LED gets on its heatsink: in still air, with a fan, or warming up over time."),
        {tr("Give each part its material (Material, {key:inspect.material}): an aluminium heatsink conducts 3 times better than steel."),
-        tr("On the Thermal tab, pick the part that makes the heat (the Bodies filter, {key:select.bodies}) and press Heat source; type its power "
+        tr("On Simulate's Advanced tab, pick the part that makes the heat (the Bodies filter, {key:select.bodies}) and press Heat source; type its power "
            "in W."),
         tr("Say how the heat leaves. With a fan: pick the heatsink, press Fan, choose the fan (or type its flow and pressure) and the way the "
            "air goes along the fins. In still air: pick the heatsink and press Convection, Natural. Radiation and Fixed temperature work the same "
@@ -124,7 +124,7 @@ QList<SimulateGuide::UseCase> SimulateGuide::useCases() {
        {tr("Model the box with its walls and the openings cut through them, as one solid or several (a base and its lid, a frame and its "
            "panels); the board, its chips and the heatsink inside it as their own bodies (or the chips joined into the board); and a block where each fan sits, as big as the fan "
            "(or the fan's own model). On an empty document Thermal setup builds an example."),
-        tr("Press Thermal setup on the Thermal tab. Its first page picks the bodies the box is made of: click bodies in the view or rows in the browser to add or take them out."),
+        tr("Press Thermal setup on Simulate's Advanced tab (or start the check Will my electronics box overheat?). Its first page picks the bodies the box is made of: click bodies in the view or rows in the browser to add or take them out."),
         tr("Heat: tick each chip that makes heat with its power in W (a chip joined into the board: click its face in the view and type that "
            "face's power), and tick Board for the circuit board with its copper layers."),
         tr("Air: for each fan, pick it in the view or the browser (its own model as a component, or a block where it sits),"

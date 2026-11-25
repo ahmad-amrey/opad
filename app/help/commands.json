@@ -3243,7 +3243,7 @@
    "id": "workspace.simulate",
    "title": "Simulate workspace",
    "summary": "Switches to the Simulate workspace: joints, mechanisms, motion and dynamic studies, loads and structural studies.",
-   "details": "Its Mechanism tab joins parts with joints and runs motion and dynamic studies (Project Chrono); its Structure tab puts loads and supports on faces and runs static stress and vibration studies (Netgen and CalculiX). The browser's Simulation folder lists the joints, the load cases and the studies, and the Simulation panel moves the mechanism and plays the results.",
+   "details": "Its tabs are goals (Start, Air and fluids, Heat, Strength, Movement), each holding checks asked as plain questions that walk you through the setup step by step and answer with a verdict in plain words. Advanced holds the raw tools: joints, loads and supports, and motion, dynamic (Project Chrono), static stress, vibration and thermal studies (Netgen and CalculiX). The browser's Simulation folder lists the joints, the load cases and the studies, and the Simulation panel moves the mechanism and plays the results.",
    "keywords": ["physics", "mechanism", "FEA", "simulation"]
   },
   {
@@ -3257,8 +3257,8 @@
   {
    "id": "simulate.panel",
    "title": "Simulation panel",
-   "summary": "Opens the Simulation panel for the ribbon tab shown: on Mechanism the joints on a slider, new joints and the motion studies; on Structure the stress and vibration studies; on Thermal the thermal studies and the Thermal setup.",
-   "details": "Its sections follow the tab, a study chosen in the browser shows its own tab, and a row of the browser's Simulation folder picked lights what it stands for in its colour with a badge (a heat source red with a flame, a fan blue, a heatsink grey, a board green). Drag the slider to move the mechanism through the chosen joint; it is written to the document when you let go. Choose a study and press Run, then play its frames, step through them or click the chart. A result map colours the parts by stress, displacement, mode shape or temperature.",
+   "summary": "Opens the Simulation panel, Advanced's tools: on its Mechanism tab the joints on a slider, new joints and the motion studies; on Structure the stress and vibration studies; on Thermal the thermal studies and the Thermal setup.",
+   "details": "Its sections follow its own Mechanism / Structure / Thermal bar, a study chosen in the browser shows its own kind (a check's study opens its check instead), and a row of the browser's Simulation folder picked lights what it stands for in its colour with a badge (a heat source red with a flame, a fan blue, a heatsink grey, a board green). Drag the slider to move the mechanism through the chosen joint; it is written to the document when you let go. Choose a study and press Run, then play its frames, step through them or click the chart. A result map colours the parts by stress, displacement, mode shape or temperature.",
    "keywords": ["mechanism", "joints", "studies", "playback", "plot"],
    "requires": "Open or create a document first."
   },
@@ -3436,6 +3436,125 @@
    "details": "Choose the field in the Simulation panel: von Mises stress or displacement for a static study, a mode for a modal one. The deformation is scaled up so it can be seen, and the legend says by how much. The bodies under the map are hidden while it shows.",
    "keywords": ["contour", "stress map", "colour map", "deformed"],
    "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.fitting",
+   "title": "How much pressure does a fitting lose?",
+   "summary": "Opens the guided check of the pressure a duct, reducer, elbow or adapter costs the air going through it.",
+   "details": "OPAD proposes the part's two open ends, the wider one as the way in, and asks how much air goes through it (CFM, m³/h or l/s) or which fan pushes it. The result says the loss in pascals at that airflow in plain words, shows the air's speed, pressure and streamlines, and where it swirls. It runs with the airflow solver (OpenFOAM) and comes with the flow study: until then the card says Coming.",
+   "keywords": ["duct", "pressure drop", "reducer", "elbow", "adapter", "CFD", "airflow"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.fan",
+   "title": "How much air will my fan really push?",
+   "summary": "Opens the guided check of the airflow a fan really delivers through its duct or box.",
+   "details": "Type the two numbers on the fan's label (its free airflow and its maximum pressure) and say where the air goes in and out. OPAD finds where the fan's curve meets the part's resistance: the airflow you actually get, not the label's. It runs with the airflow solver (OpenFOAM) and comes with the flow study: until then the card says Coming.",
+   "keywords": ["fan", "airflow", "CFM", "fan curve", "duct", "blower", "ventilation"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.overheat",
+   "title": "Will my electronics box overheat?",
+   "summary": "Opens the guided check of how hot the parts in an electronics box get.",
+   "details": "Pick the parts that make heat (OPAD proposes the ones named like chips, processors or regulators) with their watts, or an example such as a Raspberry Pi, and say how hot is too hot. The heat leaves through still air or a fan through a heatsink; with OpenFOAM installed, Thermal setup can solve the air in the box too. The result names the hottest part and says whether it stays under your limit.",
+   "keywords": ["electronics", "enclosure", "overheat", "temperature", "Raspberry Pi", "board", "cooling"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.heatsink",
+   "title": "Is my heatsink big enough?",
+   "summary": "Opens the guided check of how hot a chip runs under its heatsink.",
+   "details": "Pick the chip and its watts, the heatsink and the fan that blows through it (from the fan list, with the way the air goes), or still air. The result gives the chip's temperature against your limit, and the colour map shows where the heat sits. Compare designs keeps this result while you try a bigger heatsink.",
+   "keywords": ["heatsink", "chip", "CPU", "LED", "fins", "fan", "thermal resistance"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.warmup",
+   "title": "How fast does it warm up?",
+   "summary": "Opens the guided check of how a part heats up over time after it is switched on.",
+   "details": "Pick what makes heat and its watts, how it cools and how long to watch it. OPAD solves the temperatures over time and says when the hottest part reaches your limit, or that it stays under it. Play the warm-up shows the heat spreading.",
+   "keywords": ["warm up", "transient", "time", "switch on", "temperature", "heat up"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.bend",
+   "title": "Will it bend or break under a load?",
+   "summary": "Opens the guided check of whether a part holds a load, and how far it bends.",
+   "details": "OPAD proposes the faces the part rests on as its supports and the top faces for the load; type the load as a weight in kg, a push in newtons or a pressure, and how sure you want to be. The result leads with a verdict such as Safe: holds 3.2 times this load, then the strength margin, the highest stress and how far it bends. The colour maps show the weak spot.",
+   "keywords": ["bracket", "shelf", "load", "break", "bend", "strength", "safety factor", "FEA"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.print",
+   "title": "Will my 3D print hold?",
+   "summary": "Opens the guided check of whether a 3D-printed part holds its load, with its layers and infill counted.",
+   "details": "It is the bend-or-break check with a Printing step: the filament, layers, walls and infill, typed in or read from a slicer profile. The verdict says how many times the load it holds and the layer it would give way at first. Lay the part so its layers run along the load.",
+   "keywords": ["3D print", "FDM", "PLA", "PETG", "infill", "layers", "slicer", "strength"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.rattle",
+   "title": "Will it rattle or hum?",
+   "summary": "Opens the guided check of the speeds at which a part starts to shake.",
+   "details": "Say where the part is held and the speed of the motor or fan that shakes it, in rpm. OPAD finds the part's natural frequencies and says whether one sits near that speed. The shapes show how it would move.",
+   "keywords": ["vibration", "resonance", "hum", "rattle", "frequency", "rpm", "motor", "fan"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.clearance",
+   "title": "Does my mechanism move freely?",
+   "summary": "Opens the guided check of whether a mechanism's parts hit each other as it moves.",
+   "details": "Pick the joint to drive, how far it moves and in how long, and how close two parts may come. OPAD plays the motion and follows every pair of parts: the verdict says it moves freely with its closest gap, that two parts come too close, or which part hits which and when. It needs a joint: Add a joint starts one.",
+   "keywords": ["mechanism", "clearance", "collision", "interference", "hinge", "slider", "motion"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.check.forces",
+   "title": "How strong a motor do I need?",
+   "summary": "Opens the guided check of the forces in a moving mechanism and the torque its motor needs.",
+   "details": "Pick the joint a motor drives, how far and how fast, and whether gravity pulls the parts down. OPAD runs the dynamics (Project Chrono) and says the torque or force the motor needs at most. Play the motion shows it moving.",
+   "keywords": ["torque", "motor", "servo", "dynamics", "gravity", "force", "power"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.start",
+   "title": "New check",
+   "summary": "Shows Simulate's start page: the checks as plain questions to pick from.",
+   "details": "Each card has a picture of the situation, one line of what it is for, how long it takes and whether it can run here (Ready, Needs a solver, Coming). Describe what you want in the search box to keep the cards that match, or narrow them with the goal chips. The checks already made in this document are listed on the left with their result.",
+   "keywords": ["start", "what do you want to find out", "guided", "beginner", "simulation", "checks"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.checkRun",
+   "title": "Run check",
+   "summary": "Runs the check shown in its panel.",
+   "details": "The check is written first, then solved in the background while the status bar shows how far it is and can cancel it. It is greyed while the check misses an input or its solver, and its panel says which.",
+   "keywords": ["run", "solve", "check", "compute"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.checkResults",
+   "title": "Check results",
+   "summary": "Shows the result of the check shown: its verdict in plain words first.",
+   "details": "Under the verdict come the numbers, buttons for the colour maps or the motion, and the comparison with another design. A check run before keeps its result in the document, so its verdict shows again without running it.",
+   "keywords": ["result", "verdict", "safe", "too hot", "colour map"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.compare",
+   "title": "Compare designs",
+   "summary": "Compares the check shown with another run of it, side by side.",
+   "details": "Try a change keeps this result as a copy; change the design, run the check again, and the table puts the two runs' numbers side by side with the other's verdict. Any earlier copy of the same check can be picked.",
+   "keywords": ["compare", "before and after", "design change", "which is better"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "simulate.solvers",
+   "title": "Solvers",
+   "summary": "Says which solver a check misses, what it is and where it comes from.",
+   "details": "CalculiX works out strength and heat, OpenFOAM the air, Project Chrono the forces in a moving mechanism. For a missing one the window gives its official download page and its size, or finds one already installed when you point at its folder or program; OPAD never downloads or installs anything by itself. When every solver is there it says so.",
+   "keywords": ["solver", "OpenFOAM", "CalculiX", "Project Chrono", "install", "missing"]
   }
  ]
 }
