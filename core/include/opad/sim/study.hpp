@@ -10,6 +10,8 @@
 //   modal    the same: natural frequencies and mode shapes with the case's supports;
 //   thermal  the same mesh, heat transfer: temperatures from heat sources, convection (natural, forced, fans through
 //            heatsinks: sim/airflow.hpp) and radiation, steady or over time; or the air solved (sim/cfd.hpp);
+//   flow     OpenFOAM: steady air or water through a part between its inlet and outlet faces (or around it), k-omega SST:
+//            pressure drop, speeds, recirculation; a round part as a wedge of its section (sim/flow.hpp);
 //   sweep    one of those again over values of the design's parameters (a vent's place, a fin count): the best design.
 //
 // A study op keeps its settings and the summary of its last run; the full results (every frame, every node) are

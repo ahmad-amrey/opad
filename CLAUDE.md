@@ -151,6 +151,20 @@ a "donut"; blends measure their normal against the ball's centre, `blend_normal_
 gains a natural bound, `OPAD_XT_SPILL=<file>` lists faces reaching past their edges). Tried and worse: extending blend arcs past the contacts,
 padding the spine range beyond 2%. State: 33 of 1036 solids invalid in the 196-file public survey, mostly blend faces.
 
+## Flow studies (`core/src/sim/flow.cpp`, study kind `flow`)
+
+OpenFOAM's simpleFoam, k-omega SST + Spalding wall functions (laminar below Re 2000), isothermal air or water. `inlet`/`outlet`
+= one flat face each: a wall's rim (its hole is the opening, mode "wall") or the end of a body that is the fluid ("volume").
+Stubs of straight pipe (`extend`, 2 and 6 diameters) go before and after; `pressure_drop_pa` = mass-weighted total pressure
+at the inlet face minus 0.9 of the way down the outlet stub, the stub's smooth-pipe friction (Haaland) added back. Round
+about the openings' axis (rays at six angles every 0.25 mm; Douglas-Peucker, corners put back where the lines meet) = a 5
+degree wedge in blockMesh (blocks per profile stretch, collapsed axis vertices, the flow and the fan curve scaled by
+5/360), else blockMesh + snappyHexMesh (STLs wall/inlet/outlet, 3 layers). Settings, plan (`plan_flow`) and case files
+(`write_flow_case`) need no OpenFOAM: `study` with `run: false` returns `plan`. Recirculation = reversed cells (against
+the local bulk way) in face-connected groups touching a wall. Shared OpenFOAM readers and the program runner:
+`core/src/sim/foam_case.hpp` (moved out of cfd.cpp). `ctest -R flow`; the solves: `flow-solve` (label slow,
+`OPAD_TEST_FLOW_3D=1` adds the full-part check); `OPAD_KEEP_CFD=1` keeps a case's folder.
+
 ## Floating tool panels (no right dock)
 
 Properties, Annotations and Section are `ToolPanel`s (`app/Panels.hpp`): frameless tool windows owned by the main

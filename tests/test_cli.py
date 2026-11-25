@@ -406,11 +406,31 @@ def licenses():
     assert packaged.stdout.startswith("OPAD 9.9.9: third-party notices"), packaged.stdout[:200]
 
 
+def flow_study():
+    # A flow study through a cylinder (the fluid itself, its two ends the openings): defined and planned without OpenFOAM
+    # (run false), round so meshed as a wedge; bad settings refused before anything is written.
+    doc = os.path.join(tmp, "flow.opad")
+    run("new", "--doc", doc)
+    body = run("feature", doc, "--kind", "cylinder", "--inputs", json.dumps({"diameter": 150, "height": 200}))["body_ids"][0]
+    ends = run("query_entities", doc, "--body", body, "--kind", "face", "--filters", json.dumps({"surface": "plane"}))["items"]
+    bottom = next(e["ref"] for e in ends if abs(e["center"][2]) < 1e-6)
+    top = next(e["ref"] for e in ends if abs(e["center"][2] - 200) < 1e-6)
+    settings = {"inlet": bottom, "outlet": top, "flow": {"value": 200, "unit": "cfm"}}
+    r = run("study", doc, "--kind", "flow", "--run", "false", "--settings", json.dumps(settings))
+    assert r["kind"] == "flow" and r["plan"]["mesh"] == "axisymmetric" and r["plan"]["mode"] == "volume", r
+    assert abs(r["plan"]["inlet"]["radius_mm"] - 75) < 1e-3, r["plan"]
+    p = subprocess.run([CLI, "study", doc, "--kind", "flow", "--run", "false", "--settings", json.dumps(dict(settings, fluid="oil"))], capture_output=True, text=True)
+    assert "fluid is air or water" in p.stdout + p.stderr, p.stdout + p.stderr
+    engines = run("mechanism", doc)["engines"]
+    assert "flow" in engines and (engines["flow"] or "OpenFOAM" in engines["unavailable"]["flow"]), engines
+
+
 test(basic_workflow)
 test(git_merge_story)
 test(bill_of_materials)
 test(semantic_diff_and_textconv)
 test(deterministic_builds)
 test(licenses)
+test(flow_study)
 shutil.rmtree(tmp, ignore_errors=True)
 sys.exit(1 if FAILED else 0)

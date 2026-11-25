@@ -32,7 +32,74 @@ Picture picture(const Document& doc, Scene scene, const json& args, RenderOption
     if (!s) throw Error("render: no study " + st.value("id", std::string()));
     const auto run = run_study_cached(doc, scene, s->def);
     out.info["study"] = s->name;
-    if (run->fea) {
+    if (run->fea && run->fea->kind == "flow") {
+      // A flow study (sim/flow.hpp): the cut through the fluid coloured by speed (default) or pressure, the walls
+      // see-through over it (walls: "hide" leaves them out), and the streamlines (by speed; plain grey on the pressure map).
+      const FeaResult& r = *run->fea;
+      const std::string field = st.value("field", std::string("speed"));
+      if (field != "speed" && field != "pressure") throw Error("render: a flow study's field is speed or pressure");
+      const bool by_speed = field == "speed";
+      const bool lines = st.value("streamlines", true);
+      const auto& values = by_speed ? r.cut_speed : r.cut_pressure;
+      double lo = 1e300, hi = -1e300;
+      for (double v : values) lo = std::min(lo, v), hi = std::max(hi, v);
+      if (by_speed) {
+        lo = 0;
+        if (lines)
+          for (const auto& l : r.streamline_speed)
+            for (double v : l) hi = std::max(hi, v);
+      }
+      if (values.empty()) lo = 0, hi = 1;
+      if (st.contains("max")) hi = st["max"].get<double>();
+      if (st.contains("min")) lo = st["min"].get<double>();
+      if (hi <= lo) hi = lo + 1e-12;
+      out.meshes = std::make_shared<std::vector<Mesh>>(2);
+      Mesh& cm = out.meshes->front();
+      Mesh& wm = out.meshes->back();
+      std::vector<float> colors;
+      for (size_t i = 0; i < r.cut_nodes.size(); ++i) {
+        for (int c = 0; c < 3; ++c) cm.positions.push_back(float(r.cut_nodes[i][size_t(c)]));
+        const auto col = result_color(std::clamp((values[i] - lo) / (hi - lo), 0.0, 1.0));
+        colors.insert(colors.end(), col.begin(), col.end());
+      }
+      for (const auto& t : r.cut)  // both sides of the plane
+        for (const auto& k : {t, std::array<int, 3>{t[0], t[2], t[1]}})
+          for (int v : k) cm.indices.push_back(uint32_t(v));
+      RenderItem cut;
+      cut.mesh = &cm;
+      cut.vertex_colors = std::move(colors);
+      if (lines)
+        for (size_t l = 0; l < r.streamlines.size(); ++l) {
+          std::vector<std::array<float, 3>> poly, col;
+          for (size_t k = 0; k < r.streamlines[l].size(); ++k) {
+            const auto& q = r.streamlines[l][k];
+            poly.push_back({float(q[0]), float(q[1]), float(q[2])});
+            const auto c = by_speed ? result_color(std::clamp((r.streamline_speed[l][k] - lo) / (hi - lo), 0.0, 1.0)) : std::array<float, 3>{0.35f, 0.35f, 0.38f};
+            col.push_back({c[0], c[1], c[2]});
+          }
+          cut.lines.push_back(std::move(poly));
+          cut.line_colors.push_back(std::move(col));
+        }
+      o.extra.push_back(std::move(cut));
+      if (st.value("walls", std::string("ghost")) != "hide") {
+        for (const auto& q : r.nodes)
+          for (int c = 0; c < 3; ++c) wm.positions.push_back(float(q[size_t(c)]));
+        for (const auto& t : r.skin)
+          for (int v : t) wm.indices.push_back(uint32_t(v));
+        RenderItem walls;
+        walls.mesh = &wm;
+        walls.opacity = 0.25f;
+        o.extra.push_back(std::move(walls));
+      }
+      for (const auto& body : r.bodies) o.hide.push_back(body);
+      out.legend = true;
+      out.title = by_speed ? "FLOW SPEED" : "PRESSURE";
+      out.unit = by_speed ? "m/s" : "Pa";
+      out.lo = lo, out.hi = hi;
+      out.info["field"] = field;
+      out.info["range"] = {lo, hi};
+      if (lines) out.info["streamlines"] = r.streamlines.size();
+    } else if (run->fea) {
       const FeaResult& r = *run->fea;
       std::string field = st.value("field", r.kind == "modal" ? "mode" : r.kind == "thermal" ? "temperature" : "von_mises");
       // The CFD air's streamlines (sim/cfd.hpp): coloured on the temperature scale with the parts, or by the air's speed

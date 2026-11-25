@@ -47,6 +47,14 @@ struct FeaResult {
   // temperature (degC) at each point
   std::vector<std::vector<Vec3>> streamlines;
   std::vector<std::vector<double>> streamline_speed, streamline_temperature;
+  // a flow study (sim/flow.hpp, kind "flow"): the walls' nodes with the fluid's speed (m/s) and pressure (Pa, gauge: the
+  // outlet's static pressure is 0) beside them; a cut through the middle of the fluid with the same at its own nodes; and the
+  // flow at any point inside (false outside the fluid). Its temperature is the ambient everywhere (isothermal).
+  std::vector<double> speed, pressure;
+  std::vector<Vec3> cut_nodes;
+  std::vector<std::array<int, 3>> cut;
+  std::vector<double> cut_speed, cut_pressure;
+  std::function<bool(const Vec3& at, Vec3& velocity, double& pressure)> flow_at;
   // modal
   std::vector<double> frequencies;             // Hz
   std::vector<std::vector<Vec3>> modes;        // shape of each mode at each node (mass normalised, as ccx gives them)

@@ -519,6 +519,7 @@ json engines() {
   json out = {{"motion", true}, {"dynamic", chrono}, {"static", fea}, {"modal", fea}, {"thermal", fea}, {"netgen", netgen_available()}};
   const OpenFoam foam = openfoam();
   out["cfd"] = foam.found();  // thermal studies with the air solved (settings.air = "cfd")
+  out["flow"] = foam.found();  // flow studies (sim/flow.hpp)
   if (foam.found()) out["openfoam"] = path_to_utf8(foam.wrapper.empty() ? foam.bin : foam.wrapper);
   out["ccx"] = ccx.empty() ? json(nullptr) : json(path_to_utf8(ccx));
   if (!fea)
@@ -531,6 +532,10 @@ json engines() {
                      "joint_set and mechanism still work, and a build with Chrono runs the study as defined";
   if (!fea)
     for (const char* k : {"static", "modal", "thermal"}) why[k] = out["note"];
+  if (!foam.found())
+    why["flow"] = "flow studies need OpenFOAM, which is not on this machine: install it (Windows: OpenCFD's MinGW build from openfoam.com or "
+                  "blueCFD-Core; Ubuntu: apt install openfoam; macOS: a Docker or OpenCFD build) and put its bin folder on the PATH, or set "
+                  "OPAD_OPENFOAM to its directory";
   if (!why.empty()) out["unavailable"] = why;
   return out;
 }
