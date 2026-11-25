@@ -4,6 +4,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "KeyText.hpp"
+#include "SimPictures.hpp"
 #include "Theme.hpp"
 
 #include <QAction>
@@ -107,6 +108,7 @@ const QHash<QString, QStringList>& schema() {
         {"snap", {"kind", "at", "color"}},
         {"card", {"screen", "w", "title", "rows", "hl", "button", "press"}},
         {"picture", {"corners"}},
+        {"simpic", {"check", "screen", "w"}},  // a Simulate check's picture (SimPictures): the start page's card art
         {"band", {"a", "b", "color", "crossing"}},
         {"veil", {"color"}},
         {"timeline", {"screen", "markers", "states", "at"}},
@@ -342,6 +344,7 @@ void checkValue(const QString& el, const QString& prop, const QJsonValue& v, con
   if (prop == "markers")
     for (const QJsonValue& m : v.toArray()) if (!icons::has(m.toString())) problem(QString("%1: no icon %2").arg(el, m.toString()));
   if ((prop == "badge" || prop == "icon") && !v.toString().isEmpty() && !icons::has(v.toString())) problem(QString("%1: no icon %2").arg(el, v.toString()));
+  if (el == "simpic" && prop == "check" && !simpic::has(v.toString())) problem(QString("simpic: no picture %1").arg(v.toString()));
   // "" names no key (a template's optional one, navPreset's modifier): nothing is drawn.
   if (el == "key" && prop == "fixed" && !v.toString().isEmpty() && !keys::fixedNames().contains(v.toString())) problem(QString("key: unknown fixed key %1").arg(v.toString()));
 }
@@ -1992,6 +1995,11 @@ void paintItem(Ctx& c, const Item& it, const QJsonObject& o) {
     card(c, o);
   } else if (el == "picture") {
     picture(c, o, x);
+  } else if (el == "simpic") {  // at "screen" (its top-left, fractions of the scene), "w" of the scene's width wide, 300:104
+    const QJsonArray at = o.value("screen").toArray();
+    const double w = o.value("w").toDouble(0.5) * c.scene.width();
+    const QRectF r(c.scene.left() + at.at(0).toDouble() * c.scene.width(), c.scene.top() + at.at(1).toDouble() * c.scene.height(), w, w * simpic::kHeight / simpic::kWidth);
+    if (!c.record) simpic::paint(p, c.mirror(r), o.value("check").toString(), *c.tk);
   } else if (el == "band") {  // a selection window, square to the screen between two points (or the cursor)
     const QRectF r = QRectF(c.map(c.pt(o.value("a"), x)), c.map(c.pt(o.value("b"), x))).normalized();
     const QColor color = c.col(o.value("color"), "sel");

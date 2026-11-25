@@ -1,5 +1,5 @@
 #pragma once
-// The Simulate workspace's panel (SimulateArea), for the ribbon tab shown (setMode): Mechanism has the mechanism (its joints,
+// The Simulate workspace's panel (SimulateArea), the Advanced tools' (its bar at the top chooses, setMode): Mechanism has the mechanism (its joints,
 // each one's value on a slider), a new joint or relation from what is picked, and its motion and dynamic studies; Structure
 // its static and vibration studies; Thermal its thermal studies and the Thermal setup. Each runs a study, steps or plays its
 // frames, plots its series, shows a result map. It only shows and asks; the area does the work.
@@ -61,6 +61,7 @@ class SimulatePanel : public QWidget {
   void seriesChosen(int index);
   void fieldChosen(const QString& field);
   void resultsToggled(bool shown);
+  void modeChosen(Mode mode);  // its Mechanism / Structure / Thermal bar
 
  private:
   void jointKindChanged();
@@ -73,6 +74,7 @@ class SimulatePanel : public QWidget {
   QWidget *m_motionRows, *m_resultRows, *m_mechanismBox;
   QLabel* m_studyHeader;
   Mode m_mode = Mode::Mechanism;
+  class QTabBar* m_modes = nullptr;
   SimPlot* m_plot;
   PanelFooter* m_footer;
   double m_lo = 0, m_hi = 1;

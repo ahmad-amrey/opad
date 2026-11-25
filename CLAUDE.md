@@ -386,6 +386,23 @@ Bench: `OPAD_BENCH_TOOL=<tool>[,faces|edges|...]` with `--bench-select` starts t
 and at `OPAD_BENCH_CLICK2=fx,fy` (default lands on the same face = un-pick; `0.3,0.45` hits another face on the as1
 sample), logs `bench: tool ...` after each step, saves `<OPAD_BENCH_UISHOT>.prompt.png/.panel.png`, then Esc x3.
 
+## Simulate's guided checks (`app/SimChecks.*`, `SimulateStart`, `SimulateCheck`, `SimulateSolver`, `GuidedSteps`)
+
+Simulate's tabs are goals: Start (`simulate.home`: `SimulateStart` set as the central page, cards with `SimPictures` drawn in
+code from the tokens, search `simchecks::match` with Unicode words and the Arabic article dropped, goal chips, the document's
+checks), Air and fluids / Heat / Strength / Movement (`simulate.goal.<id>`: the checks' commands `simulate.check.<id>` plus
+`checkRun`, `checkResults`, `compare`), and Advanced (`simulate.advanced`: every raw tool; the Simulation panel picks its subject
+with its own bar `simModes`, no longer from the tab). A check is one study whose `settings.check` names it, `settings.guided` keeps
+the panel's choices (load ids by role included), `settings.case` its own case; `GuidedCheck::write` (debounced, one `batch`) adds,
+changes in place only what differs, or deletes those loads; same choices again write nothing. Proposals (bottom faces as
+supports, top faces for the load, a duct's open ends) are read with `readAsync` (designBusy meanwhile: a bench's own commands
+wait for it); heat sources by name on the UI thread. Readiness from `sim::engines()` read by a `quiet` job; a kind not in
+`sim::study_kinds()` (flow before core has it) is Coming and writes nothing. `SolverWindow` opens the official page or takes a
+folder/program (`simulate/solvers/<id>` + OPAD_OPENFOAM / OPAD_CCX, `applySaved` in Simulate::ready); it never downloads. Thermal
+setup's frame is `GuidedSteps`. A run's done callback calls `followStudy` before `refresh` (refresh drops a study of another
+panel subject). Clip element `simpic` draws a check's picture. Bench `simulate-checks(-rtl)` (OPAD_BENCH_SIMCHECKS), test
+`sim-checks` (`OPAD_SIMPIC_OUT=<png>` saves the pictures in three themes).
+
 ## Notes and hand drawing (`app/AnnotationEditor.hpp`, view parts in `ViewportNotes.cpp`)
 
 Note (N) and Hand drawing (Shift+N) are one `AnnotationEditor` (MainWindow `startAnnotation`; the same command

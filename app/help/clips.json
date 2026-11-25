@@ -5798,6 +5798,198 @@
     {"to": 4.2, "caption": "Project its edges, draw the opening's circle on them, Finish"},
     {"to": 7.0, "caption": "The air goes through the opening along its normal; Flip turns it round"}
    ]
+  },
+  {
+   "id": "simulate.check.fitting", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "fitting", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["Part", ""], ["In and out", ""], ["How much air", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}], [3.5999999999999996, {"hl": 4}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Small loss: 6.4 Pa at 350 CFM", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.check.fan", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "fan", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["Part", ""], ["In and out", ""], ["How much air", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}], [3.5999999999999996, {"hl": 4}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Real airflow: 210 CFM", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.check.overheat", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "overheat", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["Part", ""], ["What gets hot", ""], ["Cooling", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}], [3.5999999999999996, {"hl": 4}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Cool enough: hottest part 64 °C", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.check.heatsink", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "heatsink", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["Part", ""], ["What gets hot", ""], ["Cooling", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}], [3.5999999999999996, {"hl": 4}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Cool enough: hottest part 58 °C", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.check.warmup", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "warmup", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["Part", ""], ["What gets hot", ""], ["Cooling and time", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}], [3.5999999999999996, {"hl": 4}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Stays under 60 °C", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.check.bend", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "bend", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["Part", ""], ["Held by", ""], ["Load", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}], [3.5999999999999996, {"hl": 4}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Safe: holds 3.2 times this load", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.check.print", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "print", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["Part", ""], ["Held by", ""], ["Load", ""], ["Printing", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}], [3.5999999999999996, {"hl": 4}], [4.2, {"hl": 5}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Safe: holds 2.4 times this load", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.check.rattle", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "rattle", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["Part", ""], ["Held by", ""], ["What shakes it", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}], [3.5999999999999996, {"hl": 4}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Quiet: lowest shake at 120 Hz", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.check.clearance", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "clearance", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["The motion", ""], ["How close", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Moves freely: closest gap 1.2 mm", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.check.forces", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "forces", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["The motion", ""], ["Gravity", ""], ["Run", ""], ["Results", ""]], "keys": [[0.0, {"hl": 0}], [1.7999999999999998, {"hl": 1}], [2.4, {"hl": 2}], [3.0, {"hl": 3}]], "from": 0.6, "fade": 0.2},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "The motor needs: up to 1.2 N·m", "dot": "green", "from": 4.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Pick the question closest to yours"},
+    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 6.0, "caption": "The verdict comes first, in plain words"}
+   ]
+  },
+  {
+   "id": "simulate.start", "duration": 6.0,
+   "items": [
+    {"el": "simpic", "check": "fitting", "screen": [0.03, 0.06], "w": 0.28},
+    {"el": "simpic", "check": "overheat", "screen": [0.36, 0.06], "w": 0.28, "from": 0.4, "fade": 0.2},
+    {"el": "simpic", "check": "bend", "screen": [0.69, 0.06], "w": 0.28, "from": 0.8, "fade": 0.2},
+    {"el": "chip", "screen": [0.05, 0.46], "text": "Coming", "from": 1.2},
+    {"el": "chip", "screen": [0.38, 0.46], "text": "Ready", "dot": "green", "from": 1.2},
+    {"el": "chip", "screen": [0.71, 0.46], "text": "Needs CalculiX", "dot": "amber", "from": 1.2},
+    {"el": "label", "screen": [0.05, 0.66], "text": "What do you want to find out?", "bold": true, "size": 13, "from": 0.2}
+   ],
+   "steps": [
+    {"to": 2.5, "caption": "Each card is a question, with a picture of the situation"},
+    {"to": 6.0, "caption": "Describe it in your own words to find the check"}
+   ]
+  },
+  {
+   "id": "simulate.checkRun", "duration": 5.0,
+   "items": [
+    {"el": "simpic", "check": "bend", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.56, 0.08], "w": 128, "title": "Simulation check", "rows": [["Part", ""], ["Held by", ""], ["Load", ""], ["Run", ""], ["Results", ""]], "hl": 3},
+    {"el": "chip", "screen": [0.04, 0.8], "text": "Safe: holds 3.2 times this load", "dot": "green", "from": 3.0, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 2.5, "caption": "The check is written, then solved in the background"},
+    {"to": 5.0, "caption": "The status bar shows how far it is and can cancel it"}
+   ]
+  },
+  {
+   "id": "simulate.checkResults", "duration": 5.0,
+   "items": [
+    {"el": "simpic", "check": "heatsink", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "chip", "screen": [0.54, 0.14], "text": "Cool enough: hottest part 58 °C", "dot": "green", "from": 0.3, "fade": 0.3},
+    {"el": "card", "screen": [0.54, 0.32], "w": 128, "title": "Results", "rows": [["Strength margin", "3.2"]], "from": 1.6, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.6, "caption": "The verdict comes first, in plain words"},
+    {"to": 5.0, "caption": "The numbers, the colour maps and Compare follow the verdict"}
+   ]
+  },
+  {
+   "id": "simulate.compare", "duration": 5.0,
+   "items": [
+    {"el": "simpic", "check": "bend", "screen": [0.03, 0.14], "w": 0.5},
+    {"el": "card", "screen": [0.54, 0.1], "w": 136, "title": "Strength margin", "rows": [["A: this one", "3.2"], ["B: before change 1", "1.8"]], "from": 1.5, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Try a change keeps this result as a copy"},
+    {"to": 5.0, "caption": "Change the design and run the check again: A and B side by side"}
+   ]
+  },
+  {
+   "id": "simulate.solvers", "duration": 5.0,
+   "items": [
+    {"el": "simpic", "check": "fitting", "screen": [0.03, 0.14], "w": 0.45},
+    {"el": "card", "screen": [0.5, 0.1], "w": 150, "title": "This check needs the airflow solver", "rows": [{"text": "From", "entry": "openfoam.com"}, ["Size", "a few hundred MB"]], "from": 0.4, "fade": 0.3}
+   ],
+   "steps": [
+    {"to": 2.5, "caption": "Download and install opens the official page in your browser"},
+    {"to": 5.0, "caption": "I already have it: find it points OPAD at an installed one"}
+   ]
   }
  ]
 }

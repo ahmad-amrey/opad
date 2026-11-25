@@ -1,5 +1,8 @@
 #pragma once
-// The Simulate workspace (Ctrl+5): joints between parts and the relations between joints (gears, racks, lead screws),
+// The Simulate workspace (Ctrl+5), for people who are not engineers first: its tabs are goals (Start, Air and fluids, Heat,
+// Strength, Movement), each holding checks asked as plain questions (SimChecks) that open a guided panel (GuidedCheck);
+// Start is a page of them all in the viewport's place (SimulateStart). Advanced keeps every raw tool below, unchanged:
+// joints between parts and the relations between joints (gears, racks, lead screws),
 // the mechanism moved by a joint's slider, loads and supports for structural studies, and studies run and shown: motion
 // and dynamic ones played back frame by frame with their series plotted, static and modal ones as a colour map of the
 // result over the deformed parts. Everything it writes goes through the core commands (joint, joint_set, load, study).
@@ -22,8 +25,10 @@
 #include "opad/sim/kinematics.hpp"
 #include "opad/sim/study.hpp"
 
+class GuidedCheck;
 class Job;
 class SimLegend;
+class SimulateStart;
 class ToolPanel;
 
 class Simulate : public AreaController {
@@ -37,7 +42,7 @@ class Simulate : public AreaController {
   void selectionChanged(const SelectionContext& selection) override;
   void documentChanged(bool replaced) override;
   void workspaceChanged(const QString& id) override;
-  void tabChanged(const QString& tabId) override;  // the panel follows the tab: Mechanism, Structure or Thermal
+  void tabChanged(const QString& tabId) override;  // Start shows its page in the view's place; a goal tab its check
   void positionOverlays(const QRect& viewport) override;
 
   // For benches: what is shown.
@@ -56,6 +61,15 @@ class Simulate : public AreaController {
   void openGuide(int useCase);  // the Simulation guide, at that use case
   void printSettings();  // the Printed part dialog for the structural study shown (or the last one)
   void openCooling(int step = -1);  // Thermal setup (the CoolingAssistant)
+  // The checks (SimChecks): one opened in its guided panel (a new one, or that study of it), the start page shown.
+  void openCheck(const QString& check, const std::string& study = {});
+  void showStart();
+  GuidedCheck* check() const { return m_check; }
+  ToolPanel* checkPanel() const { return m_checkPanel; }
+  SimulateStart* start() const { return m_start; }
+  const opad::json& engines() const { return m_engines; }  // sim::engines() as last read on a worker
+  void refreshEngines();  // read again (a solver found by hand)
+  void askSolver(const QString& solver);  // the missing-solver window
   // What the Simulation folder's rows picked in the browser light in the view (SimulateLit.cpp): each target with its nature
   // ("heat", "fan", "heatsink", "board", "box", a load's kind), drawn in its colour with its badge when it is shown.
   struct Lit {
@@ -115,6 +129,13 @@ class Simulate : public AreaController {
   void showProfiles(bool on);                                // they offered in the view to pick (Thermal setup), or not
   void drawOpening(int fan, bool inlet);                     // a sketch made on the fan's face, its region the opening
   std::vector<std::pair<opad::Vec3, QWidget*>> m_badges;
+  void showMade();  // the document's checks on the start page
+  void leaveStart();  // a raw tool used on the Start tab: the Advanced tab, the view back in the start page's place
+  SimulateStart* m_start = nullptr;
+  GuidedCheck* m_check = nullptr;
+  ToolPanel* m_checkPanel = nullptr;
+  opad::json m_engines = opad::json::object();
+  QPointer<Job> m_enginesJob;
 
   SimulatePanel* m_form = nullptr;
   bool m_modeShown = false;
