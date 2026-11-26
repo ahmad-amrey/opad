@@ -5,7 +5,7 @@
 #
 #   engines/openfoam/make-pack.sh <work dir> <out dir>
 #
-# Needs (Ubuntu 24.04): mingw-w64 flex bison m4 make gcc g++ curl cmake. Writes into <out dir>:
+# Needs (Ubuntu 24.04): mingw-w64 flex libfl-dev bison m4 make gcc g++ curl cmake. Writes into <out dir>:
 #   opad-openfoam-<ver>-<rev>-windows-x64.zip   the pack (bin/, etc/, licenses/, NOTICE.txt, opad-pack.json)
 #   OpenFOAM-<ver>.tgz, zlib-<ver>.tar.gz        the exact sources it was built from
 #   opad-openfoam-recipe.tar.gz                  this folder (the recipe and our patches)
