@@ -1,4 +1,5 @@
 #include "DesignController.hpp"
+#include "FitPick.hpp"
 #include "opad/inspect.hpp"
 #include "DimensionHandle.hpp"
 #include "HelpClip.hpp"
@@ -241,6 +242,10 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(viewport, &Viewport::notesMoved, this, [this] { if (m_triad && m_triad->shown()) placeMoveTriad(); });  // every camera move
   connect(m_form, &FeaturePanel::activeInputChanged, this, &DesignController::activateInput);
   connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
+  connect(m_form, &FeaturePanel::fitEdited, this, [this](const QString& input, const opad::json& ref) {
+    const InputSpec* in = m_form->input(input);
+    if (in) refitPick(input, ref, in->type == "axis");
+  });
   connect(m_form, &FeaturePanel::accepted, this, [this] { runPreview(true, m_form->footer()->shiftAccepted()); });  // Shift+click on OK: and another
   connect(m_form, &FeaturePanel::cancelled, this, &DesignController::endFeature);
   connect(m_form, &FeaturePanel::escapePressed, this, [this] { escape(); });  // one step back, as in the view
@@ -658,6 +663,8 @@ void DesignController::endFeature() {
   if (!m_featureOn) return;
   m_featureOn = false;
   ++m_planSerial;
+  ++m_fitSerial;
+  if (Job* j = std::exchange(m_fitJob, nullptr)) j->cancel();
   m_previewTimer.stop();
   if (Job* j = std::exchange(m_planJob, nullptr)) j->cancel();
   if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
@@ -1098,6 +1105,11 @@ void DesignController::idlePlaneClick() {
     if (opad::json::parse(c) != current) chosen = opad::json::parse(c);
   for (const auto& r : refs) {
     if (r.kind != opad::Ref::Kind::Face) continue;
+    if (const opad::json fit = fitpick::fromPick(m_doc->scene, r, false); !fit.is_null()) {  // a scan: the flat around it
+      const bool same = fitpick::isFit(current) && current["fit"].value("body", "") == r.body && current["fit"].value("seed", -1) == r.index;
+      if (!same) chosen = fit;
+      continue;
+    }
     const bool same = current.contains("face") && current["face"].value("body", "") == r.body && current["face"].value("index", -1) == r.index;
     if (!same) chosen = opad::json{{"face", pickToJson(r)}};
   }
@@ -1108,6 +1120,12 @@ void DesignController::idlePlaneClick() {
 void DesignController::pickIdlePlane(const QString& input, opad::json support) {
   const int serial = ++m_idleSerial;
   if (Job* j = std::exchange(m_idleJob, nullptr)) j->cancel();
+  if (fitpick::isFit(support)) {  // fitted on a mesh, on a worker
+    m_form->setPicks(input, support);
+    syncSelectionToInput();
+    refitPick(input, support, false);
+    return;
+  }
   if (!support.contains("face")) {  // an origin or a construction plane: as it is
     m_form->setPicks(input, support);
     syncSelectionToInput();
@@ -1135,6 +1153,52 @@ void DesignController::pickIdlePlane(const QString& input, opad::json support) {
     syncSelectionToInput();
     schedulePreview();
   });
+}
+
+void DesignController::refitPick(const QString& input, opad::json ref, bool axis) {
+  const int serial = ++m_fitSerial;
+  if (Job* j = std::exchange(m_fitJob, nullptr)) j->cancel();
+  refreshPlanCopies();
+  auto doc = m_planDoc;
+  auto scene = m_planScene;
+  auto out = std::make_shared<opad::json>(std::move(ref));
+  const opad::json asked = (*out)["fit"];
+  m_form->setStatus(axis ? tr("Fitting the axis on the mesh") : tr("Fitting the plane on the mesh"), false);
+  m_fitJob = m_jobs->async(axis ? tr("Fitting the axis") : tr("Fitting the plane"), [doc, scene, out, axis](Progress p) {
+    Reading reading;
+    if (p.cancelled()) return;
+    *out = fit_reference(*doc, *scene, *out, axis ? "axis" : "plane", [p] { return p.cancelled(); });
+    out->erase("world");  // for showing; the input keeps the request and its result
+  }, [this, serial, input, out, asked](bool ok, const QString& error) {
+    if (serial != m_fitSerial || !m_featureOn) return;
+    m_fitJob = nullptr;
+    const opad::json now = m_form->picks(input);
+    if (!fitpick::isFit(now) || now["fit"] != asked) return;  // picked or changed again meanwhile
+    if (!ok) {
+      if (error == "cancelled") return;
+      m_form->setPicks(input, opad::json());
+      m_form->setStatus(i18n::t(error), true);
+      return;
+    }
+    m_form->setStatus(QString(), false);
+    m_form->setPicks(input, *out);
+    schedulePreview();
+  });
+}
+
+void DesignController::startAlignScan(const std::string& body) {
+  const opad::Node* n = m_doc->node(body);
+  if (!n || n->kind != opad::Node::Kind::Body) return;
+  const opad::json from = {{"fit", {{"body", body}, {"of", "scan_axes"}, {"base", 0}, {"turn", 0}, {"origin", "auto"}}}};
+  startFeature("align", {{"bodies", opad::json::array({{{"body", body}, {"kind", "body"}}})},
+                         {"from", "plane"},
+                         {"from_plane", from},
+                         {"to", "plane"},
+                         {"to_plane", {{"base", "xy"}}},
+                         {"frame", true}});
+  if (!m_featureOn || !m_form->spec() || m_form->spec()->kind != "align") return;
+  m_form->activate(QString());
+  refitPick("from_plane", from, false);
 }
 
 void DesignController::inputsSettled() {
@@ -1231,6 +1295,10 @@ void DesignController::viewportSelectionChanged() {
       if (in->type == "path") picks.push_back(opad::json{{"sketch", r.body}});
       continue;
     }
+    if (in->type == "axis" && fitpick::onMesh(m_doc->scene, r)) {  // a scan's triangle or side: the axis fitted around it
+      if (const opad::json fit = fitpick::fromPick(m_doc->scene, r, true); !fit.is_null()) picks.push_back(fit);
+      continue;
+    }
     if (in->type == "plane") picks.push_back(opad::json{{"face", pickToJson(r)}});
     else if (in->type == "axis") picks.push_back(opad::json{{r.kind == opad::Ref::Kind::Face ? "face" : "edge", pickToJson(r)}});  // faces: after 2 (Faces)
     else picks.push_back(pickToJson(r));
@@ -1254,6 +1322,7 @@ void DesignController::viewportSelectionChanged() {
   const bool first = had.is_null() || (had.is_array() && had.empty());
   m_form->setPicks(name, picks);
   if (!picks.empty()) m_nothingToPick.clear();  // a vertex or a face did it
+  if (single && !picks.empty() && fitpick::isFit(picks.back()) && !fitpick::fitted(picks.back())) refitPick(name, picks.back(), in->type == "axis");
   schedulePreview();
   if (single && !picks.empty()) m_form->activateNextPick();
   else if (in->max_count > 0 && static_cast<int>(picks.size()) == in->max_count) m_form->activateNextPick();

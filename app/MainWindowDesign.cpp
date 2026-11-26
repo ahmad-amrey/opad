@@ -95,6 +95,26 @@ void MainWindow::buildDesignActions() {
   });
   alignSketch->setProperty("shortcutHint", tr("Put the sketch's plane on a face or plane, a point of it on a point, or a line of it along a line; what is built on it follows."));
   shortcuts::updateTooltip(alignSketch);
+  // A scan (or any mesh body) stood on the main axes: Align with its candidate frames (a flat to XY, a wall to X), cycled
+  // in the panel (FitPick, design/fit_refs.cpp).
+  QAction* alignScan = addAction("design.alignScan", tr("Align scan to axes"), "align", QKeySequence(), [this] {
+    std::string body;
+    for (const auto& id : currentNodeIds())
+      if (const opad::Node* n = m_doc->node(id); n && n->kind == opad::Node::Kind::Body && n->representation == "mesh") {
+        body = id;
+        break;
+      }
+    if (body.empty()) {
+      std::vector<std::string> meshes;
+      for (const auto& id : m_doc->scene.all_bodies())
+        if (const opad::Node* n = m_doc->node(id); n && n->representation == "mesh") meshes.push_back(id);
+      if (meshes.size() == 1) body = meshes.front();
+    }
+    if (body.empty()) throw opad::UserHint("Select the mesh body (a scan or an STL) to align first.", true);
+    if (requireEditable()) m_design->startAlignScan(body);
+  });
+  alignScan->setProperty("shortcutHint", tr("Stand a scan on XY: its base flat down, a wall along X, centred; Next base and Next X offer the others."));
+  shortcuts::updateTooltip(alignScan);
   addAction("sketch.cancel", tr("Cancel sketch"), "close", QKeySequence(), [this] { m_design->cancelSketch(); });
   addAction("sketch.node",tr("Spline node weights"),"spline",QKeySequence("Alt+W"),[this]{m_design->sketch()->editSplineNode();});
   addAction("sketch.openEnds",tr("Find open ends"),"point",QKeySequence("Alt+E"),[this]{m_design->sketch()->findOpenVertices();});

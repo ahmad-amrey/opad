@@ -144,6 +144,7 @@ int main(int argc, char** argv) {
   const QString exeDir = QApplication::applicationDirPath();
   // What a single-file build before 0.9.0 kept in <exe dir>/opad-data is copied over once.
   if (const QString adopted = appdata::start(exeDir); !adopted.isEmpty()) trace::log("startup: settings copied from " + adopted);
+  if (const int n = appdata::removeMovedAside(exeDir)) trace::log(QString("startup: removed %1 opad-cli left by an update").arg(n));
   {
     QSettings settings;
     // A copy of the settings before this version's migrations change anything (SettingsBackup.hpp); a development build

@@ -164,6 +164,13 @@ std::vector<json> rename_param_ops(const Document& doc, const std::string& from,
 std::vector<std::string> param_users(const Document& doc, const std::string& name);
 // Frame of a plane input ({"base":..} | {"face":ref} | {"feature":id}) in the given state.
 Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane);
+// A fitted reference ({"fit": {...}}: a plane, line or axis estimated from a mesh body or from points, design/fit_refs.cpp)
+// with its "result" filled in (fitted on the caller's thread: a worker), as a plane (`as` "plane") or an axis ("axis"), plus
+// "world": the result in world coordinates now, for showing (never stored). Throws when it does not fit.
+json fit_reference(const Document& doc, const Scene& scene, json ref, const std::string& as, const Cancel& cancel = {});
+// The candidates for standing a mesh body (a scan) on the main axes: its bases (flats, or the principal axes when it has
+// none) with their quality and X directions, and the Align inputs for the first one (fit "scan_axes", frame matched).
+json scan_axes_report(const Document& doc, const Scene& scene, const std::string& body, const Cancel& cancel = {});
 // A plane chosen now for a sketch whose component has moved since it was made, as its op keeps it: where it was made
 // (its frame and world points and directions moved back by sketch.moved; TODO 11 UI-33). Unchanged otherwise.
 json plane_as_made(const SketchItem& sketch, json plane);

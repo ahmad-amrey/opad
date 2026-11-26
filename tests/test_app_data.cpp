@@ -88,6 +88,30 @@ TEST(a_data_folder_already_there_is_kept) {
   CHECK(read(home.filePath("data/recovery/doc/1.opad")) == "snapshot");
 }
 
+TEST(opad_cli_moved_aside_by_an_update_is_removed_once_free) {
+  QTemporaryDir dir;
+  auto make = [&](const QString& name) {
+    QFile f(dir.path() + "/" + name);
+    CHECK(f.open(QIODevice::WriteOnly));
+    f.write("x");
+  };
+  make("opad-cli.exe");
+  make("opad-cli.exe.1.old");
+  make("opad-cli.exe.2.old");
+  make("notes.old");
+#ifdef _WIN32
+  QFile running(dir.path() + "/opad-cli.exe.2.old");  // held open: Windows refuses to delete it, like a running exe
+  CHECK(running.open(QIODevice::ReadOnly));
+  CHECK(appdata::removeMovedAside(dir.path()) == 1);
+  CHECK(QFile::exists(dir.path() + "/opad-cli.exe.2.old"));
+  running.close();
+#endif
+  appdata::removeMovedAside(dir.path());
+  CHECK(!QFile::exists(dir.path() + "/opad-cli.exe.1.old") && !QFile::exists(dir.path() + "/opad-cli.exe.2.old"));
+  CHECK(QFile::exists(dir.path() + "/opad-cli.exe") && QFile::exists(dir.path() + "/notes.old"));  // nothing else
+  CHECK(appdata::removeMovedAside(dir.path()) == 0);
+}
+
 TEST(nothing_to_adopt_without_an_old_folder) {
   QTemporaryDir program, home;
   QSettings settings(home.filePath("settings/OPAD.ini"), QSettings::IniFormat);

@@ -100,7 +100,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
          {"design.thicken", S}, {"design.mesh_solid", S}, {"design.box", S, {"design.cylinder", "design.sphere", "design.cone", "design.torus", "design.gear"}}});
   group("design.solid", "modify", tr("Modify"),
         {{"design.offset_face", L, {"design.remove_faces"}}, {"design.fillet"}, {"design.chamfer", S}, {"design.shell", S}, {"design.draft", S}, {"design.scale", S},
-         {"design.move", S, {"design.align"}}});
+         {"design.move", S, {"design.align", "design.alignScan"}}});
   group("design.solid", "combine", tr("Combine"), {{"design.combine", S}, {"design.split", S}, {"design.remove", S}});
   group("design.solid", "pattern", tr("Pattern"), {{"design.mirror", S}, {"design.pattern_rect", S}, {"design.pattern_circ", S, {"design.pattern_points"}}});  // Point pattern under Circular's arrow: one column keeps the tab large at 1600 px
   // What the marker selected on the timeline can do: edit it, or from Edit feature's arrow suppress it or roll back to it
@@ -114,7 +114,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
   // Play and Collapse in Exploded view's menu (they are the Explode tab's own while an explode is shown): the tab fits at
   // 1600 px with every group large, Organise's labels included.
   group("design.assemble", "explode", tr("Explode"), {{"assembly.explode", L, {"assembly.explodePlay", "assembly.explodeOff"}}});
-  group("design.assemble", "position", tr("Position"), {{"design.move"}, {"design.align"}});  // Move / copy, as on Solid > Modify; Align
+  group("design.assemble", "position", tr("Position"), {{"design.move"}, {"design.align", L, {"design.alignScan"}}});  // Move / copy, as on Solid > Modify; Align (Align scan to axes under its arrow)
   group("design.assemble", "appearance", tr("Appearance"),
         {{"design.colour"}, {"inspect.material", S}, {"design.opacity", S}, {"edit.hide", S}, {"view.isolate", S}, {"design.lock", S}});
   group("design.assemble", "organise", tr("Organise"),

@@ -5,7 +5,7 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
-## [0.10.1] - 2026-11-22
+## [0.11.0] - 2026-11-26
 
 Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,
 dimensions between lines draw properly, and Sketch fillet says why a corner can't be rounded. Version control keeps each
@@ -17,6 +17,14 @@ Simulate is now for everyone: pick the question that matches your case, from a p
 including a new airflow check for ducts and fittings.
 
 ### Added
+- **Line up 3D scans and STL meshes.** A scan has no exact faces or edges, so OPAD now fits them: click a mesh where a
+  plane or an axis is asked for (Align, Move, a sketch's plane, construction planes and axes) and it fits the flat around
+  the click, or a hole's or boss's axis, and says how good the fit is (how far the mesh strays from it, and over how
+  many triangles), so a curved region taken for a plane shows up as a poor fit. A box over the mesh fits the plane
+  through the triangles it takes, *Fit to points* the plane through picked vertices, and a construction axis can be
+  where two planes meet. **Align scan to axes** stands a scan on XY in one step, its base flat down, a wall along X
+  and centred, with *Next base*, *Next X* and *Flip* for the other ways it could stand. AI assistants get the same fits
+  (`fit_reference`, `scan_axes`).
 - **Simulate asks what you want to find out.** The Simulate tabs are now goals (Air and fluids, Heat, Strength,
   Movement), and the start page shows each check as a plain question with a small picture of the case: "How much
   pressure does a fitting lose?", "Will my electronics box overheat?", "Will it bend or break under a load?", "Will my 3D
@@ -26,8 +34,12 @@ including a new airflow check for ducts and fittings.
   The earlier tools are all still there under *Advanced*.
 - **Airflow through ducts and fittings.** A new airflow check (and `flow` study) works out the pressure a fitting loses
   at a given airflow, or the airflow a fan really delivers through it, shows the air speed, pressure and streamlines, and
-  marks where the air swirls. Round parts are solved as a thin slice, so a run takes a minute or so. It needs OpenFOAM;
-  OPAD says so and points to the download when it is missing.
+  marks where the air swirls. Round parts are solved as a thin slice, so a run takes a minute or so.
+- **Solvers installed from inside OPAD.** The airflow and strength checks need OpenFOAM and CalculiX; when one is
+  missing, *Install* downloads it (about 45 MB for OpenFOAM, 13 MB for CalculiX) from OPAD's own releases, checks it
+  and sets it up for you on Windows, Linux and macOS, with no admin rights and nothing else to install. A copy you
+  installed yourself still works, and the solvers' licences and sources are listed under *Help > Third-party licences*.
+  Each release's notes link the solver versions it installs.
 - **A .gitignore when you set up a repository.** *Set up repository* offers a recommended .gitignore that keeps exports
   (STEP, STL, 3MF, drawings, renders) and OPAD's temporary files out of the history; *Customise* shows the groups to tick.
   Files your design links stay tracked even when their type is ignored, and an existing .gitignore is only added to.
@@ -101,8 +113,17 @@ including a new airflow check for ducts and fittings.
   Everything is still listed.
 - **Rules follow parameters.** The lengths in an edge or face rule (a plane's height, the box, the radius and length
   limits) may be expressions such as `height` or `w / 2`, and the rule matches again when a parameter changes.
+- **Downloads say their version.** Every file of a release carries its version in its name
+  (`OPAD-0.11.0-windows-x64-setup.exe`, a development build `OPAD-0.11.1-dev.80-...`), so a downloaded file tells you
+  which version it is. The download links in the README open the latest release.
+- **Simulate's start page fills the window.** The object browser stays out of the way while you choose a check, and
+  comes back with the 3D view.
 
 ### Fixed
+- **Updating no longer asks to close OPAD's command-line tool.** Each open session of an AI app connected to OPAD
+  (Claude Code, Claude Desktop, Codex) keeps its own `opad-cli` running, so the installer used to list ten or more of
+  them to close. It now leaves them running, and those sessions keep their connection; only an open OPAD still has to be
+  closed first. The old copy is removed the next time OPAD starts after those sessions end.
 - **3D scans and other big meshes no longer freeze OPAD.** Choosing the axis in *Move / copy*, or switching to the
   Face, Edge or Vertex filter, used to make OPAD wait while it prepared every triangle of the mesh for picking: over
   three minutes on a 3-million-triangle scan. It now takes no noticeable time, picking a scan's edges, points and

@@ -200,8 +200,9 @@ OpenFOAM v2606 (zlib 1.4) and CalculiX 2.24 for windows-x64, linux-x64 and macos
 `engines/<id>/make-pack.sh` and checked on their own system by `engines/<id>/smoke.sh` (CI: `.github/workflows/engines.yml`,
 planned by `engines/ci/plan.sh`: pull requests build and check; on dev every pack whose tag is missing is published with
 GITHUB_TOKEN, from the pull request's artifact of the same git tree when there is one; docs/releasing.md "Solver packs"),
-one release per system, `engines-<id>-<ver>-<rev>-<platform>` (not latest, never replaced: a change bumps `PACK_REV`),
-their size + SHA-256 pinned per system in `engine_packs.cpp`'s `kPins` the commit after (no hash = not offered).
+one release per pack revision with every system's zip, `engines-<id>-<ver>-<rev>` (`engines/ci/publish.sh`; not latest,
+never replaced: a change bumps `PACK_REV`; the first packs' per-system releases are taken over byte for byte), their size
++ SHA-256 pinned per system in `engine_packs.cpp`'s `kPins` the commit after (no hash = not offered).
 Install (check's Run step "Install OpenFOAM (42 MB)", `SolverWindow`'s Install): `engineinstall::Installer` downloads in a
 `Downloading` job (only `engine_pack_url_allowed` URLs: github.com/ahmad-amrey/opad/releases/download/, or 127.0.0.1 when
 `OPAD_ENGINE_PACKS=<json>` replaces the table), then `install_pack` on a worker: size, hash, every member inside the
@@ -419,6 +420,28 @@ a sphere): candidates are chosen by the facets' middles too (`centre_error`); ve
 sides (chord sagitta limited by `mesh_sagitta`); arcs need their centre on the ends' bisector or the sketch's wire does
 not close. `OPAD_MESHSOLID_DEBUG=1` traces why a profile or attempt was refused. `ctest -R mesh_solid`; bench
 `mesh-to-solid` (OPAD_BENCH_MESHSOLID).
+
+## Fitted references on meshes (`core/src/scan_fit.cpp`, `core/src/design/fit_refs.cpp`, `app/FitPick.*`)
+
+A scan's "faces" are triangles, so planes and axes on a mesh body are fitted: `{"fit": {body, seed | triangles | points |
+planes, tolerance, of}, "result": {...}}` in any plane or axis input (`Ctx::plane` / `Ctx::axis` -> `fitted_plane` /
+`fitted_axis`). The result is stored in body coordinates with the body key and a digest of `fit`: while both match it is
+used as is (a moved body carries it), else fitted again; `complete_feature_fits` in the Walk writes results into new ops
+and edits, as automatic targets are (replay never fits). Fits are robust: least median of squares over sampled hypotheses,
+then least squares on the 3-sigma inliers; a region grows from its seed by normals (averaged over 6 rings on noisy meshes,
+raw on clean CAD ones) plus "on the region's plane" for facets the noise turned; round faces (`grow_round`) grow by the
+cylinder fitted so far (corner distances, normals square to the axis), so neither noise nor a rim stops or leaks them.
+`Quality.grade` (rms / extent, inlier share) tells a curved region taken for a plane. `scan_axes`: mean shift of the
+area-weighted (averaged) normals from a cube-map histogram, each direction's heaviest offset band fitted as a base, bases
+the scan lies behind first; walls by a doubled-angle histogram in the base plane, quarter turns offered; no flat over 4% =
+PCA. Align's `frame` input maps the From frame onto the To one. UI: a mesh triangle (face or edge pick) in the plane
+picker or an axis input becomes a fit (`fitpick::fromPick`), a box of triangles `fromTriangles`, the picker's Fit to
+points `fromPoints`; `DesignController::refitPick` fits on a worker and the panel's fit row (tolerance, kind, Next base /
+Next X / Box centre) asks again; the preview waits for the fit (`FeaturePanel::complete`). `design.alignScan` = Align with
+`scan_axes`. Point clouds (a face whose triangulation has nodes, no triangles): `fit_mesh` keeps the nodes only, a fit takes
+them by `"vertices"` ranges (plane, normal, line), `scan_axes` falls back to PCA of the points. Test meshes: faces split into cells (`BRepAlgoAPI_Splitter` on the skin, never the solid: cells get inner
+walls) and subdivided at side midpoints (shared sides split alike), noise hashed by position. `ctest -R scan-fit`; bench
+`fit-align` (OPAD_BENCH_FITALIGN, generated 1.1M-triangle plate). Commands `fit_reference`, `scan_axes`.
 
 ## One-shot tools (close after use, Shift keeps them)
 
@@ -868,8 +891,12 @@ automatic one is answered by it (`m_userAsked`). The Windows single exe (no `uni
 any `OPAD_BENCH*` variable is set or with `OPAD_NO_UPDATE_CHECK`; `OPAD_UPDATE_URL` / `OPAD_UPDATE_PAGE_URL` point the two
 requests elsewhere (bench `updates`; `ctest -R update-check` runs a fake GitHub on a local socket). HTTPS needs Qt's TLS
 plugin: the static build imports `Qt6::QSchannelBackendPlugin`, the portable stage copies `tls/qschannelbackend.dll`.
-Asset names are fixed by the release job's renames (version-free); renaming one means the README links and
-`installerAssetName` too.
+Assets carry their release's tag without the v (`OPAD-0.11.0-windows-x64-setup.exe`, `-rc.N`, `-dev.N`: the Collect
+step's LABEL, which is also the tag); the update check takes `OPAD-*-<installerAssetName's system part>`; version-free
+copies of the four installers stay for copies before 0.11.0. The README links to the latest release's page. The
+installer moves a running opad-cli.exe aside (`opad-cli.exe.<n>.old`, `PrepareToInstall`) instead of asking to close it:
+every open AI session (Claude Code, Desktop, Codex) runs its own `opad-cli mcp` for as long as it is open. OPAD's start
+removes the free ones (`appdata::removeMovedAside`). Release notes list the solver packs (`tools/solver_packs_notes.sh`).
 
 ## Where settings live (`app/AppData.*`)
 

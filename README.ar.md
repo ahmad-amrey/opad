@@ -39,15 +39,16 @@
 
 ## التنزيل
 
-أحدث نسخة جاهزة للتشغيل: بلا حساب وبلا بناء.
+أحدث نسخة جاهزة للتشغيل: بلا حساب وبلا بناء. كل رابط يفتح أحدث إصدار؛ وأسماء ملفاته تحمل رقم النسخة
+(`OPAD-0.11.0-windows-x64-setup.exe`)، فيدلّك اسم الملف المنزَّل دائمًا على نسخته.
 
 | جهازك | التنزيل | ثم |
 |---|---|---|
-| **ويندوز 10 / 11** (64 بت) | [**مثبّت OPAD**](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-windows-x64-setup.exe) | شغّله. يُضاف OPAD إلى قائمة ابدأ دون الحاجة إلى صلاحيات المسؤول. والنسخة الأحدث تُثبَّت فوقه وتحتفظ بإعداداتك. |
-| ويندوز، دون تثبيت | [OPAD في ملف واحد](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-windows-x64.exe) | ضعه في أي مجلد وانقر عليه نقرًا مزدوجًا. ملف فارغ باسم `opad.portable` بجانبه يجعله يحفظ إعداداته هناك أيضًا. |
-| **macOS 15 فما بعد** (معالجات Apple، من M1 فما بعد) | [**OPAD لأجهزة Mac**](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-macos.dmg) (dmg) | افتحه واسحب OPAD إلى مجلد التطبيقات. |
-| **أوبونتو / ديبيان** (24.04 فما بعد) | [**OPAD لأوبونتو**](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-linux-amd64.deb) (.deb) | افتحه في مركز البرامج، أو نفّذ `sudo apt install ./OPAD-linux-amd64.deb`. يظهر OPAD في قائمة التطبيقات. |
-| لينكس آخر (64 بت) | [OPAD بصيغة AppImage](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-linux-x86_64.AppImage) | اسمح بتشغيله كبرنامج (من خصائص الملف، أو `chmod +x`)، ثم انقر عليه نقرًا مزدوجًا. |
+| **ويندوز 10 / 11** (64 بت) | [**مثبّت OPAD**](https://github.com/ahmad-amrey/opad/releases/latest) | شغّله. يُضاف OPAD إلى قائمة ابدأ دون الحاجة إلى صلاحيات المسؤول. والنسخة الأحدث تُثبَّت فوقه وتحتفظ بإعداداتك. |
+| ويندوز، دون تثبيت | [OPAD في ملف واحد](https://github.com/ahmad-amrey/opad/releases/latest) | ضعه في أي مجلد وانقر عليه نقرًا مزدوجًا. ملف فارغ باسم `opad.portable` بجانبه يجعله يحفظ إعداداته هناك أيضًا. |
+| **macOS 15 فما بعد** (معالجات Apple، من M1 فما بعد) | [**OPAD لأجهزة Mac**](https://github.com/ahmad-amrey/opad/releases/latest) (dmg) | افتحه واسحب OPAD إلى مجلد التطبيقات. |
+| **أوبونتو / ديبيان** (24.04 فما بعد) | [**OPAD لأوبونتو**](https://github.com/ahmad-amrey/opad/releases/latest) (.deb) | افتحه في مركز البرامج، أو نفّذ `sudo apt install ./OPAD-*-linux-amd64.deb`. يظهر OPAD في قائمة التطبيقات. |
+| لينكس آخر (64 بت) | [OPAD بصيغة AppImage](https://github.com/ahmad-amrey/opad/releases/latest) | اسمح بتشغيله كبرنامج (من خصائص الملف، أو `chmod +x`)، ثم انقر عليه نقرًا مزدوجًا. |
 
 **عند التشغيل أول مرة:** هذه النسخ غير موقّعة رقميًا بعد، لذا يسألك النظام أولًا. في ويندوز، إذا ظهرت رسالة
 "Windows protected your PC" فاختر *More info* ثم *Run anyway*. وفي Mac، انقر نقرًا مزدوجًا على OPAD في مجلد التطبيقات؛

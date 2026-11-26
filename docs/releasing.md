@@ -168,11 +168,15 @@ release candidate. Promote refuses a `dev` whose newest commit has not passed su
 released, its entries go into its own section, not under `[Unreleased]`: the checks refuse a non-empty `[Unreleased]`
 then, since those entries would be missing from the release.
 
-The packages are published under names without the version (`OPAD-windows-x64-setup.exe`, `OPAD-windows-x64.exe`,
-`opad-cli-windows-x64.exe`, `OPAD-macos.dmg`, `OPAD-linux-amd64.deb`, `OPAD-linux-x86_64.AppImage`): the README's
-Download section links to `https://github.com/ahmad-amrey/opad/releases/latest/download/<name>`, which always reaches
-the newest release, and OPAD's update check downloads `releases/download/<tag>/<name>` for the user's system. Renaming
-a package means changing those links in README.md and README.ar.md and the names in `app/UpdateCheck.cpp` too.
+Each package names the release it belongs to, its tag without the `v`: `OPAD-0.11.0-windows-x64-setup.exe`,
+`OPAD-0.11.0-windows-x64.exe`, `opad-cli-0.11.0-windows-x64.exe`, `OPAD-0.11.0-macos.dmg`, `OPAD-0.11.0-linux-amd64.deb`,
+`OPAD-0.11.0-linux-x86_64.AppImage`; a release candidate `OPAD-0.11.0-rc.72-...`, a development build
+`OPAD-0.11.1-dev.80-...`. The README's Download section links to the latest release's page. OPAD's update check takes the
+asset `OPAD-<anything>-<system part>` of the release it offers (`installerAssetName` names the system part), else
+`releases/download/<tag>/OPAD-<tag without v>-<system part>`. Copies before 0.11.0 ask for the names without the version,
+so the release job also uploads `OPAD-windows-x64-setup.exe`, `OPAD-windows-x64.exe`, `OPAD-macos.dmg` and
+`OPAD-linux-amd64.deb`; drop those once nobody runs a copy that old. Renaming a package means the release job's checks,
+`app/UpdateCheck.cpp` and `tools/release_downloads.md` too.
 
 ## Batches, emergencies and recovery
 
@@ -225,17 +229,21 @@ and published on this repository's releases, never fetched from anywhere else. T
    static; OPAD itself is built on 24.04, so the packs never ask more of a system than OPAD does); macOS on macos-15.
    A cold OpenFOAM build is 1 to 2 hours per system; each run saves its compiler cache (about 0.2 GB per system, keyed
    by the recipe's hash), so the next run of an unchanged recipe compiles little.
-2. **Publish** (automatic: the merge into `dev`, or Run workflow on `dev` with *publish*): every pack whose release
-   does not exist yet becomes a release of its own, tag `engines-<id>-<version>-<rev>-<platform>` (for example
-   `engines-openfoam-v2606-1-linux-x64`) on the commit that was built, every artifact file attached, the pack's
-   `NOTICE.txt` as notes, **not marked latest**. Build once: when the pull request's run built exactly this code (the
-   same git tree, which an up-to-date pull request has), its packs are published, not built again; otherwise this run
-   builds them. A published tag is never replaced: a change to a pack is a new revision (`PACK_REV` in its
-   `make-pack.sh`), so a new tag. One release per system, not one per revision: each system's pack is built, checked
-   and published on its own (a failing macOS build holds back only macOS), and each release carries the very sources
-   its binaries were built from. GitHub's own token publishes (the job alone has `contents: write`).
+2. **Publish** (automatic: the merge into `dev`, or Run workflow on `dev` with *publish*): every pack revision whose
+   release does not exist yet becomes one release with every system's zip, tag `engines-<id>-<version>-<rev>` (for
+   example `engines-openfoam-v2606-1`) on dev's commit, **not marked latest**: the three zips, the source archives once
+   (the same file from every system, or publishing stops), each system's recipe as `opad-<id>-recipe-<platform>.tar.gz`,
+   one `SHA256SUMS`, the packs' `NOTICE.txt` as notes (`engines/ci/publish.sh`). Build once: when the pull request's run
+   built exactly this code (the same git tree, which an up-to-date pull request has), its packs are published, not built
+   again; otherwise this run builds them. The first packs were published one release per system
+   (`engines-<id>-<version>-<rev>-<platform>`); a pack found there is taken from it, so its bytes (and OPAD's pins) stay
+   the same, and those releases can be deleted once the combined one is out (nothing refers to them). A release is
+   published only with all three systems: a failing build holds the revision back. A published tag is never replaced: a
+   change to a pack is a new revision (`PACK_REV` in its `make-pack.sh`), so a new tag. GitHub's own token publishes (the
+   job alone has `contents: write`). Each OPAD release's notes list the packs it installs, with links
+   (`tools/solver_packs_notes.sh`, from the pins).
 3. **Pin** (by hand, the commit after the publishing run): each published pack's size and SHA-256 into the table in
-   `core/src/sim/engine_packs.cpp` (the run's summary lists them; they are also the release's `SHA256SUMS`). A pack
+   `core/src/sim/engine_packs.cpp` (the publish job's summary lists them; they are also the release's `SHA256SUMS`). A pack
    without a pin is not offered: that system keeps the official download page. OPAD removes the older version of a pack
    when it installs the newer one.
 

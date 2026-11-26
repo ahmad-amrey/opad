@@ -1173,6 +1173,23 @@
    ]
   },
   {
+   "id": "design.alignScan", "duration": 5.2, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-24, -18, 24, 18]}},
+    {"el": "plane", "center": [0, 0, 0], "size": [20, 14], "plane": "xy", "color": "sel", "fillOpacity": 0.12, "from": 2.0, "to": 3.4, "fade": 0.2},
+    {"el": "solid", "profile": {"rect": [-8, -5, 16, 10], "round": 1}, "height": 3, "tone": "sel", "toneAmount": 0, "pivot": [0, 0, 0],
+     "keys": [[0, {"offset": [10, 6, 2], "rot": 28}], [0.6, {"toneAmount": 0.4}], [2.0, {"offset": [10, 6, 2], "rot": 28}], [3.0, {"offset": [0, 0, 0], "rot": 0}],
+              [3.6, {"rot": 90}], [4.2, {"rot": 0}], [4.8, {"toneAmount": 0}]]},
+    {"el": "key", "fixed": "enter", "press": 4.4, "from": 4.15, "to": 4.9},
+    {"el": "cursor", "keys": [[0, {"pos": [22, 16, 0]}], [0.6, {"pos": [12, 8, 4], "click": 1}], [1.8, {"pos": [18, 12, 4]}], [5.0, {"pos": [20, 14, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Select the scan and start Align scan to axes"},
+    {"to": 3.2, "caption": "It stands on its base flat, a wall along X, centred"},
+    {"to": 5.2, "caption": "Next base or Next X tries the others; {fixed:enter} keeps it"}
+   ]
+  },
+  {
    "id": "design.box", "duration": 5.0, "view": "iso", "extent": [-24, -12, 24, 30],
    "items": [
     {"el": "camera", "center": [-8, 2]},

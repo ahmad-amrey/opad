@@ -458,6 +458,7 @@ Frame plane_through(const gp_Pnt& origin, const gp_Vec& normal, const gp_Vec* x)
 
 Frame Ctx::plane(const json& in) const {
   if (!in.is_object()) throw Error("no plane was chosen");
+  if (in.contains("fit")) return fitted_plane(*this, in);  // estimated from a mesh or points (fit_refs.cpp)
   if (in.contains("normal")) {  // {"origin", "normal", "x"?} (TODO 10 B5)
     auto vec3 = [&](const char* key, gp_Vec fallback) {
       if (!in.contains(key)) return fallback;
@@ -555,6 +556,7 @@ Frame Ctx::plane(const json& in) const {
 
 gp_Ax1 Ctx::axis(const json& in) const {
   if (!in.is_object()) throw Error("no axis was chosen");
+  if (in.contains("fit")) return fitted_axis(*this, in);
   if (in.contains("direction")) {  // written out: {"direction": [x, y, z], "origin": [x, y, z]} (mcp-eval 2026-10-06, a hole's direction)
     const json& d = in["direction"];
     const json o = in.value("origin", json::array({0, 0, 0}));
@@ -1203,6 +1205,17 @@ struct Walk {
             Ctx made_in = ctx;
             made_in.component = component;
             made_in.name = data.value("name", "");
+            // Fitted references keep what they fitted to (a new op, or the edit making the change), so a replay or an
+            // unrelated regeneration never fits a scan again (fit_refs.cpp).
+            if (json* patch = patchable_inputs(id)) {
+              const json before = inputs;
+              if (complete_feature_fits(made_in, kind, inputs)) {
+                for (auto& [k, v] : inputs.items())
+                  if (!before.contains(k) || before[k] != v) (*patch)[k] = v;
+                data["inputs"] = inputs;
+                fp = fingerprint();
+              }
+            }
             Out out = compute_feature(made_in, kind, inputs);
             check_read_only(ctx, kind, out);
             for (auto& [k, v] : notes.items()) out.extra[k] = v;
@@ -1647,6 +1660,7 @@ json hint_refs(const Document& doc, const Scene& scene, json inputs) {
     if (j.is_array()) {
       for (auto& v : j) walk(v);
     } else if (j.is_object()) {
+      if (j.contains("fit")) return;  // a fitted reference: its points are kept as given (fit_refs.cpp digests them)
       if (j.contains("body") && j.contains("kind") && j["kind"].is_string() && !j.contains("hint") && !j.contains("select")) {
         try {
           const Ref r = Ref::from_json(j);
