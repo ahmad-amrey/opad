@@ -461,3 +461,22 @@ std::string to_brep(const TopoDS_Shape& shape) {
   return brep;
 }
 }  // namespace opad::cloud
+
+namespace opad::cloud {
+json meta_of_shape(const TopoDS_Shape& shape) {
+  size_t n = 0;
+  bool colour = false, normals = true, scalar = false, any = false;
+  each_triangulation(shape, [&](const TopoDS_Face&, const Handle(Poly_Triangulation)& t, const TopLoc_Location&) {
+    if (t->NbTriangles() > 0) return;
+    any = true;
+    n += size_t(t->NbNodes());
+    normals = normals && t->HasNormals();
+    if (t->HasUVNodes()) scalar = true, colour = colour || t->UVNode(1).X() >= 0;
+  });
+  json attributes = json::array();
+  if (colour) attributes.push_back("color");
+  if (any && normals) attributes.push_back("normals");
+  if (scalar) attributes.push_back("scalar");
+  return {{"representation", "points"}, {"points", n}, {"attributes", attributes}};
+}
+}  // namespace opad::cloud

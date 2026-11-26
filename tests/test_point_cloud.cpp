@@ -15,6 +15,8 @@
 
 #include "check.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/design/cloud.hpp"
+#include "opad/design/feature.hpp"
 #include "opad/geometry.hpp"
 #include "opad/point_cloud.hpp"
 #include "opad/step_io.hpp"
@@ -544,4 +546,67 @@ TEST(outliers_downsampling_and_normals) {
   CHECK(d["spacing"].get<double>() > 0.1);
 }
 
+
+TEST(cloud_features_and_slice_to_sketch) {
+  Files f;
+  // A cylinder scan with noise points, placed far out (its placement carries the offset).
+  pc::Points p = cylinder(180, 41);
+  for (int i = 0; i < 12; ++i) p.xyz.insert(p.xyz.end(), {40.f + float(i), 40.f, 40.f}), p.rgb.insert(p.rgb.end(), {0, 0, 0}),
+                                 p.normals.insert(p.normals.end(), {0, 0, 1}), p.scalar.push_back(0);
+  for (auto& v : p.xyz) v += 0;  // as made
+  pc::write_file(f.dir / "scan.ply", p);
+  Document d = open(f.dir / "scan.ply", false);
+  const std::string body = resolve(d).all_bodies().front();
+  const json bodies = json::array({{{"body", body}}});
+  auto points_now = [&] { return pc::point_count(body_shape(d, resolve(d).node(body)->body_key)); };
+  const size_t all = points_now();
+  CHECK_EQ(all, p.size());
+  design::apply_ops(d, {design::make_feature_op("cloud_outliers", "Clean", {{"bodies", bodies}, {"neighbours", "8"}, {"ratio", "1.5"}})});
+  CHECK(points_now() <= all - 10);
+  CHECK(points_now() >= all - 400);
+  CHECK_EQ(resolve(d).node(body)->representation, std::string("points"));
+  design::apply_ops(d, {design::make_feature_op("cloud_downsample", "Thin", {{"bodies", bodies}, {"voxel", "1 mm"}})});
+  const size_t thin = points_now();
+  CHECK(thin < all && thin > 1000);
+  design::apply_ops(d, {design::make_feature_op("cloud_normals", "Normals", {{"bodies", bodies}, {"neighbours", "10"}})});
+  const pc::Points withNormals = pc::from_shape(body_shape(d, resolve(d).node(body)->body_key));
+  CHECK(withNormals.has_normals());
+  CHECK(withNormals.colored());  // colours kept through it all
+  // Crop to the top half by a region reference.
+  const pc::Region top = pc::in_box(withNormals, {-50, -50, 10}, {50, 50, 50});
+  design::apply_ops(d, {design::make_feature_op("cloud_crop", "Top", {{"region", pc::region_ref(body, top)}, {"keep", "inside"}})});
+  CHECK_EQ(points_now(), top.count());
+  // A modelling feature refuses a cloud.
+  CHECK_THROWS(design::apply_ops(d, {design::make_feature_op("shell", "S", {{"bodies", bodies}})}));
+  // Two slices across the cylinder's axis: new clouds lying on their planes, with their frames.
+  json r = design::apply_ops(d, {design::make_feature_op("cloud_slice", "Cut", {{"bodies", bodies}, {"plane", {{"base", "xy"}}}, {"offset", "12 mm"},
+                                                                                  {"band", "0.3 mm"}, {"count", "2"}, {"spacing", "4 mm"}})});
+  const Scene s = resolve(d);
+  std::vector<std::string> slices;
+  for (const auto& id : s.all_bodies())
+    if (id != body) slices.push_back(id);
+  CHECK_EQ(slices.size(), 2u);
+  const pc::Points cut = pc::from_shape(node_world_shape(d, s, slices[0]));
+  CHECK(cut.size() > 50);
+  for (size_t i = 0; i < cut.size(); ++i) CHECK_NEAR(cut.xyz[3 * i + 2], 12.0, 1e-3);  // on the plane
+  CHECK_EQ(s.node(slices[0])->representation, std::string("points"));
+  // The slice as sketch geometry: a closed loop of lines about radius 10, on the slice's plane.
+  json report;
+  const json sketch = design::slice_sketch_op(d, s, slices[0], json(), 0, 0.05, 0, "", &report);
+  CHECK(report["lines"].get<int>() >= 8);
+  design::apply_ops(d, {sketch});
+  const Scene after = resolve(d);
+  CHECK_EQ(after.sketches.size(), 1u);
+  CHECK_NEAR(after.sketches.front().frame.origin[2], 12.0, 1e-6);
+  // Without a slice, a plane must be given, and points must lie near it (the crop left none at z = 0).
+  CHECK_THROWS(design::slice_sketch_op(d, after, body, json(), 0.3, 0, 0, ""));
+  CHECK_THROWS(design::slice_sketch_op(d, after, body, {{"base", "xy"}}, 0.3, 0, 0, ""));
+  const json other = design::slice_sketch_op(d, after, body, {{"base", "yz"}}, 0.3, 0, 0, "", &report);
+  CHECK_EQ(other["op"].get<std::string>(), std::string("sketch"));
+  CHECK(report["polylines"].get<int>() >= 1);
+  // Saved and opened again: the slices are clouds still.
+  d.save_as(f.dir / "scan.opad");
+  const Document again = Document::load(f.dir / "scan.opad");
+  CHECK_EQ(pc::point_count(body_shape(again, resolve(again).node(slices[1])->body_key)), pc::from_shape(node_world_shape(d, s, slices[1])).size());
+}
 CHECK_MAIN()

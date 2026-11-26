@@ -473,6 +473,7 @@ struct SceneBuilder::Impl {
         n.name = b.value("name", "Body");
         n.source_op = id;
         if (b.contains("transform")) n.local = Mat4::from_json(b["transform"]);
+        if (b.contains("representation") && b["representation"].is_string()) n.representation = b["representation"].get<std::string>();
         if (b.contains("color") && b["color"].is_array() && b["color"].size() == 3) {
           n.has_color = true;
           n.color = {b["color"][0].get<double>(), b["color"][1].get<double>(), b["color"][2].get<double>()};

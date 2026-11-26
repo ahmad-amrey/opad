@@ -26,6 +26,7 @@
 
 #include "opad/assets.hpp"
 #include "opad/geometry.hpp"
+#include "opad/point_cloud.hpp"
 #include "opad/inspect.hpp"
 #include "opad/recognize.hpp"
 #include "opad/design/sketch_pattern.hpp"
@@ -81,7 +82,8 @@ void string_refs(const json& v, bool reference, std::set<std::string>& out) {
 }
 
 bool reference_input(const std::string& type) {
-  return type == "bodies" || type == "faces" || type == "edges" || type == "points" || type == "profiles" || type == "plane" || type == "axis" || type == "path";
+  return type == "bodies" || type == "faces" || type == "edges" || type == "points" || type == "profiles" || type == "plane" || type == "axis" || type == "path" ||
+         type == "region";
 }
 
 // Two results of one feature from equal inputs: the same topology, vertices (to about 1e-6 mm), volume, area and centre.
@@ -170,6 +172,7 @@ TopoDS_Shape Ctx::node_shape(const std::string& node) const {
   const Node* n = scene.node(node);
   if (!n || n->kind != Node::Kind::Body) throw Error("a referenced body no longer exists");
   if (n->representation == "mesh") throw Error("Mesh objects are view-only; solid modelling requires a CAD body");
+  if (n->representation == "points") throw Error("Point clouds are measured, not modelled on: slice the cloud and sketch over the slice, or mesh it");
   TopoDS_Shape proto = key_shape(n->body_key);
   const gp_Trsf t = node_trsf(node);
   return t.Form() == gp_Identity ? proto : proto.Moved(TopLoc_Location(t));
@@ -880,15 +883,35 @@ struct Walk {
         else entry.erase("parent");
         entry["new"] = true;
       }
+      const bool points = cloud::is_cloud(b.shape);
       TopoDS_Shape local = b.shape;
-      if (to_local.Form() != gp_Identity) local = BRepBuilderAPI_Transform(b.shape, to_local, Standard_True).Shape();
-      // Locations are baked in so the entry is the same text whichever way the body was moved about.
-      if (!local.Location().IsIdentity()) {
-        const gp_Trsf where = local.Location().Transformation();
-        local = BRepBuilderAPI_Transform(local.Located(TopLoc_Location()), where, Standard_True).Shape();
+      std::string brep, key;
+      if (points) {
+        // A point cloud keeps its points in its own frame (far scans stay exact in floats): a new one takes its placement as
+        // the entry's transform, a changed one is handed back in its node's frame (cloud_features.cpp).
+        const gp_Trsf total = to_local.Multiplied(b.shape.Location().Transformation());
+        local = b.shape.Located(TopLoc_Location());
+        const Mat4 m = mat_from_trsf(total);
+        if (!m.is_identity(1e-9)) {
+          if (b.node.empty()) entry["transform"] = m.to_json();
+          else {
+            cloud::Points p = cloud::from_shape(local);
+            p.transform(m);
+            local = cloud::to_shape(p);
+          }
+        }
+        brep = cloud::to_brep(local);
+        key = sha256_hex(brep);
+        entry["representation"] = "points";
+      } else {
+        if (to_local.Form() != gp_Identity) local = BRepBuilderAPI_Transform(b.shape, to_local, Standard_True).Shape();
+        // Locations are baked in so the entry is the same text whichever way the body was moved about.
+        if (!local.Location().IsIdentity()) {
+          const gp_Trsf where = local.Location().Transformation();
+          local = BRepBuilderAPI_Transform(local.Located(TopLoc_Location()), where, Standard_True).Shape();
+        }
+        key = body_key_for(local, &brep);
       }
-      std::string brep;
-      std::string key = body_key_for(local, &brep);
       // What later features of this walk (and the shape cache) get is the body as read back from its entry, the same
       // shape every later regeneration and a reopened file start from; the kernel's in-memory result made the first
       // computation of a feature differ from its recomputations (new keys for unchanged bodies).
@@ -896,7 +919,7 @@ struct Walk {
       std::string was;
       for (const auto& p : previous.value("bodies", json::array()))
         if (p.value("id", "") == entry["id"].get<std::string>()) was = p.value("key", "");
-      if (!was.empty() && was != key && doc.has_body(was)) {
+      if (!points && !was.empty() && was != key && doc.has_body(was)) {
         const TopoDS_Shape old = body_shape(doc, was);
         if (same_geometry(local, old)) {
           key = was;
@@ -905,11 +928,12 @@ struct Walk {
       }
       entry["key"] = key;
       if (stored.IsNull() && !doc.has_body(key) && !fresh.count(key)) {
-        stored = shape_from_brep(brep);
+        stored = points ? local : shape_from_brep(brep);
         NewBody nb;
         nb.key = key;
         nb.brep = std::move(brep);
         nb.meta = {{"name", entry.value("name", std::string("Body"))}, {"units", "mm"}, {"source", "design"}};
+        if (points) nb.meta.update(cloud::meta_of_shape(local));
         nb.shape = std::make_shared<TopoDS_Shape>(stored);
         plan.bodies.push_back(std::move(nb));
       }

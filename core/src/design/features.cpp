@@ -209,6 +209,24 @@ std::vector<FeatureSpec> build_specs() {
       "Rebuild mesh bodies as solids: regions of facets become planes, cylinders, cones, spheres and tori; the rest stays flat facets. A tolerance of 0 is automatic.",
       {pick("bodies", "Mesh", "bodies", 1, 0), in("tolerance", "Tolerance", "length", "0 mm"), in("angle", "Facet angle", "angle", "35 deg")},
       "new");
+  // Point clouds (opad/point_cloud.hpp, design/cloud_features.cpp): each changes the cloud in place (the timeline keeps
+  // the points as they were), except Slice, which makes the slices as new clouds lying on their planes.
+  add("cloud_outliers", "Remove outliers", "cloud_outliers", "modify",
+      "Drop the points of a cloud that stand apart from the rest: those whose mean distance to their nearest neighbours is over the cloud's mean by more than the ratio of standard deviations.",
+      {pick("bodies", "Point clouds", "bodies", 1, 0), in("neighbours", "Neighbours", "count", "16"), in("ratio", "Standard deviations", "number", "2")});
+  add("cloud_downsample", "Downsample", "cloud_downsample", "modify",
+      "Keep one measured point per voxel (the one nearest the voxel's centre, with its colour and normal): a lighter cloud with the same shape.",
+      {pick("bodies", "Point clouds", "bodies", 1, 0), in("voxel", "Voxel size", "length", "0.5 mm")});
+  add("cloud_normals", "Estimate normals", "cloud_normals", "modify",
+      "Give each point a normal from the plane through its nearest neighbours, turned consistently across the cloud (outward from its middle).",
+      {pick("bodies", "Point clouds", "bodies", 1, 0), in("neighbours", "Neighbours", "count", "16")});
+  add("cloud_crop", "Crop points", "cloud_crop", "modify",
+      "Keep or delete a region of a cloud's points (a lasso, a brush or a box picked on it).",
+      {in("region", "Region", "region"), choice("keep", "Keep", {"inside", "outside"})});
+  add("cloud_slice", "Slice points", "cloud_slice", "create",
+      "The points within a band either side of a plane, laid onto it as a 2D profile to sketch over or turn into sketch geometry; several slices step along the plane's normal.",
+      {pick("bodies", "Point cloud", "bodies", 1, 1), in("plane", "Plane", "plane", xy), in("offset", "Offset", "length", "0 mm"),
+       in("band", "Band (each side)", "length", "0.25 mm"), in("count", "Slices", "count", "1"), in("spacing", "Spacing", "length", "5 mm")});
   add("hole", "Hole", "hole", "create",
       "Drill at points: sketch points drill into the material behind the sketch; vertices and points in space into the nearest body's face (its inward normal), or along Direction when given.",
       {pick("points", "Points", "points", 1, 0), choice("type", "Type", {"simple", "counterbore", "countersink"}), in("diameter", "Diameter", "length", "5 mm"),
@@ -1924,7 +1942,10 @@ gp_Trsf align_motion(const Ctx& ctx, const json& in, bool facing) {
 TopoDS_Shape make_gear(const std::string& type, int z, double m, double alpha, double width, double bore, double rim, double backlash, double phase,
                        double rack_height);  // gear.cpp
 
+Out compute_cloud_feature(const Ctx& ctx, const std::string& kind, const json& in);  // cloud_features.cpp
+
 Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
+  if (kind.rfind("cloud_", 0) == 0) return compute_cloud_feature(ctx, kind, in);
   const FeatureSpec* spec = feature_spec(kind);
   if (!spec) throw Error("unknown feature kind: " + kind);
   Out out;

@@ -64,6 +64,7 @@ size_t point_count(const TopoDS_Shape& shape);
 Points from_shape(const TopoDS_Shape& shape, bool attributes = true);
 // What a cloud body's meta says about it: {"representation": "points", "points": N, "attributes": [...], "scalar": name}.
 json meta_of(const Points& points);
+json meta_of_shape(const TopoDS_Shape& shape);  // the same from a cloud shape, without copying its points
 // A cloud shape as body-store text: BREP format 3 with the triangulation (normals kept), floats exact.
 std::string to_brep(const TopoDS_Shape& shape);
 // The axis-aligned box of the points: {min, max} (both zero for an empty cloud).
