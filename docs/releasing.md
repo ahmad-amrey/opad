@@ -232,3 +232,33 @@ The packs unpack into the user's engines folder (`%LOCALAPPDATA%\opad\OPAD\engin
 `OPAD_OPENFOAM` / `OPAD_CCX`. Linux and macOS packs: the same recipes would build there (OpenFOAM natively with
 `WM_MPLIB=dummy` and an `$ORIGIN` / `@loader_path` run path; ccx with Homebrew's or the distribution's gfortran), but
 none is published yet, so those systems keep the official download pages.
+
+## Dependency updates
+
+Nobody has to look for new versions by hand. Dependabot (`.github/dependabot.yml`) opens one pull request a week into
+`dev` for the GitHub Actions (they stay pinned by SHA with the version comment). Every Monday the `deps-watch` workflow
+runs `tools/deps_watch.py` on `dev`'s pins: the code OPAD pins itself is listed in `tools/deps.json` (each entry says
+where its version is pinned, which is the only place the version is written), the script finds each one's newest upstream
+release and asks OSV.dev which advisories affect the pinned commit and which of them a newer release fixes. It keeps one
+issue, **Dependency updates**, up to date (a table: dependency, pinned, newest, advisories, where it is pinned), comments
+when something new turns up and closes the issue itself once everything is current. OS packages (Qt, FreeType, OpenBLAS,
+ARPACK-NG, the compilers...) are not pinned: every CI build takes the current MSYS2 / Ubuntu / Homebrew ones. To see the
+table without touching the issue: `python3 tools/deps_watch.py`. Acting on an entry:
+
+- **An engine pack's source** (OpenFOAM, zlib, CalculiX, SPOOLES): change the version and SHA-256 in
+  `engines/<id>/make-pack.sh` (`PACK_REV` back to 1 for a new upstream version, one up for a rebuild of the same one,
+  such as a zlib fix), run the `engines` workflow, publish its release and pin the pack's SHA-256 and size in
+  `core/src/sim/engine_packs.cpp` (the steps above), then ship that in an OPAD release. Packs never update themselves:
+  an installed pack is kept until the user installs the one their OPAD pins, which replaces it.
+- **Built from source at configure** (OCCT, Eigen, Chrono, Netgen): the version with its SHA-256 or commit in
+  `cmake/occt_source.cmake` / `cmake/sim_engines.cmake`; the CI caches are keyed on those files, so the next run
+  rebuilds them (a local build: delete `build/<preset>/occt/install` or the engine's folder there).
+- **LibreDWG**: `git -C third_party/libredwg fetch --tags` and check out the new tag there, then commit the submodule.
+- **An advisory**: when the table says a release fixes it, that update is the fix. One that does not reach OPAD (a
+  utility OPAD does not ship, a format it does not read) or has no fix yet goes into `acknowledged` in `tools/deps.json`
+  with the reason, which stops it from keeping the issue open. `hold` there keeps a dependency within a series (Eigen 3,
+  as long as Chrono rejects Eigen 5); the newest release is still shown.
+
+`ctest -R deps-pins` checks offline that every pin in `tools/deps.json` is still found, so renaming a pinned variable
+fails the unit tests rather than the Monday run. Both the schedule and Dependabot act only once these files are on
+`main`.

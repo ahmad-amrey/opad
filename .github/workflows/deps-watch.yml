@@ -1,0 +1,40 @@
+# Weekly look for new upstream releases and known vulnerabilities (OSV.dev) of the third-party code OPAD pins itself
+# (engine pack sources, OCCT, Eigen, Chrono, Netgen, LibreDWG): tools/deps_watch.py with tools/deps.json. It keeps one
+# issue "Dependency updates" up to date (a comment when something new turns up) and closes it when everything is
+# current. GitHub Actions are Dependabot's (.github/dependabot.yml); OS packages follow every CI build. What to do with
+# an entry: docs/releasing.md, "Dependency updates". Local dry run: python3 tools/deps_watch.py
+name: deps-watch
+
+on:
+  schedule:
+    - cron: "23 5 * * 1"  # Mondays 05:23 UTC
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch whose pins are checked
+        default: dev
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: deps-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # dev's pins: updates land there first (main only gets them with a release)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || 'dev' }}
+          persist-credentials: false
+      - name: The pins are found
+        run: python3 tools/deps_watch.py --check
+      - name: Upstream releases and advisories -> the issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/deps_watch.py --issue

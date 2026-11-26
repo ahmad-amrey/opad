@@ -1,0 +1,97 @@
+{
+  "about": "Third-party code OPAD pins itself, read by tools/deps_watch.py (weekly workflow deps-watch.yml). The versions are not written here: each entry says where its pin lives (file + regex, or a submodule) and how to find the newest upstream release. 'hold' keeps the update offer within a series (the newest overall is still shown). 'acknowledged' lists OSV advisory ids looked at and accepted, with the reason; they stop keeping the issue open.",
+  "pinned": [
+    {
+      "name": "OpenFOAM",
+      "file": "engines/openfoam/make-pack.sh",
+      "version": "^OF_VERSION=(\\S+)$",
+      "upstream": {"kind": "listing", "url": "https://dl.openfoam.com/source/", "pattern": "href=\"(v\\d{4})/\"",
+                   "exists": "https://dl.openfoam.com/source/{v}/OpenFOAM-{v}.tgz"},
+      "page": "https://www.openfoam.com/news/main-news",
+      "note": "engine pack: GPL, built by engines.yml"
+    },
+    {
+      "name": "zlib (OpenFOAM pack)",
+      "file": "engines/openfoam/make-pack.sh",
+      "version": "^ZLIB_VERSION=(\\S+)$",
+      "upstream": {"kind": "github-release", "repo": "madler/zlib"},
+      "git": "https://github.com/madler/zlib", "tag": "v{v}",
+      "page": "https://github.com/madler/zlib/releases",
+      "note": "engine pack"
+    },
+    {
+      "name": "CalculiX",
+      "file": "engines/calculix/make-pack.sh",
+      "version": "^CCX_VERSION=(\\S+)$",
+      "upstream": {"kind": "listing", "url": "https://www.dhondt.de/", "pattern": "ccx_(\\d+\\.\\d+)\\.src\\.tar\\.bz2"},
+      "page": "https://www.dhondt.de/",
+      "note": "engine pack: GPL, built by engines.yml"
+    },
+    {
+      "name": "SPOOLES (CalculiX pack)",
+      "file": "engines/calculix/make-pack.sh",
+      "version": "^SPOOLES_URL=\\S*/spooles\\.(\\d+\\.\\d+)\\.tgz$",
+      "upstream": {"kind": "frozen", "why": "last release 1999"},
+      "page": "https://www.netlib.org/linalg/spooles/",
+      "note": "engine pack"
+    },
+    {
+      "name": "OCCT (source builds)",
+      "file": "cmake/occt_source.cmake",
+      "version": "^set\\(OPAD_OCCT_VERSION (\\S+)\\)$",
+      "upstream": {"kind": "github-release", "repo": "Open-Cascade-SAS/OCCT"},
+      "git": "https://github.com/Open-Cascade-SAS/OCCT", "tag": "V{v_}",
+      "page": "https://github.com/Open-Cascade-SAS/OCCT/releases",
+      "note": "static Windows exe and Linux; MSYS2 and Homebrew builds take the OS package"
+    },
+    {
+      "name": "Eigen",
+      "file": "cmake/sim_engines.cmake",
+      "version": "^set\\(OPAD_EIGEN_VERSION (\\S+)\\)$",
+      "upstream": {"kind": "gitlab-release", "host": "gitlab.com", "project": "libeigen/eigen"},
+      "git": "https://gitlab.com/libeigen/eigen", "tag": "{v}",
+      "hold": "3.", "hold_why": "Chrono 9 rejects Eigen 5",
+      "page": "https://gitlab.com/libeigen/eigen/-/releases",
+      "note": "fetched at configure when the system has no Eigen 3"
+    },
+    {
+      "name": "Project Chrono",
+      "file": "cmake/sim_engines.cmake",
+      "version": "^set\\(OPAD_CHRONO_VERSION (\\S+)\\)$",
+      "commit": "^set\\(OPAD_CHRONO_COMMIT ([0-9a-f]{40})\\)$",
+      "upstream": {"kind": "github-release", "repo": "projectchrono/chrono"},
+      "git": "https://github.com/projectchrono/chrono", "tag": "{v}",
+      "page": "https://github.com/projectchrono/chrono/releases",
+      "note": "built from source at the first configure"
+    },
+    {
+      "name": "Netgen",
+      "file": "cmake/sim_engines.cmake",
+      "version": "^set\\(OPAD_NETGEN_VERSION (\\S+)\\)$",
+      "commit": "^set\\(OPAD_NETGEN_COMMIT ([0-9a-f]{40})\\)$",
+      "upstream": {"kind": "git-tags", "pattern": "^v(\\d+\\.\\d+\\.\\d+)$"},
+      "git": "https://github.com/NGSolve/netgen", "tag": "v{v}",
+      "page": "https://github.com/NGSolve/netgen/tags",
+      "note": "built from source at the first configure; tags are monthly, GitHub releases lag behind them"
+    },
+    {
+      "name": "LibreDWG",
+      "submodule": "third_party/libredwg",
+      "upstream": {"kind": "github-release", "repo": "LibreDWG/libredwg", "snapshots": true},
+      "git": "https://github.com/LibreDWG/libredwg", "tag": "{v}", "tag_pattern": "^(\\d+\\.\\d+(?:\\.\\d{1,2})?)$",
+      "page": "https://github.com/LibreDWG/libredwg/releases",
+      "note": "submodule, built into dwg2dxf/dxf2dwg; 0.x.NNNN tags are nightly snapshots (pre-releases)"
+    }
+  ],
+  "os_packages": {
+    "about": "Not pinned here: every CI build installs the current OS packages, so they follow MSYS2 / Ubuntu / Homebrew on their own (Qt, FreeType, HarfBuzz, zlib, OpenSSL, OpenBLAS, ARPACK-NG, the compilers...). The lists are read from these workflow keys. Dependabot keeps the GitHub Actions current.",
+    "sources": [
+      {"label": "Windows (MSYS2 UCRT64)", "file": ".github/workflows/ci.yml", "key": "MSYS2_PACKAGES"},
+      {"label": "Linux (Ubuntu 24.04 apt)", "file": ".github/workflows/ci.yml", "key": "APT_PACKAGES"},
+      {"label": "macOS (Homebrew)", "file": ".github/workflows/ci.yml", "key": "BREW_PACKAGES"},
+      {"label": "CalculiX pack (MSYS2 MINGW64)", "file": ".github/workflows/engines.yml", "key": "install"},
+      {"label": "OpenFOAM pack (Ubuntu apt, mingw-w64 cross)", "file": ".github/workflows/engines.yml", "key": "apt-get install"}
+    ]
+  },
+  "acknowledged": {}
+}
