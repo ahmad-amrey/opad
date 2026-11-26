@@ -431,7 +431,7 @@ std::filesystem::path ccx_program() {
     if (std::error_code ec; std::filesystem::is_regular_file(exe, ec)) return exe;
   }
   std::error_code err;
-  for (const char* name : {"ccx", "ccx_2.22", "ccx_2.21", "ccx_2.20", "ccx_2.19"}) {
+  for (const char* name : {"ccx", "ccx_2.24", "ccx_2.23", "ccx_2.22", "ccx_2.21", "ccx_2.20", "ccx_2.19"}) {
 #ifdef _WIN32
     const auto beside = exe_dir() / (std::string(name) + ".exe");
 #else
@@ -451,7 +451,7 @@ std::filesystem::path ccx_program() {
   while (start <= p.size()) {
     const size_t end = std::min(p.find(sep, start), p.size());
     const std::filesystem::path dir = p.substr(start, end - start);
-    for (const char* name : {"ccx", "ccx_2.22", "ccx_2.21", "ccx_2.20", "ccx_2.19"}) {
+    for (const char* name : {"ccx", "ccx_2.24", "ccx_2.23", "ccx_2.22", "ccx_2.21", "ccx_2.20", "ccx_2.19"}) {
 #ifdef _WIN32
       const auto f = dir / (std::string(name) + ".exe");
 #else

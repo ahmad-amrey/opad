@@ -1,5 +1,5 @@
-CalculiX ccx @CCX_VERSION@ for OPAD (pack revision @PACK_REV@, Windows x64)
-==========================================================================
+CalculiX ccx @CCX_VERSION@ for OPAD (pack revision @PACK_REV@, @PLATFORM@)
+===========================================================================
 
 This folder holds ccx, CalculiX's finite element solver, which OPAD runs as a separate program for its strength,
 vibration and heat studies.
@@ -12,13 +12,12 @@ Its text is licenses/CalculiX-gpl-2.0.txt. It comes with no warranty.
 
 OPAD itself (MIT licensed) does not link to CalculiX: it writes an input deck and starts ccx.
 
-Linked into ccx.exe:
+Linked into ccx:
 - SPOOLES 2.2 (public domain), the equation solver.
 - ARPACK-NG (BSD 3-clause, licenses/ARPACK-NG-COPYING.txt), the eigenvalue solver.
 - OpenBLAS (BSD 3-clause, licenses/OpenBLAS-LICENSE.txt).
-- The GCC runtime (libgfortran, libquadmath, libgomp, libgcc: GPL 3 with the GCC Runtime Library Exception) and
-  mingw-w64's winpthreads, licenses/gcc-runtime-*.
-MSYS2 packages used for ARPACK-NG, OpenBLAS and the compilers: @MSYS2@.
+@RUNTIME@
+@PACKAGES@
 
 Source
 ------
@@ -26,4 +25,4 @@ Built by OPAD's recipe, engines/calculix/make-pack.sh in OPAD's repository, from
 ccx_@CCX_VERSION@.src.tar.bz2 (https://www.dhondt.de/) and spooles.2.2.tgz (https://www.netlib.org/linalg/spooles/),
 with the patches in the recipe's patches/ folder (none when the folder is empty). The exact source archives and the
 recipe (opad-calculix-recipe.tar.gz) are published next to this pack on the same release:
-https://github.com/ahmad-amrey/opad/releases (tags engines-calculix-*).
+https://github.com/ahmad-amrey/opad/releases (tags engines-calculix-*, one per system).
