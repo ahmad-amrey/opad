@@ -187,7 +187,9 @@ link lines: dummy decomposers, fvOptions, regionModels...), wmake's `+ccache` wh
 complete `<id>-*` folder (`installed_pack(id)`), so a pack works before its pin; traps: wmake `-q` links before compiling, a cross gcc ignores LIBRARY_PATH (`-L` through
 FOAM_EXTRA_CXXFLAGS), GCC 13 jump tables of COMDAT functions break `ld -r` ("relocation truncated": `-fno-jump-tables`),
 `wmakeLnIncludeAll -j` does not wait for its jobs (a pipeline's subshell: v2606 compiled against half-made lnInclude
-folders, run it serially), bashrc's arguments are split at spaces (`WM_COMPILE_CONTROL=+ccache~openmp`, no space).
+folders, run it serially), bashrc's arguments are split at spaces (`WM_COMPILE_CONTROL=+ccache~openmp`, no space). A new
+OpenFOAM pack is checked with `ctest --preset windows-slow -R "flow-solve|cfd-solve"` (OPAD_OPENFOAM=<unzipped pack>):
+v2512's MinGW createBaffles corrupted the heap on the fan-cooled enclosure (OpenCFD's GCC 9 build did not); v2606 passes.
 ccx pack: one static exe (SPOOLES serial, ARPACK-NG, OpenBLAS from MSYS2 MINGW64), built by `engines/calculix/CMakeLists.txt`
 from the upstream makefiles' lists (no make in MSYS2 here; `mafillmm.c` is listed but only the .f exists; 2.24 adds
 `buildinfo.c` outside the lists, OpenMP in C and Fortran, `-cpp`); `__USE_MINGW_ANSI_STDIO` keeps two-digit exponents (the

@@ -302,7 +302,10 @@ case "$target" in
 esac
 shopt -u nullglob
 cp -RL "$src/etc" "$stage/etc"
-cp "$src/COPYING" "$stage/licenses/OpenFOAM-COPYING.txt"
+for l in COPYING LICENSE.md; do  # the GPL text: COPYING up to v2512, LICENSE.md from v2606
+  if [ -f "$src/$l" ]; then cp "$src/$l" "$stage/licenses/OpenFOAM-COPYING.txt"; break; fi
+done
+[ -f "$stage/licenses/OpenFOAM-COPYING.txt" ] || { echo "error: OpenFOAM's licence text is not where it was (COPYING, LICENSE.md)" >&2; exit 1; }
 cp "$work/zlib-${ZLIB_VERSION}/LICENSE" "$stage/licenses/zlib-LICENSE.txt"
 parts="- zlib ${ZLIB_VERSION} (zlib license, licenses/zlib-LICENSE.txt), linked into libOpenFOAM."
 case "$target" in
