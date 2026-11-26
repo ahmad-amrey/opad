@@ -423,7 +423,7 @@ json points_json(const Points& p, const Region* region, size_t offset, size_t li
     if (seen++ < offset || taken >= limit) return;
     ++taken;
     indices.push_back(i);
-    pts.push_back({round(p.xyz[3 * i]), round(p.xyz[3 * i + 1]), round(p.xyz[3 * i + 2])});
+    pts.push_back({round(p.xyz[3 * i] + p.offset[0]), round(p.xyz[3 * i + 1] + p.offset[1]), round(p.xyz[3 * i + 2] + p.offset[2])});
     if (p.colored()) colors.push_back({p.rgb[3 * i], p.rgb[3 * i + 1], p.rgb[3 * i + 2]});
     if (p.has_normals()) normals.push_back({round(p.normals[3 * i]), round(p.normals[3 * i + 1]), round(p.normals[3 * i + 2])});
   };

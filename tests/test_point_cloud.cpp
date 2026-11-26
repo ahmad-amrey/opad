@@ -15,6 +15,7 @@
 
 #include "check.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/commands.hpp"
 #include "opad/design/cloud.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/geometry.hpp"
@@ -608,5 +609,45 @@ TEST(cloud_features_and_slice_to_sketch) {
   d.save_as(f.dir / "scan.opad");
   const Document again = Document::load(f.dir / "scan.opad");
   CHECK_EQ(pc::point_count(body_shape(again, resolve(again).node(slices[1])->body_key)), pc::from_shape(node_world_shape(d, s, slices[1])).size());
+}
+
+TEST(cloud_commands) {
+  Files f;
+  pc::write_file(f.dir / "scan.ply", cylinder(180, 41));
+  Document d = Document::create();
+  commands::run("import", {{"file", path_to_utf8(f.dir / "scan.ply")}}, &d);
+  const std::string body = resolve(d).all_bodies().front();
+  json info = commands::run("cloud", {{"body", body}, {"action", "info"}}, &d);
+  CHECK_EQ(info["points"].get<int>(), 180 * 41);
+  CHECK_NEAR(info["bounds"]["max"][2].get<double>(), 20.0, 1e-4);
+  CHECK(info["spacing"].get<double>() > 0.1);
+  json page = commands::run("cloud", {{"body", body}, {"action", "points"}, {"limit", 10}, {"offset", 5}}, &d);
+  CHECK_EQ(page["points"].size(), 10u);
+  CHECK_EQ(page["next_offset"].get<int>(), 15);
+  json region = commands::run("cloud", {{"body", body}, {"action", "region"}, {"box", {{-20, -20, 19.75}, {20, 20, 21}}}}, &d);
+  CHECK_EQ(region["count"].get<int>(), 180);
+  CHECK_NEAR(region["centre"][2].get<double>(), 20.0, 1e-4);
+  json sliced = commands::run("cloud", {{"body", body}, {"action", "slice"}, {"plane", {{"origin", {0, 0, 10}}, {"normal", {0, 0, 1}}}}, {"band", 0.2}, {"tolerance", 0.05}}, &d);
+  CHECK_EQ(sliced["count"].get<int>(), 180);
+  CHECK(!sliced["polylines"].empty());
+  CHECK(sliced["polylines"][0]["closed"].get<bool>());
+  // The region reference goes straight into Crop points, through the feature command.
+  commands::run("feature", {{"kind", "cloud_crop"}, {"inputs", {{"region", region["reference"]}, {"keep", "outside"}}}}, &d);
+  info = commands::run("cloud", {{"body", body}}, &d);
+  CHECK_EQ(info["points"].get<int>(), 180 * 40);
+  commands::run("feature", {{"kind", "cloud_slice"}, {"inputs", {{"bodies", json::array({{{"body", body}}})}, {"offset", "5 mm"}}}}, &d);
+  std::string cut;
+  for (const auto& id : resolve(d).all_bodies())
+    if (id != body) cut = id;
+  CHECK(!cut.empty());
+  json sk = commands::run("cloud_sketch", {{"body", cut}, {"tolerance", 0.05}}, &d);
+  CHECK(sk.contains("sketch_id"));
+  CHECK(sk["profile"]["lines"].get<int>() >= 8);
+  // Export of the clouds: one file in world mm.
+  json ex = commands::run("export", {{"format", "e57"}, {"out", path_to_utf8(f.dir / "out.e57")}, {"select", json::array({body})}}, &d);
+  CHECK_EQ(ex["points"].get<int>(), 180 * 40);
+  CHECK_EQ(pc::read_file(f.dir / "out.e57").size(), size_t(180 * 40));
+  CHECK_THROWS(commands::run("cloud", {{"body", body}, {"action", "nope"}}, &d));
+  CHECK_THROWS(commands::run("cloud", {{"body", body}, {"action", "region"}}, &d));
 }
 CHECK_MAIN()

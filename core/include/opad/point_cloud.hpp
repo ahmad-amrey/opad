@@ -22,12 +22,9 @@
 #include <vector>
 
 #include "json.hpp"
+#include "document.hpp"
 #include "scene.hpp"
 #include "util.hpp"
-
-namespace opad {
-class Document;
-}
 
 namespace opad::cloud {
 
@@ -191,6 +188,10 @@ struct Mesh {
 Mesh mesh(const Points& p, const MeshOptions& options = {}, const Cancel& cancel = {});
 
 // ---------------------------------------------------------------- reports (commands, the live MCP)
+// A cloud body's points turned to world orientation, its placement's translation kept as their offset (exact far out).
+Points world_points(const Document& doc, const Scene& scene, const std::string& node, bool attributes = true);
+// The cloud bodies selected (or all of them) written to one file by its extension (write_file), in world mm.
+json export_points(const Document& doc, const Scene& scene, const std::filesystem::path& out, const std::vector<std::string>& select);
 // {points, bounds {min, max}, size, attributes, scalar, spacing (when `measure`)}
 json describe(const Points& p, bool measure = false);
 // Up to `limit` points from `offset` of a region (null: all) as {count, offset, points: [[x,y,z],...], colors?, normals?}.

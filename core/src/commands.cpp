@@ -25,6 +25,7 @@
 #include "opad/drawing/projection.hpp"
 #include "opad/drawing/sheet.hpp"
 #include "opad/kicad_pcb.hpp"
+#include "opad/point_cloud.hpp"
 #include "opad/sim/picture.hpp"
 
 namespace opad::commands {
@@ -33,6 +34,11 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
 void register_agent_commands(const std::function<void(const CommandInfo&, Handler)>& add);
 void register_sheet_commands(const std::function<void(const CommandInfo&, Handler)>& add);  // drawing/sheet_commands.cpp
 void register_sim_commands(const std::function<void(const CommandInfo&, Handler)>& add);    // sim/commands_sim.cpp
+}  // namespace opad::commands
+namespace opad::cloud {
+void register_cloud_commands(const std::function<void(const commands::CommandInfo&, commands::Handler)>& add);  // cloud/commands_cloud.cpp
+}  // namespace opad::cloud
+namespace opad::commands {
 
 namespace {
 
@@ -521,14 +527,15 @@ void register_builtins() {
         return j;
       });
 
-  reg("import", "Import STEP, IGES, Parasolid (X_T, X_B), BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter), SVG, a KiCad board or a picture into the document",
-      {{"doc", "path"}, {"file", "path - .step/.iges/.x_t/.x_b/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb/.png/.jpg"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
+  reg("import", "Import STEP, IGES, Parasolid (X_T, X_B), BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter), SVG, a KiCad board, a picture or a point cloud (PLY without faces, XYZ, PTS, CSV, E57, LAS) into the document",
+      {{"doc", "path"}, {"file", "path - .step/.iges/.x_t/.x_b/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb/.png/.jpg/.xyz/.pts/.csv/.e57/.las"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
        {"placement", "[16] - drawings and boards: where the file's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
        {"center", "bool - drawings: centre the drawing on its origin (default false)"},
        {"width", "number - pictures: mm"},
        {"model_dirs", "string|array - KiCad: model folders"}, {"components", "bool - KiCad: models (default true)"}, {"dnp", "bool - KiCad: do-not-populate parts"},
        {"vias", "bool - KiCad (default false)"}, {"placeholder_height", "number - KiCad: missing-model box, mm"}, {"origin", "auto|center|page - KiCad"},
        {"kicad_cli", "string|array - KiCad: via kicad-cli, adding tracks,pads,silkscreen or none"},
+       {"scale", "number - point clouds: mm per file unit (default: E57 and LAS metres, the rest mm)"}, {"up", "z|y - point clouds: the file's up axis (default z)"},
        {"link", "bool - link the file (read from it on open, never stored; see asset)"}},
       true, [](Document* d, const json& a) {
         ImportOptions o;
@@ -536,6 +543,8 @@ void register_builtins() {
         o.parent = a.value("parent", "");
         o.heal = a.value("heal", true);
         o.kicad = kicad_options(a);
+        o.cloud_scale = a.value("scale", 0.0);
+        o.up_axis = a.value("up", std::string());
         if (a.contains("placement")) o.placement = Mat4::from_json(a["placement"]);
         if (a.contains("plane")) {  // resolved now, stored as the placement: replay never needs the plane again
           const Frame f = design::resolve_plane(need(d), resolve(need(d)), a["plane"]);
@@ -608,8 +617,8 @@ void register_builtins() {
         return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
       });
 
-  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg|pdf|png or a plugin format (2D of solids: a hidden-line view)",
-      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|pdf|png|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
+  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg|pdf|png, point clouds to ply|xyz|pts|csv|e57, or a plugin format (2D of solids: a hidden-line view)",
+      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|pdf|png|ply|xyz|pts|csv|e57|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
        {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"},
        {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}, {"dpi", "int - PNG"}, {"sheet", "uuid|name|drawing:<name> - 2D: a sheet, or a drawing's"}, {"issue", "string - with sheet: as issued"}},
       false, [](Document* d, const json& a) {
@@ -1081,6 +1090,10 @@ void register_builtins() {
     r.infos.push_back(info);
     r.handlers[info.name] = std::move(h);
   });
+  cloud::register_cloud_commands([&](const CommandInfo& info, Handler h) {
+    r.infos.push_back(info);
+    r.handlers[info.name] = std::move(h);
+  });
 }
 
 }  // namespace
@@ -1210,6 +1223,7 @@ json export_document(const Document& doc, const Scene& scene, const json& a, con
   o.progress = progress;
   const std::string out = a.value("out", "");
   if (out.empty()) throw Error("export: \"out\" path required");
+  if (fmt == "ply" || fmt == "xyz" || fmt == "pts" || fmt == "csv" || fmt == "e57") return cloud::export_points(doc, scene, path_from_utf8(out), o.select);
   if (fmt == "svg" || fmt == "dxf" || fmt == "dwg" || fmt == "pdf" || fmt == "png") return export_drawing(doc, scene, path_from_utf8(out), o).to_json();
   return export_selection(doc, scene, path_from_utf8(out), o).to_json();
 }

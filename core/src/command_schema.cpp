@@ -63,6 +63,9 @@ json input_schema(const design::InputSpec& in) {
     out={{"anyOf",{type("string"),{{"type","object"},{"additionalProperties",type("string")}}}}};
     out["description"]="Whole words swapped in copy names: \"R=L, Right=Left\" or {\"R\":\"L\"}; also picks the sibling component so named.";}
   else if(in.type=="plane")out=plane();
+  else if(in.type=="region"){  // a region of a point cloud's points (opad/point_cloud.hpp)
+    out=object({{"body",type("string")},{"kind",choice({"region"})},{"vertices",array({{"anyOf",{type("integer"),array(type("integer"),2,2)}}},1)},{"count",type("integer")}},{"body","vertices"});
+    out["description"]="Points of a cloud body by ordinal: {\"body\": <cloud>, \"kind\": \"region\", \"vertices\": [[first, last], ...]} (inclusive ranges), as the cloud command's region action returns.";}
   else if(in.type=="axis"){out=object({{"base",choice({"x","y","z"})},{"edge",ref()},{"face",ref()},{"sketch",type("string")},{"entity",type("integer")},{"feature",type("string")},{"direction",vector(3)},{"origin",vector(3)}},{},false);
     out["description"]="A base axis; a straight or circular edge (its line or centre axis); a face (a cylinder's, cone's or torus's axis, or a planar face's normal); a sketch line {sketch, entity}; a construction axis feature; or written out {direction: [x,y,z], origin?: [x,y,z]}.";}
   else if(in.type=="path")out={{"anyOf",{object({{"sketch",type("string")},{"entities",array(type("integer"))}},{"sketch"}),object({{"edges",array(ref(),1)}},{"edges"}),array(ref(),1)}}};
