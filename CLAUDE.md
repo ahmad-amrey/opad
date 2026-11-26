@@ -841,8 +841,11 @@ automatic one is answered by it (`m_userAsked`). The Windows single exe (no `uni
 any `OPAD_BENCH*` variable is set or with `OPAD_NO_UPDATE_CHECK`; `OPAD_UPDATE_URL` / `OPAD_UPDATE_PAGE_URL` point the two
 requests elsewhere (bench `updates`; `ctest -R update-check` runs a fake GitHub on a local socket). HTTPS needs Qt's TLS
 plugin: the static build imports `Qt6::QSchannelBackendPlugin`, the portable stage copies `tls/qschannelbackend.dll`.
-Asset names are fixed by the release job's renames (version-free); renaming one means the README links and
-`installerAssetName` too.
+Assets carry their release's tag without the v (`OPAD-0.11.0-windows-x64-setup.exe`, `-rc.N`, `-dev.N`: the Collect
+step's LABEL, which is also the tag); the update check takes `OPAD-*-<installerAssetName's system part>`; version-free
+copies of the four installers stay for copies before 0.11.0. The README links to the latest release's page. The
+installer moves a running opad-cli.exe aside (`opad-cli.exe.<n>.old`, `PrepareToInstall`) instead of asking to close it:
+every open AI session (Claude Code, Desktop, Codex) runs its own `opad-cli mcp` for as long as it is open.
 
 ## Where settings live (`app/AppData.*`)
 

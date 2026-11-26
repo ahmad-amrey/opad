@@ -153,6 +153,7 @@ class MainWindow : public QMainWindow {
   void showDocument(bool has);
   QString centralName(const QWidget* page) const;  // trace::traceFrames
   void showCentral();  // the start page, the viewport (also while loading) or an area's page; the browser floats over it
+  void syncBrowserShown();  // the browser shown: a document is open, Browser is ticked and the page shown takes it
   // title: the job's and the shade's ("Opening box.step"); done: the completion toast, %1 = the bodies loaded.
   void beginLoad(std::function<void()> after, const QString& title = QString(), const QString& done = QString());
   void setLoadPhase(const QString& phase, int pct, int overall = -1);  // overall < 0: from pct, in the display part
@@ -309,6 +310,7 @@ class MainWindow : public QMainWindow {
   QMenu* m_snappingMenu = nullptr;   // View > Snapping: the status bar's snapping switches (filled with them)
   QStackedWidget* m_stack = nullptr;
   QWidget* m_centralPage = nullptr;  // an area's page in the viewport's place (AreaServices::setCentralPage)
+  bool m_centralBrowser = true;      // ... with the browser floating over it
   bool m_loadShown = false;
   EmptyState* m_empty = nullptr;
   Viewport* m_viewport = nullptr;

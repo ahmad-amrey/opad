@@ -52,7 +52,9 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; An OPAD still open would hold its exe: setup offers to close it (the user saves first), and does not restart it.
+; Only OPAD.exe: a running opad-cli (an AI app's session, see PrepareToInstall) is moved aside instead, never closed.
 CloseApplications=yes
+CloseApplicationsFilter=OPAD.exe
 RestartApplications=no
 
 [Tasks]
@@ -71,4 +73,44 @@ Name: "{autodesktop}\OPAD"; Filename: "{app}\OPAD.exe"; Tasks: desktopicon
 [Run]
 Filename: "{app}\OPAD.exe"; Description: "{cm:LaunchProgram,OPAD}"; Flags: nowait postinstall skipifsilent
 
-; No [UninstallDelete] and no [InstallDelete]: nothing of the user's is ever removed or replaced.
+; No [InstallDelete], and [UninstallDelete] names only the opad-cli copies setup moved aside: nothing of the user's is
+; ever removed or replaced.
+[UninstallDelete]
+Type: files; Name: "{app}\opad-cli.exe.*.old"
+
+[Code]
+// Every open session of an AI app connected to OPAD (Claude Code, Claude Desktop, Codex) runs its own `opad-cli mcp`,
+// for as long as the session is open: ten sessions are ten opad-cli processes. Windows lets a running exe be renamed but
+// not replaced, so an update moves a running opad-cli.exe aside (opad-cli.exe.<n>.old) rather than asking to close each
+// one: those sessions keep their connection, new ones start the new opad-cli. Copies moved aside by an earlier update
+// are removed once nothing runs them.
+procedure RemoveOldCli;
+var
+  R: TFindRec;
+begin
+  if FindFirst(ExpandConstant('{app}\opad-cli.exe.*.old'), R) then
+  try
+    repeat
+      DeleteFile(ExpandConstant('{app}') + R.Name);  // still running: left for the next update or the uninstall
+    until not FindNext(R);
+  finally
+    FindClose(R);
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Cli: String;
+  N: Integer;
+begin
+  Result := '';
+  Cli := ExpandConstant('{app}\opad-cli.exe');
+  RemoveOldCli;
+  if FileExists(Cli) and not DeleteFile(Cli) then begin
+    N := 1;
+    while FileExists(Cli + '.' + IntToStr(N) + '.old') do
+      N := N + 1;
+    if not RenameFile(Cli, Cli + '.' + IntToStr(N) + '.old') then
+      Log('opad-cli.exe is in use and could not be moved aside');
+  end;
+end;

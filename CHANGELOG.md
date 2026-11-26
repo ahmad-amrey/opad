@@ -5,7 +5,7 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
-## [0.10.1] - 2026-11-22
+## [0.11.0] - 2026-11-26
 
 Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,
 dimensions between lines draw properly, and Sketch fillet says why a corner can't be rounded. Version control keeps each
@@ -104,8 +104,17 @@ including a new airflow check for ducts and fittings.
   Everything is still listed.
 - **Rules follow parameters.** The lengths in an edge or face rule (a plane's height, the box, the radius and length
   limits) may be expressions such as `height` or `w / 2`, and the rule matches again when a parameter changes.
+- **Downloads say their version.** Every file of a release carries its version in its name
+  (`OPAD-0.11.0-windows-x64-setup.exe`, a development build `OPAD-0.11.1-dev.80-...`), so a downloaded file tells you
+  which version it is. The download links in the README open the latest release.
+- **Simulate's start page fills the window.** The object browser stays out of the way while you choose a check, and
+  comes back with the 3D view.
 
 ### Fixed
+- **Updating no longer asks to close OPAD's command-line tool.** Each open session of an AI app connected to OPAD
+  (Claude Code, Claude Desktop, Codex) keeps its own `opad-cli` running, so the installer used to list ten or more of
+  them to close. It now leaves them running, and those sessions keep their connection; only an open OPAD still has to be
+  closed first.
 - **3D scans and other big meshes no longer freeze OPAD.** Choosing the axis in *Move / copy*, or switching to the
   Face, Edge or Vertex filter, used to make OPAD wait while it prepared every triangle of the mesh for picking: over
   three minutes on a 3-million-triangle scan. It now takes no noticeable time, picking a scan's edges, points and

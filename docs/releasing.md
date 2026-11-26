@@ -168,11 +168,15 @@ release candidate. Promote refuses a `dev` whose newest commit has not passed su
 released, its entries go into its own section, not under `[Unreleased]`: the checks refuse a non-empty `[Unreleased]`
 then, since those entries would be missing from the release.
 
-The packages are published under names without the version (`OPAD-windows-x64-setup.exe`, `OPAD-windows-x64.exe`,
-`opad-cli-windows-x64.exe`, `OPAD-macos.dmg`, `OPAD-linux-amd64.deb`, `OPAD-linux-x86_64.AppImage`): the README's
-Download section links to `https://github.com/ahmad-amrey/opad/releases/latest/download/<name>`, which always reaches
-the newest release, and OPAD's update check downloads `releases/download/<tag>/<name>` for the user's system. Renaming
-a package means changing those links in README.md and README.ar.md and the names in `app/UpdateCheck.cpp` too.
+Each package names the release it belongs to, its tag without the `v`: `OPAD-0.11.0-windows-x64-setup.exe`,
+`OPAD-0.11.0-windows-x64.exe`, `opad-cli-0.11.0-windows-x64.exe`, `OPAD-0.11.0-macos.dmg`, `OPAD-0.11.0-linux-amd64.deb`,
+`OPAD-0.11.0-linux-x86_64.AppImage`; a release candidate `OPAD-0.11.0-rc.72-...`, a development build
+`OPAD-0.11.1-dev.80-...`. The README's Download section links to the latest release's page. OPAD's update check takes the
+asset `OPAD-<anything>-<system part>` of the release it offers (`installerAssetName` names the system part), else
+`releases/download/<tag>/OPAD-<tag without v>-<system part>`. Copies before 0.11.0 ask for the names without the version,
+so the release job also uploads `OPAD-windows-x64-setup.exe`, `OPAD-windows-x64.exe`, `OPAD-macos.dmg` and
+`OPAD-linux-amd64.deb`; drop those once nobody runs a copy that old. Renaming a package means the release job's checks,
+`app/UpdateCheck.cpp` and `tools/release_downloads.md` too.
 
 ## Batches, emergencies and recovery
 

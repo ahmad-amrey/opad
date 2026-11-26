@@ -35,15 +35,16 @@ It runs on your own computer, with no account and no server, and is built on Ope
 
 ## Download
 
-The newest version, ready to run: no account, no build.
+The newest version, ready to run: no account, no build. Each link opens the latest release; its files carry the version in
+their names (`OPAD-0.11.0-windows-x64-setup.exe`), so a download always says which version it is.
 
 | Your computer | Download | Then |
 |---|---|---|
-| **Windows 10 / 11** (64-bit) | [**OPAD installer**](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-windows-x64-setup.exe) | Run it. OPAD is added to the Start menu, without administrator rights. A later version installs over it and keeps your settings. |
-| Windows, without installing | [OPAD as one file](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-windows-x64.exe) | Put it in any folder and double-click it. An empty `opad.portable` file beside it makes it keep its settings there too. |
-| **macOS 15 or later** (Apple silicon, M1 or newer) | [**OPAD for Mac**](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-macos.dmg) (dmg) | Open it and drag OPAD into Applications. |
-| **Ubuntu / Debian** (24.04 or newer) | [**OPAD for Ubuntu**](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-linux-amd64.deb) (.deb) | Open it in the software centre, or run `sudo apt install ./OPAD-linux-amd64.deb`. OPAD appears in your applications menu. |
-| Other Linux (64-bit) | [OPAD AppImage](https://github.com/ahmad-amrey/opad/releases/latest/download/OPAD-linux-x86_64.AppImage) | Allow it to run as a program (file Properties, or `chmod +x`), then double-click it. |
+| **Windows 10 / 11** (64-bit) | [**OPAD installer**](https://github.com/ahmad-amrey/opad/releases/latest) | Run it. OPAD is added to the Start menu, without administrator rights. A later version installs over it and keeps your settings. |
+| Windows, without installing | [OPAD as one file](https://github.com/ahmad-amrey/opad/releases/latest) | Put it in any folder and double-click it. An empty `opad.portable` file beside it makes it keep its settings there too. |
+| **macOS 15 or later** (Apple silicon, M1 or newer) | [**OPAD for Mac**](https://github.com/ahmad-amrey/opad/releases/latest) (dmg) | Open it and drag OPAD into Applications. |
+| **Ubuntu / Debian** (24.04 or newer) | [**OPAD for Ubuntu**](https://github.com/ahmad-amrey/opad/releases/latest) (.deb) | Open it in the software centre, or run `sudo apt install ./OPAD-*-linux-amd64.deb`. OPAD appears in your applications menu. |
+| Other Linux (64-bit) | [OPAD AppImage](https://github.com/ahmad-amrey/opad/releases/latest) | Allow it to run as a program (file Properties, or `chmod +x`), then double-click it. |
 
 **The first time you start it:** these downloads are not code-signed yet, so your system asks first. On Windows, if
 "Windows protected your PC" appears, choose *More info*, then *Run anyway*. On a Mac, double-click OPAD in Applications; when

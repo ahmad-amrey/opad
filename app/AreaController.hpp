@@ -135,8 +135,9 @@ class AreaServices {
   // accent; hidden again, the tab that was current comes back. False: no such contextual tab.
   bool setContextualTab(const QString& id, bool shown);
   // A page of the area in the viewport's place (a drawing sheet) while a document is open and nothing loads; null brings
-  // the viewport back. The window takes the page into its central stack; the browser floats over whichever is shown.
-  void setCentralPage(QWidget* page);
+  // the viewport back. The window takes the page into its central stack; the browser floats over whichever is shown,
+  // unless `browser` is false (a page of its own that shows no parts, like Simulate's start page): hidden meanwhile.
+  void setCentralPage(QWidget* page, bool browser = true);
   QWidget* centralPage() const;
  private:
   MainWindow* m_window;
