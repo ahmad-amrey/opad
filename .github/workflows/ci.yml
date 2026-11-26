@@ -438,12 +438,27 @@ jobs:
           $v = & "$app\opad-cli.exe" version
           if ($LASTEXITCODE) { throw "the installed opad-cli did not run" }
           Write-Host "Installed: $v"
-          Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          # An AI app's session keeps an `opad-cli mcp` running: the update moves it aside, it keeps running.
+          $psi = [System.Diagnostics.ProcessStartInfo]::new("$app\opad-cli.exe", "mcp --live --discovery `"$env:RUNNER_TEMP\mcp`"")
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardInput = $true
+          $mcp = [System.Diagnostics.Process]::Start($psi)
+          Start-Sleep 2
+          if ($mcp.HasExited) { throw "opad-cli mcp did not stay up" }
+          $u = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+          if ($u.ExitCode) { throw "the update failed ($($u.ExitCode)) while opad-cli ran" }
           if (-not (Test-Path "$app\OPAD.exe")) { throw "the update removed the app" }
+          if ($mcp.HasExited) { throw "the update closed the running opad-cli" }
+          if (-not (Test-Path "$app\opad-cli.exe.1.old")) { throw "the running opad-cli was not moved aside" }
+          & "$app\opad-cli.exe" version | Out-Null
+          if ($LASTEXITCODE) { throw "the updated opad-cli did not run" }
+          $mcp.StandardInput.Close()
+          if (-not $mcp.WaitForExit(10000)) { throw "opad-cli mcp did not end when its client closed" }
 
           Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
           for ($i = 0; $i -lt 30 -and (Test-Path "$app\OPAD.exe"); $i++) { Start-Sleep 1 }
           if (Test-Path "$app\OPAD.exe") { throw "the uninstall left the app behind" }
+          if (Test-Path "$app\opad-cli.exe.*.old") { throw "the uninstall left an opad-cli moved aside" }
           if ((Get-ItemProperty $key -Name kept -ErrorAction SilentlyContinue).kept -ne "1500") { throw "settings were changed or removed" }
           if ((Get-Content $data -Raw) -ne "kept") { throw "the data folder was changed or removed" }
           Write-Host "Per-user install, update and uninstall OK; settings kept."
@@ -800,20 +815,36 @@ jobs:
           mkdir dist
           # An artifact keeps the folders below its paths' common root: found by name.
           find artifacts -type f \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' \) -exec cp {} dist/ \;
-          # Names without the version (OPAD-0.9.0-macos.dmg -> OPAD-macos.dmg): the README links to
-          # releases/latest/download/<name>, which then always reaches the newest release.
+          # Each file names the release it belongs to, its tag without the v: OPAD-0.11.0-windows-x64-setup.exe, a release
+          # candidate OPAD-0.11.0-rc.72-..., a development build OPAD-0.11.1-dev.80-... (the binaries of the last two say
+          # 0.11.0 and their build: the tag tells them apart). The publish steps tag the release v$LABEL.
+          if [ "$DEV" != true ]; then
+            LABEL="$VERSION"
+          elif [ "$RELEASED" = false ]; then
+            LABEL="$VERSION-rc.$BUILD"
+          else
+            LABEL="$(printf '%s\n' "$VERSION" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3 + 1 }')-dev.$BUILD"
+          fi
+          echo "LABEL=$LABEL" >> "$GITHUB_ENV"
           for f in dist/*; do
-            fixed="${f/-$VERSION/}"
-            [ "$f" = "$fixed" ] || mv "$f" "$fixed"
+            named="${f/-$VERSION-/-$LABEL-}"
+            [ "$f" = "$named" ] || mv "$f" "$named"
           done
+          # Copies under the old names without the version, which copies before 0.11.0 download when they update (their
+          # update check asks for exactly these). Drop them once nobody runs a copy that old.
+          cp "dist/OPAD-$LABEL-windows-x64-setup.exe" dist/OPAD-windows-x64-setup.exe
+          cp "dist/OPAD-$LABEL-windows-x64.exe" dist/OPAD-windows-x64.exe
+          cp "dist/OPAD-$LABEL-macos.dmg" dist/OPAD-macos.dmg
+          cp "dist/OPAD-$LABEL-linux-amd64.deb" dist/OPAD-linux-amd64.deb
           for os in windows linux macos; do
             notice=$(find "artifacts/$os" -name THIRD-PARTY-NOTICES.txt | head -1)
             cp "$notice" "dist/THIRD-PARTY-NOTICES-$os.txt"
           done
           (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
           ls -l dist
-          for f in OPAD-windows-x64-setup.exe OPAD-macos.dmg OPAD-linux-amd64.deb; do
-            test -f "dist/$f" || { echo "::error::$f is missing (the README and the update check link to it)"; exit 1; }
+          for f in "OPAD-$LABEL-windows-x64-setup.exe" "OPAD-$LABEL-windows-x64.exe" "OPAD-$LABEL-macos.dmg" "OPAD-$LABEL-linux-amd64.deb" \
+                   "OPAD-$LABEL-linux-x86_64.AppImage" "opad-cli-$LABEL-windows-x64.exe"; do
+            test -f "dist/$f" || { echo "::error::$f is missing (the update check downloads it by its name)"; exit 1; }
           done
       - name: Release notes
         run: |
@@ -837,7 +868,8 @@ jobs:
           else
             sh tools/changelog_section.sh "$VERSION" > notes.md
           fi
-          sed "s/@VERSION@/$VERSION/g" tools/release_downloads.md >> notes.md
+          sh tools/solver_packs_notes.sh >> notes.md  # the solver packs this version installs, with their releases
+          sed "s/@LABEL@/$LABEL/g" tools/release_downloads.md >> notes.md
           # What the update check reads: the build these packages carry and the version they say.
           printf '\n<!-- opad-build: %s; opad-version: %s -->\n' "$BUILD" "$VERSION" >> notes.md
           cat notes.md
@@ -847,13 +879,11 @@ jobs:
           # SemVer pre-releases: the release candidate of an unreleased version, vX.Y.Z-rc.N; otherwise a development
           # build toward the next patch, vX.Y.(Z+1)-dev.N. N, the build number, is last: two builds never tie, and
           # 0.10.0 < 0.10.1-dev.20 < 0.10.1-rc.25 < 0.10.1. The binaries say X.Y.Z (build N) either way (the marker).
+          tag="v$LABEL"  # what the files are named after (Collect the packages)
           if [ "$RELEASED" = false ]; then
-            tag="v$VERSION-rc.$BUILD"
             title="OPAD $VERSION release candidate (build $BUILD)"
           else
-            next=$(printf '%s\n' "$VERSION" | awk -F. '{ printf "%d.%d.%d", $1, $2, $3 + 1 }')
-            tag="v$next-dev.$BUILD"
-            title="OPAD $next development build $BUILD"
+            title="OPAD ${LABEL%-dev.*} development build $BUILD"
           fi
           if gh release view "$tag" > /dev/null 2>&1; then
             target=$(git rev-list -n 1 "refs/tags/$tag" 2>/dev/null || true)

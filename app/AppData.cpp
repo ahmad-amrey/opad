@@ -70,4 +70,11 @@ QString adoptOldPortable(const QString& programDir, QSettings& settings, const Q
   return file;
 }
 
+int removeMovedAside(const QString& programDir) {
+  int removed = 0;
+  for (const QFileInfo& f : QDir(programDir).entryInfoList({"opad-cli.exe.*.old"}, QDir::Files))
+    if (QFile::remove(f.absoluteFilePath())) ++removed;  // still running: Windows refuses
+  return removed;
+}
+
 }  // namespace appdata

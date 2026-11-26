@@ -86,8 +86,8 @@ void MainWindow::buildDocks() {
   // Bind the panel actions to the docks' own toggle actions (both directions).
   action("panel.browser")->setChecked(true);
   connect(action("panel.browser"), &QAction::triggered, this, [this](bool on) {
-    m_browserOverlay->setVisible(on);
-    if (on) m_browserOverlay->reveal();
+    syncBrowserShown();
+    if (on && m_browserOverlay->isVisible()) m_browserOverlay->reveal();
   });
   bindPanel(action("panel.annotations"), m_annotationsPanel);
   bindPanel(action("panel.section"), m_sectionPanel);
@@ -155,7 +155,7 @@ void MainWindow::resetLayout() {
   // The browser comes back with its command ticked again (Browser stayed unticked, so a document opened next hid it once
   // more); without a document it shows when one opens, as at the start.
   action("panel.browser")->setChecked(true);
-  m_browserOverlay->setVisible(m_doc->hasDocument);
+  syncBrowserShown();
   m_browserOverlay->place();
   addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
   setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);

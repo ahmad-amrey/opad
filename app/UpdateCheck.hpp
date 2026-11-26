@@ -26,6 +26,7 @@
 #include <optional>
 #include <vector>
 
+class QJsonArray;
 class QNetworkAccessManager;
 class QNetworkReply;
 
@@ -80,8 +81,16 @@ bool dueForCheck(const QDateTime& last, const QDateTime& now);
 QString installerAssetName();
 // The same choice for a given system, for tests: os "windows", "macos" or "linux", cpu as QSysInfo names it,
 // windowsSingleFile: the single-file exe not installed by the setup.
+// These are the names without the version (OPAD-windows-x64-setup.exe): a release names its files after its tag
+// (releaseAssetName), and keeps copies under these names for copies before 0.11.0.
 QString installerAssetName(const QString& os, const QString& cpu, bool debianFamily, bool windowsSingleFile = false);
-// github.com/ahmad-amrey/opad/releases/download/<tag>/<asset>: release files keep their names in every release.
+// The file a release tagged `tag` publishes for `asset`: v0.11.0 + OPAD-windows-x64-setup.exe ->
+// OPAD-0.11.0-windows-x64-setup.exe (v0.11.0-rc.72 -> OPAD-0.11.0-rc.72-...). Anything else unchanged.
+QString releaseAssetName(const QString& tag, const QString& asset);
+// The download address of `asset` among a release's files (GitHub's "assets"): the one named after a version
+// (OPAD-<version>-windows-x64-setup.exe) first, else the name alone; empty when neither is there.
+QString findAsset(const QJsonArray& assets, const QString& asset);
+// github.com/ahmad-amrey/opad/releases/download/<tag>/<asset>.
 QString assetDownloadUrl(const QString& tag, const QString& asset);
 // The tag a ".../releases/tag/<tag>" URL points at; empty for anything else.
 QString tagFromReleasePageUrl(const QUrl& url);

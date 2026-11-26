@@ -70,7 +70,7 @@ void MainWindow::buildViewActions() {
     if (!m_settingTwoD) m_autoTwoD = false;  // set by hand: stays as the user left it until the document is replaced
     m_viewport->setTwoDimensional(on);
 
-    if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
+    if (m_browserOverlay && action("panel.browser")->isChecked()) { syncBrowserShown(); m_browserOverlay->raise(); }
     m_homeBtn->setVisible(!on); m_alignPlane->setVisible(!on);  // the turn buttons stay: in 2D they twist the view (UI-47)
     action("view.iso")->setEnabled(!on && m_doc->hasDocument);  // a corner view has no plane to lock to
     updateChips();
@@ -415,7 +415,14 @@ void MainWindow::showCentral() {
                    .arg(m_doc->hasDocument).arg(m_loadShown).arg(m_viewport->frameState()));
   m_stack->setCurrentWidget(page);
   if (m_browserOverlay) m_browserOverlay->setScene(page == m_empty ? m_viewport : page);
+  syncBrowserShown();
   if (m_toasts) m_toasts->setHost(page);  // over whatever is shown (the sheet canvas too)
+}
+
+void MainWindow::syncBrowserShown() {
+  if (!m_browserOverlay) return;
+  const bool page = m_stack->currentWidget() == m_centralPage && m_centralPage;  // an area's page is what shows
+  m_browserOverlay->setVisible(m_doc->hasDocument && action("panel.browser")->isChecked() && (!page || m_centralBrowser));
 }
 
 // A tool's panel shown whose footer says Enter on its primary button (Canvas OK, KiCad Sync), while nothing else that takes
