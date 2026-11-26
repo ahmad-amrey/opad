@@ -847,12 +847,24 @@ class Deviation : public AreaController {
     AppDocument* doc = services().document();
     const opad::Node* node = doc->scene.node(m_a);
     if (!node) return;
-    const gp_Trsf world = opad::trsf_from_mat(doc->scene.world(m_a));
+    // A part of a linked file (a scan imported linked) is the file's: its top node, the file's placement, moves instead.
+    for (const opad::Node* up = node->parent.empty() ? nullptr : doc->scene.node(node->parent); node->linked && up && up->linked && up->source_op == node->source_op;
+         up = node->parent.empty() ? nullptr : doc->scene.node(node->parent))
+      node = up;
+    const std::string target = node->id;
+    const gp_Trsf world = opad::trsf_from_mat(doc->scene.world(target));
     const gp_Trsf parent = node->parent.empty() ? gp_Trsf() : opad::trsf_from_mat(doc->scene.world(node->parent));
     const gp_Trsf local = parent.Inverted() * m_study->alignment * world;
     dropFitPreview();
     m_fitText->setVisible(false);
-    services().guarded([&] { doc->run("transform", json{{"target", m_a}, {"matrix", opad::mat_from_trsf(local).to_json()}}); });
+    try {
+      doc->run("transform", json{{"target", target}, {"matrix", opad::mat_from_trsf(local).to_json()}});
+    } catch (const std::exception& e) {  // said in the panel and the status bar (a message box would stop a bench)
+      if (trace::enabled()) trace::log(QStringLiteral("deviation: accepting the fit failed: %1").arg(QString::fromUtf8(e.what())));
+      m_state->setText(i18n::t(QString::fromUtf8(e.what())));
+      services().showMessage(i18n::t(QString::fromUtf8(e.what())), 8000);
+      return;
+    }
     services().undoToast(tr("Fitted %1 onto %2").arg(doc->nodeName(m_a), doc->nodeName(m_b)));
   }
 
