@@ -1648,7 +1648,8 @@ Graphic3d_Vec4ub ramp(float v, float lo, float hi) {
 }
 }  // namespace
 
-Handle(Graphic3d_ArrayOfPoints) BodyPrs::cloudArray(const opad::cloud::Points& p, const std::vector<uint32_t>* only, int mode, size_t budget, size_t* drawn) {
+Handle(Graphic3d_ArrayOfPoints) BodyPrs::cloudArray(const opad::cloud::Points& p, const std::vector<uint32_t>* only, int mode, size_t budget, size_t* drawn,
+                                                    const std::vector<uint32_t>* overrides, const std::array<double, 3>* own) {
   const size_t n = only ? only->size() : p.size();
   if (n == 0) return nullptr;
   // Which colour: the scan's own, shaded by the normals (grey), the scalar's ramp, or none (the body's colour).
@@ -1656,7 +1657,8 @@ Handle(Graphic3d_ArrayOfPoints) BodyPrs::cloudArray(const opad::cloud::Points& p
   if (mode == 1 && !p.colored()) mode = 4;
   if (mode == 2 && !p.has_normals()) mode = 4;
   if (mode == 3 && !p.has_scalar()) mode = 4;
-  const bool colours = mode != 4;
+  const bool colours = mode != 4 || overrides;  // an overlay colours its points, the rest take the body's colour
+  const Graphic3d_Vec4ub body = own ? Graphic3d_Vec4ub(uint8_t(std::clamp((*own)[0], 0.0, 1.0) * 255), uint8_t(std::clamp((*own)[1], 0.0, 1.0) * 255), uint8_t(std::clamp((*own)[2], 0.0, 1.0) * 255), 255) : Graphic3d_Vec4ub(204, 204, 204, 255);
   const size_t m = std::min(n, std::max<size_t>(budget, 1));
   // An even sample of a bigger cloud: a stride through a pseudo-random order, so scan lines do not beat with it.
   auto pick = [&](size_t k) -> size_t {
@@ -1677,7 +1679,11 @@ Handle(Graphic3d_ArrayOfPoints) BodyPrs::cloudArray(const opad::cloud::Points& p
     const int v = a->AddVertex(p.xyz[3 * i], p.xyz[3 * i + 1], p.xyz[3 * i + 2]);
     if (!colours) continue;
     Graphic3d_Vec4ub c;
-    if (mode == 1) c = Graphic3d_Vec4ub(p.rgb[3 * i], p.rgb[3 * i + 1], p.rgb[3 * i + 2], 255);
+    if (overrides && i < overrides->size() && ((*overrides)[i] >> 24) != 0) {
+      const uint32_t o = (*overrides)[i];
+      c = Graphic3d_Vec4ub(uint8_t(o >> 16), uint8_t(o >> 8), uint8_t(o), 255);
+    } else if (mode == 4) c = body;
+    else if (mode == 1) c = Graphic3d_Vec4ub(p.rgb[3 * i], p.rgb[3 * i + 1], p.rgb[3 * i + 2], 255);
     else if (mode == 2) {
       const float* nn = &p.normals[3 * i];
       const double d = std::abs(nn[0] * light[0] + nn[1] * light[1] + nn[2] * light[2]);
@@ -1698,7 +1704,8 @@ std::shared_ptr<BodyPrs> BodyPrs::buildCloud(const TopoDS_Shape& shape, const Bn
   const auto start = std::chrono::steady_clock::now();
   auto points = std::make_shared<const opad::cloud::Points>(opad::cloud::from_shape(shape));
   p->cloudData = points;
-  p->cloudPoints = cloudArray(*points, nullptr, cloudColorMode.load(), cloudBudget, &p->cloudDrawn);
+  p->cloudMode = cloudColorMode.load();
+  p->cloudPoints = cloudArray(*points, nullptr, p->cloudMode, cloudBudget, &p->cloudDrawn);
   p->cloudSpacing = opad::cloud::spacing(*points);
   if (!drawingOnly && points->size()) {
     Handle(CloudPickSet) set = new CloudPickSet(points, box);

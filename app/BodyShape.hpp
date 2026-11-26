@@ -128,6 +128,9 @@ struct BodyPrs {
   std::shared_ptr<const opad::cloud::Points> cloudData;
   Handle(Graphic3d_ArrayOfPoints) cloudPoints;
   size_t cloudDrawn = 0;
+  int cloudMode = 0;  // the colour mode the drawn array was made in
+  std::shared_ptr<const std::vector<uint32_t>> cloudOverlay;  // the colour overlay it was made with (Viewport::setCloudColours)
+  std::shared_ptr<const std::vector<uint32_t>> cloudOnly;  // the points it draws (a zoomed-in part), null: a sample of all
   double cloudSpacing = 0;
   bool isCloud() const { return cloudData != nullptr; }
   // How clouds are coloured (view/cloudColor): 0 automatic (the scan's colours, else shaded by the normals, else the body's
@@ -136,8 +139,11 @@ struct BodyPrs {
   static size_t cloudBudget;  // points drawn of a whole cloud (8 million)
   // Worker: the drawn array of a cloud: `only` (null: all) in the given colour mode, at most `budget` of them sampled evenly.
   static std::shared_ptr<BodyPrs> buildCloud(const TopoDS_Shape& cloud, const Bnd_Box& box, bool drawingOnly);  // worker
+  // `overrides` (optional; one 0xAARRGGBB per point by ordinal, as Viewport::setCloudColours takes them): a point's colour
+  // when its alpha is not 0, else its colour in the mode; `own` the body's colour where the mode gives none.
   static Handle(Graphic3d_ArrayOfPoints) cloudArray(const opad::cloud::Points& points, const std::vector<uint32_t>* only, int mode, size_t budget,
-                                                    size_t* drawn = nullptr);
+                                                    size_t* drawn = nullptr, const std::vector<uint32_t>* overrides = nullptr,
+                                                    const std::array<double, 3>* own = nullptr);
   void indexSubShapes(const TopoDS_Shape& meshed);  // worker, after build() from the same meshed shape
   bool indexed() const { return !faceTriangles.empty(); }
   void faceTrianglesOf(int ordinal, std::vector<gp_Pnt>& out) const;  // its triangles' corners, three a triangle

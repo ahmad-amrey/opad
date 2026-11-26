@@ -389,6 +389,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::array<double, 16> worldToNdc(const opad::Mat4& world) const;
   QPointF widgetToNdc(const QPointF& widget) const;
   void setCloudColorMode(int mode);
+  // A display-only colour overlay on one cloud node (a deviation map): one 0xAARRGGBB per point by its ordinal (QRgb, as
+  // qRgba makes), alpha 0 = no value there (the cloud's own colour). Null or empty clears it. It never changes the body or
+  // its cached shape: the node's drawn points are recoloured on a worker (RecomputePrsOnly, no Redisplay), its sample or
+  // its zoomed-in part alike, again through every level-of-detail swap. Other instances of the same body keep their look.
+  void setCloudColours(const std::string& node, std::shared_ptr<const std::vector<uint32_t>> colours);
+  bool benchCloudOverlaid(const std::string& node) const;  // the node is drawn now with the overlay it was given last
   void updateClouds();
   void showCloudRegion(const std::string& node, std::shared_ptr<const std::vector<uint32_t>> indices);
   bool pickCloudPoint(const QPointF& widget, opad::Vec3& point);  // the drawn surface (or point) under a widget point
@@ -1161,6 +1167,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_refineJob = nullptr;
   Job* m_cloudJob = nullptr;  // ViewportCloud.cpp
   Handle(AIS_InteractiveObject) m_cloudLasso;
+  std::map<std::string, std::shared_ptr<const std::vector<uint32_t>>> m_cloudColours;  // colour overlays by node
+  std::set<std::string> m_cloudColourDirty;  // nodes whose overlay changed since they were drawn
   std::set<std::string> m_cloudRecolour, m_cloudShown;  // cloud keys to draw again in the colour mode
   Graphic3d_WorldViewProjState m_cloudCamera;
   std::map<std::string, Handle(AIS_InteractiveObject)> m_cloudRegion;  // region overlays by node

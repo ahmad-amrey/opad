@@ -2,7 +2,8 @@
 // a scan is): every step of working with it timed with the UI watchdog's longest stall since the step began
 // (trace::stalls), which must stay under 250 ms (CLAUDE.md "nothing long runs on the UI thread"). The cloud is opened and
 // drawn (a sample of BodyPrs::cloudBudget points), picked as a body and as a point (the Vertex filter: an ordinal, no owner
-// per point), zoomed into (the visible part drawn at full density, ViewportCloud.cpp), a box of its points selected with
+// per point), zoomed into (the visible part drawn at full density, ViewportCloud.cpp), given a colour overlay (a deviation
+// map, Viewport::setCloudColours) kept through the zoom back out and cleared, a box of its points selected with
 // Select points, sliced (Slice points, through the design's plan and commit) and the slice turned into a sketch.
 // "bench: cloud: <step> ... PASS/FAIL".
 #include <QApplication>
@@ -35,7 +36,8 @@ OPAD_BENCH(OPAD_BENCH_CLOUD, cloud) {
     int phase = 0, ticks = 0, settled = 0, x = 0, y = 0;
     bool all = true;
     std::string cloud, slice;
-    size_t points = 0, drawn = 0, sketches = 0;
+    size_t points = 0, drawn = 0, sketches = 0, drawnBefore = 0;
+    std::shared_ptr<const std::vector<uint32_t>> overlay;
     QString step;
     QElapsedTimer clock;
   };
@@ -143,7 +145,44 @@ OPAD_BENCH(OPAD_BENCH_CLOUD, cloud) {
         if ((now == st->drawn || busy) && st->clock.elapsed() < 60000) return;
         end(QStringLiteral("%1 points drawn").arg(now));
         require(now != st->drawn && now > 0 && now < st->points, QStringLiteral("the zoomed-in part is drawn (%1 points)").arg(now));
+        // A deviation map's colours (display only), one a point: red above the middle, none (alpha 0) below.
+        auto colours = std::make_shared<std::vector<uint32_t>>(st->points);
+        for (size_t i = 0; i < st->points; ++i) (*colours)[i] = i * 2 > st->points ? 0xFFFF2020u : 0u;
+        st->overlay = colours;
+        begin("a colour overlay on the zoomed-in part");
+        view->setCloudColours(st->cloud, colours);
+        st->phase = 40;
+        return;
+      }
+      case 40: {
+        if ((!view->benchCloudOverlaid(st->cloud) || busy) && st->clock.elapsed() < 60000) return;
+        end(QStringLiteral("%1 points drawn").arg(view->benchCloudDrawn(st->cloud)));
+        require(view->benchCloudOverlaid(st->cloud), "the overlay recolours the zoomed-in part");
+        st->drawnBefore = view->benchCloudDrawn(st->cloud);
+        begin("zoomed out: the overlay kept on the whole sample");
         view->fitAll();
+        view->requestRefinement();
+        st->phase = 41;
+        return;
+      }
+      case 41: {
+        const size_t now = view->benchCloudDrawn(st->cloud);
+        if ((now == st->drawnBefore || busy || view->cameraMoving()) && st->clock.elapsed() < 60000) return;
+        if (!view->benchCloudOverlaid(st->cloud) && st->clock.elapsed() < 60000) return;
+        end(QStringLiteral("%1 points drawn").arg(now));
+        require(view->benchCloudOverlaid(st->cloud) && now == st->drawn, QStringLiteral("the overlay follows the swap back to the sample (%1 points)").arg(now));
+        begin("the overlay cleared");
+        view->setCloudColours(st->cloud, nullptr);
+        view->requestRefinement();
+        st->phase = 42;
+        return;
+      }
+      case 42: {
+        if ((busy || view->benchCloudOverlaid(st->cloud)) && st->clock.elapsed() < 30000) return;
+        if (st->clock.elapsed() < 800) return;  // its pass
+        end();
+        require(!view->benchCloudOverlaid(st->cloud) && view->benchCloudDrawn(st->cloud) == st->drawn, "the cloud is drawn in its own colours again");
+        st->overlay.reset();
         st->phase = 5;
         return;
       }

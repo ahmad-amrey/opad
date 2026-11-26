@@ -25,6 +25,16 @@ including a new airflow check for ducts and fittings.
   where two planes meet. **Align scan to axes** stands a scan on XY in one step, its base flat down, a wall along X
   and centred, with *Next base*, *Next X* and *Flip* for the other ways it could stand. AI assistants get the same fits
   (`fit_reference`, `scan_axes`).
+- **Point clouds: work with the raw scan.** A scanning app's mesh rounds edges, fills small holes and smooths detail
+  away; the measured points keep it. OPAD now opens and imports point clouds as bodies of their own: PLY files without
+  faces (they used to be refused), XYZ, PTS, CSV, E57 and LAS, with their colours, normals and intensity, in the right
+  units and the right way up. Clouds of tens of millions of points stay smooth to turn and zoom: the overview is drawn
+  from a sample and the part you zoom into at full density. The new *Design > Scan* tab estimates normals, removes
+  stray points, thins a cloud evenly, selects points with a lasso, a box or a brush to keep or delete them, and slices
+  a cloud with a plane: each slice is a flat profile you can sketch over, and *Slice to sketch* turns it into lines to
+  fit with arcs and dimensions, slice by slice. Points can be coloured by the scan's colours, their normals or their
+  intensity, and clouds export as PLY, XYZ, PTS, CSV or E57. AI assistants read clouds, query regions and slice them
+  too (`cloud`, `cloud_sketch`). LAZ files need converting to LAS or E57 first.
 - **Simulate asks what you want to find out.** The Simulate tabs are now goals (Air and fluids, Heat, Strength,
   Movement), and the start page shows each check as a plain question with a small picture of the case: "How much
   pressure does a fitting lose?", "Will my electronics box overheat?", "Will it bend or break under a load?", "Will my 3D

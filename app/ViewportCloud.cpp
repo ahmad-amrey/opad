@@ -94,6 +94,13 @@ void Viewport::setCloudColorMode(int mode) {
   m_refineTimer.start();
 }
 
+void Viewport::setCloudColours(const std::string& node, std::shared_ptr<const std::vector<uint32_t>> colours) {
+  if (colours && !colours->empty()) m_cloudColours[node] = std::move(colours);
+  else if (!m_cloudColours.erase(node)) return;
+  m_cloudColourDirty.insert(node);
+  m_refineTimer.start();
+}
+
 void Viewport::updateClouds() {
   if (!m_initialised || m_cloudJob || m_doc->loading) return;
   Standard_Integer w = 0, h = 0;
@@ -102,13 +109,19 @@ void Viewport::updateClouds() {
   const auto camera = m_view->Camera();
   const double pixel = camera->IsOrthographic() ? camera->Scale() / h : 2 * camera->Distance() * std::tan(camera->FOVy() * M_PI / 360) / h;
   if (!(pixel > 0) || !std::isfinite(pixel)) return;
-  // Point sizes: as wide as the drawn points' spacing looks now (a sample's points stand further apart).
+  const int mode = BodyPrs::cloudColorMode.load();
+  const auto state = camera->WorldViewProjState();
+  const bool moved = !(m_cloudCamera == state);
+  // Point sizes: as wide as the drawn points' spacing looks now (a sample's points stand further apart). Then what to draw
+  // again: a sampled cloud's visible part when the camera moved, a cloud in other colours than its base arrays (the colour
+  // mode, a node's colour overlay). An overlay is a node's own; the rest is shared by the instances of a key.
   bool resized = false;
   struct Want {
-    std::string key;
+    std::string node, key;  // node set: that instance alone (its overlay); else every instance of the key without one
     std::shared_ptr<const BodyPrs> base;
     std::array<double, 16> ndc;
-    bool recolour = false;
+    std::shared_ptr<const std::vector<uint32_t>> colours;
+    std::array<double, 3> own{0.8, 0.8, 0.8};
   };
   std::vector<Want> wants;
   std::set<std::string> seen;
@@ -119,50 +132,55 @@ void Viewport::updateClouds() {
     const auto& shown = body->displayPrs() && body->displayPrs()->isCloud() ? body->displayPrs() : base;
     const size_t total = base->cloudData->size();
     const double fraction = total ? double(std::max<size_t>(shown->cloudDrawn, 1)) / double(total) : 1;
-    // Seen from the refinement's own part: its points are every point there.
-    const double spacing = base->cloudSpacing / std::sqrt(shown == base ? fraction : 1.0);
+    const double spacing = base->cloudSpacing / std::sqrt(shown->cloudOnly ? 1.0 : fraction);
     resized = body->setPointSize(float(std::clamp(spacing / pixel * 1.1, 1.0, 6.0))) || resized;
+    const bool sampled = base->cloudDrawn < total;
+    const auto overlay = m_cloudColours.find(id);
+    if (overlay != m_cloudColours.end()) {
+      if (m_cloudColourDirty.count(id) || m_cloudRecolour.count(item.key) || (sampled && moved))
+        wants.push_back({id, item.key, base, ndcOf(camera, item.world), overlay->second, item.color});
+      continue;
+    }
     if (!seen.insert(item.key).second) continue;
-    const bool recolour = m_cloudRecolour.count(item.key) > 0;
-    if (recolour || base->cloudDrawn < total) wants.push_back({item.key, base, ndcOf(camera, item.world), recolour});
+    const bool restyled = m_cloudRecolour.count(item.key) || m_cloudColourDirty.count(id);
+    if (restyled || (sampled && moved)) wants.push_back({{}, item.key, base, ndcOf(camera, item.world), nullptr, item.color});
   }
   if (resized) redrawScene();
-  const auto state = camera->WorldViewProjState();
-  if (wants.empty() || (m_cloudCamera == state && m_cloudRecolour.empty())) return;
   m_cloudCamera = state;
   m_cloudRecolour.clear();
+  m_cloudColourDirty.clear();
+  if (wants.empty()) return;
   auto pass = std::make_shared<std::vector<Want>>(std::move(wants));
   auto results = std::make_shared<std::vector<std::shared_ptr<BodyPrs>>>(pass->size());
-  auto whole = std::make_shared<std::vector<char>>(pass->size(), 0);
-  const int mode = BodyPrs::cloudColorMode.load();
   const void* cache = m_activeCache;
   QElapsedTimer started;
   started.start();
   m_jobs->backgroundNext();
-  m_cloudJob = m_jobs->async(tr("Drawing the points"), [pass, results, whole, mode](Progress p) {
+  m_cloudJob = m_jobs->async(tr("Drawing the points"), [pass, results, mode](Progress p) {
     for (size_t i = 0; i < pass->size(); ++i) {
       if (p.cancelled()) return;
       const auto& want = (*pass)[i];
       const auto& points = *want.base->cloudData;
-      // The points in view (inside the window, in front of the eye).
-      const opad::cloud::Region visible = opad::cloud::in_polygon(points, want.ndc, {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}, [&] { return p.cancelled(); });
-      const size_t count = visible.count();
+      std::shared_ptr<const std::vector<uint32_t>> only;
+      if (want.base->cloudDrawn < points.size()) {
+        // The points in view (inside the window, in front of the eye), unless that is most of it.
+        const opad::cloud::Region visible = opad::cloud::in_polygon(points, want.ndc, {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}, [&] { return p.cancelled(); });
+        const size_t count = visible.count();
+        if (count > 0 && count < size_t(0.8 * double(points.size()))) only = std::make_shared<const std::vector<uint32_t>>(visible.indices());
+      }
+      // The base arrays already are the whole sample in its mode: nothing to make (null = draw those).
+      if (!only && !want.colours && mode == want.base->cloudMode) continue;
       auto prs = std::make_shared<BodyPrs>();
       prs->box = want.base->box;
       prs->cloudData = want.base->cloudData;
       prs->cloudSpacing = want.base->cloudSpacing;
-      if (count >= size_t(0.8 * double(points.size())) || count == 0) {
-        // Most of it in view: the whole cloud's sample (in the colours asked for, when that is why it is here).
-        (*whole)[i] = 1;
-        if (!want.recolour) continue;
-        prs->cloudPoints = BodyPrs::cloudArray(points, nullptr, mode, BodyPrs::cloudBudget, &prs->cloudDrawn);
-      } else {
-        const std::vector<uint32_t> idx = visible.indices();
-        prs->cloudPoints = BodyPrs::cloudArray(points, &idx, mode, BodyPrs::cloudBudget, &prs->cloudDrawn);
-      }
+      prs->cloudMode = mode;
+      prs->cloudOnly = only;
+      prs->cloudOverlay = want.colours;
+      prs->cloudPoints = BodyPrs::cloudArray(points, only.get(), mode, BodyPrs::cloudBudget, &prs->cloudDrawn, want.colours.get(), &want.own);
       (*results)[i] = std::move(prs);
     }
-  }, [this, pass, results, whole, cache, started](bool ok, const QString&) {
+  }, [this, pass, results, cache, started](bool ok, const QString&) {
     m_cloudJob = nullptr;
     if (!ok || cache != m_activeCache) return;
     bool changed = false;
@@ -171,12 +189,11 @@ void Viewport::updateClouds() {
       const auto& want = (*pass)[i];
       const auto& prs = (*results)[i];
       for (const auto& [id, item] : m_items) {
-        if (item.key != want.key) continue;
+        if (want.node.empty() ? item.key != want.key || m_cloudColours.count(id) : id != want.node) continue;
         const Handle(BodyShape) body = Handle(BodyShape)::DownCast(item.ais);
         if (body.IsNull() || body->prs() != want.base) continue;  // meshed anew meanwhile
-        // Whole in view and drawn in the base colours: back to the base sample.
-        const std::shared_ptr<const BodyPrs> next = prs ? prs : ((*whole)[i] && BodyPrs::cloudColorMode.load() == 0 ? nullptr : body->displayPrs());
-        if (body->setDisplayPrs(next)) {
+        if (!want.node.empty() && m_cloudColours[id] != want.colours) continue;  // another overlay came meanwhile: its own pass
+        if (body->setDisplayPrs(prs)) {  // null: the base arrays again
           m_ctx->RecomputePrsOnly(body, Standard_False);
           changed = true;
         }
@@ -252,4 +269,12 @@ void Viewport::setCloudLasso(const QPolygonF& widget, bool closed) {
   if (!m_ctx->IsDisplayed(band)) m_ctx->Display(band, 0, -1, Standard_False, AIS_DS_Displayed);
   else m_ctx->Redisplay(band, Standard_False);
   redrawScene();
+}
+
+bool Viewport::benchCloudOverlaid(const std::string& node) const {
+  const auto item = m_items.find(node);
+  const auto overlay = m_cloudColours.find(node);
+  if (item == m_items.end() || overlay == m_cloudColours.end()) return false;
+  const Handle(BodyShape) body = Handle(BodyShape)::DownCast(item->second.ais);
+  return !body.IsNull() && body->displayPrs() && body->displayPrs()->cloudOverlay == overlay->second;
 }
