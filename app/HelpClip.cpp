@@ -114,13 +114,17 @@ const QHash<QString, QStringList>& schema() {
         {"timeline", {"screen", "markers", "states", "at"}},
         {"letters", {"at", "value", "height", "plane", "align", "color", "width", "fill", "fillOpacity"}},
         {"camera", {"az", "elev", "zoom", "center", "roll", "persp", "dragged", "framing"}},  // "elev": "el" names the element
+        // A point cloud (help for the point cloud tools): n points on a cylinder (r, h) or a plate (w, d) at "at", px wide; a band
+        // [z, half] in bandColor (flatten: laid onto z, the rest faint), select [zlo, zhi] in selColor, stray points (outliers)
+        // at strayOpacity, normals: ticks of that length.
+        {"cloud", {"shape", "at", "r", "h", "w", "d", "n", "px", "color", "band", "bandColor", "flatten", "stray", "strayOpacity", "select", "selColor", "normals"}},
     };
     for (auto it = h.begin(); it != h.end(); ++it) *it << "el" << "from" << "to" << "fade" << "opacity" << "keys" << "offset" << "rot" << "pivot" << "scale" << "note";
     return h;
   }();
   return s;
 }
-const QStringList kColorProps{"color", "fill", "glow", "hatch", "tone", "edges", "capColor", "dot", "box"};
+const QStringList kColorProps{"color", "fill", "glow", "hatch", "tone", "edges", "capColor", "dot", "box", "bandColor", "selColor"};
 const QStringList kTokens{"bg", "bg2", "bg3", "bg4", "line", "fg", "fg2", "fg3", "vp", "sel", "selbg", "hov", "amber", "green", "red",
                           "mtop", "mleft", "mright", "medge", "cap", "onsel", "glow", "blue", "white", "black", "magenta"};
 const QHash<QString, QStringList> kKinds{
@@ -1837,6 +1841,59 @@ void paintItem(Ctx& c, const Item& it, const QJsonObject& o) {
         d[i] = len;
         p.setPen(QPen(alpha(token(*c.tk, colors[i]), 0.85), 1.4 * c.u, Qt::SolidLine, Qt::RoundCap));
         p.drawLine(c.map(at), c.map(at + d));
+      }
+    }
+  } else if (el == "cloud") {
+    // Deterministic points (golden-ratio steps) on a cylinder or a plate, a little rough as a scan is.
+    const V3 at = c.pt(o.value("at"), x);
+    const bool plate = o.value("shape").toString() == "plate";
+    const double r = o.value("r").toDouble(8), h = o.value("h").toDouble(12), w = o.value("w").toDouble(24), d = o.value("d").toDouble(16);
+    const int n = std::clamp(o.value("n").toInt(320), 0, 4000), stray = std::clamp(o.value("stray").toInt(0), 0, 64);
+    const double px = o.value("px").toDouble(1.1) * c.u;
+    const QJsonArray band = o.value("band").toArray(), sel = o.value("select").toArray();
+    const bool flatten = o.value("flatten").toBool();
+    const double normals = o.value("normals").toDouble(0);
+    const QColor base = c.col(o.value("color"), "fg2"), hot = c.col(o.value("bandColor"), "sel"), picked = c.col(o.value("selColor"), "sel");
+    auto frac = [](double v) { return v - std::floor(v); };
+    p.setPen(Qt::NoPen);
+    for (int k = 0; k < n + stray; ++k) {
+      V3 q, nn;
+      const double jitter = (frac(k * 0.7548776662) - 0.5) * 0.25;
+      if (k >= n) {  // outliers: off the surface
+        const double a = k * 2.399963, rr = (plate ? 0.6 * w : 1.6 * r) * (0.6 + 0.4 * frac(k * 0.3819));
+        q = at + V3(float(rr * std::cos(a)), float(rr * std::sin(a)), float((plate ? 4 : h * 0.2) + h * frac(k * 0.618034)));
+      } else if (plate) {
+        q = at + V3(float(w * (frac(k * 0.618034) - 0.5)), float(d * (frac(k * 0.7548776662 + 0.31) - 0.5)), float(jitter * 0.4));
+        nn = V3(0, 0, 1);
+      } else {
+        const double a = k * 2.399963229728653;
+        const double rr = r + jitter;
+        q = at + V3(float(rr * std::cos(a)), float(rr * std::sin(a)), float(h * frac(k * 0.618034)));
+        nn = V3(float(std::cos(a)), float(std::sin(a)), 0);
+      }
+      QColor colour = base;
+      double alphaOf = 1;
+      if (k >= n) colour = c.col(QJsonValue("amber"), "amber"), alphaOf = o.value("strayOpacity").toDouble(1);
+      const double z = q.z() - at.z();
+      if (band.size() == 2 && k < n) {
+        const bool in = std::abs(z - band.at(0).toDouble()) <= band.at(1).toDouble();
+        if (in) {
+          colour = hot;
+          if (flatten) q.setZ(float(at.z() + band.at(0).toDouble()));
+        } else if (flatten) {
+          alphaOf = 0.25;
+        }
+      }
+      if (sel.size() == 2 && k < n && z >= sel.at(0).toDouble() && z <= sel.at(1).toDouble()) colour = picked;
+      const QPointF s = c.map(q);
+      if (c.record || alphaOf <= 0) continue;
+      colour.setAlphaF(float(std::clamp(alphaOf, 0.0, 1.0) * colour.alphaF()));
+      p.setBrush(colour);
+      p.drawEllipse(s, px, px);
+      if (normals > 0 && k < n && k % 3 == 0) {
+        p.setPen(QPen(alpha(c.col(QJsonValue("blue"), "blue"), 0.8), 0.8 * c.u));
+        p.drawLine(s, c.map(q + nn * float(normals)));
+        p.setPen(Qt::NoPen);
       }
     }
   } else if (el == "poly") {

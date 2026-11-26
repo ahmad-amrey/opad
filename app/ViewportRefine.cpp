@@ -73,6 +73,7 @@ void Viewport::dropRefined(const std::string& prefix) {
 }
 
 void Viewport::refineVisible() {
+  updateClouds();  // point clouds: point sizes and the zoomed-in part (ViewportCloud.cpp)
   // Not in the wireframe (UI-48): the refinement meshes faces finer, and a wireframe draws no face.
   if (!m_initialised || m_refineJob || (m_items.empty() && m_compareParts.empty()) || m_doc->loading || m_style == Style::Wireframe) return;
   Standard_Integer w = 0, h = 0;

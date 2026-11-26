@@ -83,6 +83,7 @@
 #include "opad/geometry.hpp"
 #include "opad/kernel_guard.hpp"
 #include "opad/mesh_solid.hpp"
+#include "opad/scan_fit.hpp"
 
 namespace opad::design {
 
@@ -209,6 +210,24 @@ std::vector<FeatureSpec> build_specs() {
       "Rebuild mesh bodies as solids: regions of facets become planes, cylinders, cones, spheres and tori; the rest stays flat facets. A tolerance of 0 is automatic.",
       {pick("bodies", "Mesh", "bodies", 1, 0), in("tolerance", "Tolerance", "length", "0 mm"), in("angle", "Facet angle", "angle", "35 deg")},
       "new");
+  // Point clouds (opad/point_cloud.hpp, design/cloud_features.cpp): each changes the cloud in place (the timeline keeps
+  // the points as they were), except Slice, which makes the slices as new clouds lying on their planes.
+  add("cloud_outliers", "Remove outliers", "cloud_outliers", "modify",
+      "Drop the points of a cloud that stand apart from the rest: those whose mean distance to their nearest neighbours is over the cloud's mean by more than the ratio of standard deviations.",
+      {pick("bodies", "Point clouds", "bodies", 1, 0), in("neighbours", "Neighbours", "count", "16"), in("ratio", "Standard deviations", "number", "2")});
+  add("cloud_downsample", "Downsample", "cloud_downsample", "modify",
+      "Keep one measured point per voxel (the one nearest the voxel's centre, with its colour and normal): a lighter cloud with the same shape.",
+      {pick("bodies", "Point clouds", "bodies", 1, 0), in("voxel", "Voxel size", "length", "0.5 mm")});
+  add("cloud_normals", "Estimate normals", "cloud_normals", "modify",
+      "Give each point a normal from the plane through its nearest neighbours, turned consistently across the cloud (outward from its middle).",
+      {pick("bodies", "Point clouds", "bodies", 1, 0), in("neighbours", "Neighbours", "count", "16")});
+  add("cloud_crop", "Crop points", "cloud_crop", "modify",
+      "Keep or delete a region of a cloud's points (a lasso, a brush or a box picked on it).",
+      {in("region", "Region", "region"), choice("keep", "Keep", {"inside", "outside"})});
+  add("cloud_slice", "Slice points", "cloud_slice", "create",
+      "The points within a band either side of a plane, laid onto it as a 2D profile to sketch over or turn into sketch geometry; several slices step along the plane's normal.",
+      {pick("bodies", "Point cloud", "bodies", 1, 1), in("plane", "Plane", "plane", xy), in("offset", "Offset", "length", "0 mm"),
+       in("band", "Band (each side)", "length", "0.25 mm"), in("count", "Slices", "count", "1"), in("spacing", "Spacing", "length", "5 mm")});
   add("hole", "Hole", "hole", "create",
       "Drill at points: sketch points drill into the material behind the sketch; vertices and points in space into the nearest body's face (its inward normal), or along Direction when given.",
       {pick("points", "Points", "points", 1, 0), choice("type", "Type", {"simple", "counterbore", "countersink"}), in("diameter", "Diameter", "length", "5 mm"),
@@ -263,16 +282,17 @@ std::vector<FeatureSpec> build_specs() {
        choice("to", "Onto", {"plane", "line", "point"}), in("to_plane", "To face or plane", "plane", nullptr, "to=plane"),
        in("to_line", "To edge or axis", "axis", nullptr, "to=line"), pick("to_point", "To point", "points", 1, 1, "to=point"),
        choice("motion", "Motion", {"move_and_rotate", "move", "rotate"}), in("flip", "Flip", "bool", false), in("offset", "Offset", "length", "0 mm", "to=plane"),
-       in("angle", "Turn about it", "angle", "0 deg", "to=plane|line")});
+       in("angle", "Turn about it", "angle", "0 deg", "to=plane|line"), in("frame", "Origin and X onto the plane's too", "bool", false, "to=plane")});
   add("remove", "Remove", "delete", "body", "Take bodies out of the design from here on (history is kept).", {pick("bodies", "Bodies", "bodies", 1, 0)});
   add("plane", "Construction plane", "plane", "construct", "A plane to sketch on or to mirror, split and draft about.",
       {choice("mode", "Type", {"offset", "angle", "midplane", "three_points", "point_normal"}), in("plane", "From plane", "plane", xy, "mode=offset|angle|midplane"),
        in("distance", "Distance", "length", "10 mm", "mode=offset"), in("axis", "About axis", "axis", json{{"base", "x"}}, "mode=angle"), in("angle", "Angle", "angle", "45 deg", "mode=angle"),
-       in("plane2", "Second plane", "plane", nullptr, "mode=midplane"), pick("points", "Three points", "points", 3, 3, "mode=three_points"),
+       in("plane2", "Second plane", "plane", nullptr, "mode=midplane"), pick("points", "Three or more points (best fit)", "points", 3, 0, "mode=three_points"),
        pick("point", "Through point", "points", 1, 1, "mode=point_normal"), in("normal", "Normal along", "axis", nullptr, "mode=point_normal")});
   add("axis", "Construction axis", "axis", "construct", "An axis to revolve or pattern about.",
-      {choice("mode", "Type", {"edge", "two_points", "normal"}), in("edge", "Edge or round face", "axis", nullptr, "mode=edge"), pick("points", "Two points", "points", 2, 2, "mode=two_points"),
-       in("plane", "Plane", "plane", xy, "mode=normal"), pick("point", "Through point", "points", 1, 1, "mode=normal")});
+      {choice("mode", "Type", {"edge", "two_points", "normal", "two_planes"}), in("edge", "Edge or round face", "axis", nullptr, "mode=edge"), pick("points", "Two or more points (best fit)", "points", 2, 0, "mode=two_points"),
+       in("plane", "Plane", "plane", xy, "mode=normal|two_planes"), pick("point", "Through point", "points", 1, 1, "mode=normal"),
+       in("plane2", "Second plane", "plane", nullptr, "mode=two_planes")});
   // Gap log #10: a check kept in the timeline, run again whenever its bodies change.
   add("interference", "Interference check", "interference", "construct",
       "Bodies that overlap, or come closer than the clearance, stored with the design and checked again whenever they change. With Fail on, a finding is an error.",
@@ -627,6 +647,8 @@ Points resolve_points(const Ctx& ctx, const json& refs) {
       out.at.push_back(pnt(p.point));
     } else if (auto free = free_point(r)) {  // "point/x,y,z", {"point": [x, y, z]} or [x, y, z] (gap log #14)
       out.at.push_back(*free);
+    } else if (auto node = mesh_point(ctx, r)) {  // a mesh's vertex (a scan's node)
+      out.at.push_back(*node);
     } else {
       const ResolvedRef v = ctx.resolve(r);
       if (v.sub.ShapeType() != TopAbs_VERTEX) throw Error("pick sketch points or vertices");
@@ -1829,6 +1851,7 @@ struct AlignGeo {
   enum Kind { Point, Line, Plane } kind = Point;
   gp_Pnt at;
   gp_Dir dir;
+  gp_Dir x = gp_Dir(1, 0, 0);  // a plane's x (its frame's), for Align's "frame"
 };
 
 AlignGeo align_geo(const Ctx& ctx, const json& in, const std::string& side) {
@@ -1848,6 +1871,7 @@ AlignGeo align_geo(const Ctx& ctx, const json& in, const std::string& side) {
     g.kind = AlignGeo::Plane;
     g.at = pnt(f.origin);
     g.dir = gp_Dir(vec(f.normal()));
+    g.x = gp_Dir(vec(f.x));
   } else {
     throw Error("align: \"" + side + "\" must be point, line or plane");
   }
@@ -1883,6 +1907,20 @@ gp_Trsf align_motion(const Ctx& ctx, const json& in, bool facing) {
   const std::string motion = in.value("motion", std::string("move_and_rotate"));
   if (motion != "move_and_rotate" && motion != "move" && motion != "rotate") throw Error("align: motion must be move_and_rotate, move or rotate");
   const bool rotating = motion != "move", moving = motion != "rotate", flip = in.value("flip", false);
+  // Frame onto frame (a scan's fitted axes onto XY): the From plane's origin onto the To plane's, its normal against it
+  // (flush with Flip, or always for a sketch) and its x along the To plane's x; Turn about it and Offset after that.
+  if (from.kind == AlignGeo::Plane && to.kind == AlignGeo::Plane && in.value("frame", false) && rotating && moving) {
+    const bool against = facing != flip;
+    const gp_Dir tn = against ? to.dir.Reversed() : to.dir;
+    const gp_Dir tx = laid_on(to.x, tn);
+    gp_Trsf placed;  // the From frame's axes onto (tx, tn) with the origin onto the To origin
+    placed.SetDisplacement(gp_Ax3(from.at, from.dir, laid_on(from.x, from.dir)), gp_Ax3(to.at, tn, tx));
+    gp_Trsf lifted, spun;
+    if (in.contains("offset")) lifted.SetTranslation(gp_Vec(to.dir) * ctx.length(in, "offset"));
+    if (in.contains("angle"))
+      if (const double a = ctx.angle(in, "angle"); std::fabs(a) > 1e-12) spun.SetRotation(gp_Ax1(to.at, to.dir), a);
+    return lifted * spun * placed;
+  }
   // The turn, about the From point: a line along the line (the nearer way round), a face against the face (facing it; flush
   // with Flip, or always for a sketch), a line into the plane, a plane through the line.
   gp_Trsf turned;
@@ -1924,7 +1962,10 @@ gp_Trsf align_motion(const Ctx& ctx, const json& in, bool facing) {
 TopoDS_Shape make_gear(const std::string& type, int z, double m, double alpha, double width, double bore, double rim, double backlash, double phase,
                        double rack_height);  // gear.cpp
 
+Out compute_cloud_feature(const Ctx& ctx, const std::string& kind, const json& in);  // cloud_features.cpp
+
 Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
+  if (kind.rfind("cloud_", 0) == 0) return compute_cloud_feature(ctx, kind, in);
   const FeatureSpec* spec = feature_spec(kind);
   if (!spec) throw Error("unknown feature kind: " + kind);
   Out out;
@@ -2601,10 +2642,17 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     Frame f;
     if (mode == "three_points") {
       const Points p = resolve_points(ctx, in.value("points", json()));
-      if (p.at.size() != 3) throw Error("pick three points");
+      if (p.at.size() < 3) throw Error("pick three points or more");
       const gp_Vec a(p.at[0], p.at[1]), b(p.at[0], p.at[2]);
-      if (a.Crossed(b).Magnitude() < 1e-9) throw Error("the three points are on one line");
-      f = frame_from_ax3(gp_Ax3(p.at[0], gp_Dir(a.Crossed(b)), gp_Dir(a)));
+      if (p.at.size() == 3) {
+        if (a.Crossed(b).Magnitude() < 1e-9) throw Error("the three points are on one line");
+        f = frame_from_ax3(gp_Ax3(p.at[0], gp_Dir(a.Crossed(b)), gp_Dir(a)));
+      } else {  // more: the best fit (robust: a stray point is left out), facing as the first three turn
+        const scanfit::Plane fit = scanfit::fit_plane(p.at);
+        const gp_Vec x = a.Magnitude() > 1e-9 ? a : gp_Vec(fit.x);
+        f = plane_through(fit.origin, gp_Vec(fit.normal), &x);
+        out.extra["fit"] = fit.q.to_json();
+      }
     } else if (mode == "point_normal") {  // through a point, square to an edge, an axis or a face (TODO 10 B5)
       const Points p = resolve_points(ctx, in.value("point", json()));
       if (p.at.size() != 1) throw Error("pick the point the plane goes through");
@@ -2665,8 +2713,26 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       a = ctx.axis(in.value("edge", json()));
     } else if (mode == "two_points") {
       const Points p = resolve_points(ctx, in.value("points", json()));
-      if (p.at.size() != 2 || p.at[0].Distance(p.at[1]) < 1e-9) throw Error("pick two different points");
-      a = gp_Ax1(p.at[0], gp_Dir(gp_Vec(p.at[0], p.at[1])));
+      if (p.at.size() < 2) throw Error("pick two points or more");
+      if (p.at.size() == 2) {
+        if (p.at[0].Distance(p.at[1]) < 1e-9) throw Error("pick two different points");
+        a = gp_Ax1(p.at[0], gp_Dir(gp_Vec(p.at[0], p.at[1])));
+      } else {  // more: the line that fits them best
+        const scanfit::Line fit = scanfit::fit_line(p.at);
+        a = gp_Ax1(fit.origin, fit.dir);
+        out.extra["fit"] = fit.q.to_json();
+      }
+    } else if (mode == "two_planes") {  // where two planes meet (fitted ones on a scan: its edge, which the scan blurs)
+      auto as_fit = [&](const char* key) {
+        const Frame f = ctx.plane(in.value(key, json()));
+        scanfit::Plane p;
+        p.origin = pnt(f.origin);
+        p.normal = gp_Dir(vec(f.normal()));
+        p.x = gp_Dir(vec(f.x));
+        return p;
+      };
+      const scanfit::Line l = scanfit::plane_intersection(as_fit("plane"), as_fit("plane2"));
+      a = gp_Ax1(l.origin, l.dir);
     } else {
       const Frame f = ctx.plane(in.value("plane", json()));
       const Points p = resolve_points(ctx, in.value("point", json()));

@@ -1173,6 +1173,23 @@
    ]
   },
   {
+   "id": "design.alignScan", "duration": 5.2, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-24, -18, 24, 18]}},
+    {"el": "plane", "center": [0, 0, 0], "size": [20, 14], "plane": "xy", "color": "sel", "fillOpacity": 0.12, "from": 2.0, "to": 3.4, "fade": 0.2},
+    {"el": "solid", "profile": {"rect": [-8, -5, 16, 10], "round": 1}, "height": 3, "tone": "sel", "toneAmount": 0, "pivot": [0, 0, 0],
+     "keys": [[0, {"offset": [10, 6, 2], "rot": 28}], [0.6, {"toneAmount": 0.4}], [2.0, {"offset": [10, 6, 2], "rot": 28}], [3.0, {"offset": [0, 0, 0], "rot": 0}],
+              [3.6, {"rot": 90}], [4.2, {"rot": 0}], [4.8, {"toneAmount": 0}]]},
+    {"el": "key", "fixed": "enter", "press": 4.4, "from": 4.15, "to": 4.9},
+    {"el": "cursor", "keys": [[0, {"pos": [22, 16, 0]}], [0.6, {"pos": [12, 8, 4], "click": 1}], [1.8, {"pos": [18, 12, 4]}], [5.0, {"pos": [20, 14, 2]}]]}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Select the scan and start Align scan to axes"},
+    {"to": 3.2, "caption": "It stands on its base flat, a wall along X, centred"},
+    {"to": 5.2, "caption": "Next base or Next X tries the others; {fixed:enter} keeps it"}
+   ]
+  },
+  {
    "id": "design.box", "duration": 5.0, "view": "iso", "extent": [-24, -12, 24, 30],
    "items": [
     {"el": "camera", "center": [-8, 2]},
@@ -6014,6 +6031,121 @@
    "steps": [
     {"to": 2.5, "caption": "Download and install opens the official page in your browser"},
     {"to": 5.0, "caption": "I already have it: find it points OPAD at an installed one"}
+   ]
+  },
+  {
+   "id": "design.cloud_normals", "duration": 4.6, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "r": 8, "h": 12, "n": 360, "keys": [[1.9, {"normals": 0}], [2.6, {"normals": 2.5}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 120, "title": "Estimate normals", "rows": [["Neighbours", "16"]], "from": 0.8, "to": 2.5, "button": "OK", "press": 2.2},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.7, {"pos": [8, 0, 6], "click": 1}], [1.6, {"screen": [0.27, 0.32]}], [2.2, {"screen": [0.27, 0.32], "click": 1}], [3.2, {"pos": [16, -14, 4]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Select the point cloud"},
+    {"to": 2.4, "caption": "Set how many neighbours each normal is fitted to"},
+    {"to": 4.6, "caption": "Every point faces out from its surface"}
+   ]
+  },
+  {
+   "id": "design.cloud_outliers", "duration": 4.6, "view": "iso", "extent": [-22, -12, 22, 20],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "r": 8, "h": 12, "n": 320, "stray": 18, "strayOpacity": 1, "keys": [[2.3, {"strayOpacity": 1}], [3.0, {"strayOpacity": 0}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 132, "title": "Remove outliers", "rows": [["Neighbours", "16"], ["Standard deviations", "2"]], "from": 0.8, "to": 2.6, "button": "OK", "press": 2.2},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.7, {"pos": [8, 0, 6], "click": 1}], [1.6, {"screen": [0.29, 0.38]}], [2.2, {"screen": [0.29, 0.38], "click": 1}], [3.2, {"pos": [16, -14, 4]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Select the scan"},
+    {"to": 2.4, "caption": "Points far from their neighbours are outliers"},
+    {"to": 4.6, "caption": "The stray points are gone"}
+   ]
+  },
+  {
+   "id": "design.cloud_downsample", "duration": 4.4, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "r": 8, "h": 12, "n": 900, "px": 0.8, "keys": [[2.2, {"n": 900, "px": 0.8}], [2.9, {"n": 220, "px": 1.3}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 120, "title": "Downsample", "rows": [["Voxel size", "0.5 mm"]], "from": 0.8, "to": 2.5, "button": "OK", "press": 2.1},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.7, {"pos": [8, 0, 6], "click": 1}], [1.5, {"screen": [0.27, 0.32]}], [2.1, {"screen": [0.27, 0.32], "click": 1}], [3.0, {"pos": [16, -14, 4]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Select the point cloud"},
+    {"to": 2.3, "caption": "Set the voxel size"},
+    {"to": 4.4, "caption": "One measured point per voxel: lighter, same shape"}
+   ]
+  },
+  {
+   "id": "design.cloud_crop", "duration": 5.0, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "r": 8, "h": 12, "n": 360, "keys": [[0.4, {"select": [99, 99]}], [1.6, {"select": [7, 12]}], [3.2, {"select": [7, 12]}], [3.3, {"select": [99, 99], "h": 7}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 132, "title": "Select points", "rows": [["Tool", "Box"]], "from": 0.2, "to": 3.4, "button": "Delete these", "press": 3.0},
+    {"el": "cursor", "keys": [[0, {"pos": [-14, -10, 16]}], [0.4, {"pos": [-12, -10, 16], "down": 1}], [1.5, {"pos": [12, 10, 9], "down": 1}], [1.6, {"pos": [12, 10, 9]}], [2.4, {"screen": [0.25, 0.32]}], [3.0, {"screen": [0.25, 0.32], "click": 1}], [3.8, {"pos": [16, -14, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.6, "caption": "Drag over the points to crop"},
+    {"to": 3.2, "caption": "Keep only these, or Delete these"},
+    {"to": 5.0, "caption": "One step: the region stays with it"}
+   ]
+  },
+  {
+   "id": "design.cloud_slice", "duration": 5.2, "view": "iso", "extent": [-22, -12, 22, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "r": 8, "h": 12, "n": 700, "px": 0.9, "keys": [[1.8, {"band": [99, 0.6], "flatten": false}], [2.0, {"band": [6, 0.6]}], [3.4, {"band": [6, 0.6], "flatten": false}], [3.5, {"flatten": true}]]},
+    {"el": "plane", "plane": "xy", "center": [0, 0, 6], "size": [24, 22], "color": "sel", "fillOpacity": 0.08, "from": 1.6, "to": 3.6},
+    {"el": "card", "screen": [0.03, 0.06], "w": 132, "title": "Slice points", "rows": [["Offset", "6 mm"], ["Band (each side)", "0.25 mm"]], "from": 0.9, "to": 3.4, "button": "OK", "press": 3.0},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.7, {"pos": [8, 0, 6], "click": 1}], [2.4, {"screen": [0.27, 0.38]}], [3.0, {"screen": [0.27, 0.38], "click": 1}], [3.8, {"pos": [16, -14, 4]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Select the scan"},
+    {"to": 3.2, "caption": "Pick the plane and set the offset and band"},
+    {"to": 5.2, "caption": "The points in the band, laid onto the plane"}
+   ]
+  },
+  {
+   "id": "cloud.region", "duration": 5.0, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "r": 8, "h": 12, "n": 360, "keys": [[0.3, {"select": [99, 99]}], [1.8, {"select": [6, 12]}], [2.6, {"select": [6, 12]}], [3.6, {"select": [3, 12]}]]},
+    {"el": "poly", "points": [[-11, -8, 14], [10, -10, 14], [12, 9, 8], [-9, 10, 8]], "closed": true, "color": "amber", "dash": [3, 2], "from": 0.3, "to": 1.9,
+     "keys": [[0.3, {"progress": 0}], [1.7, {"progress": 1}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Select points", "rows": [["Tool", "Lasso"], ["Selected", "1,240 points"]], "from": 0.1},
+    {"el": "cursor", "keys": [[0, {"pos": [-11, -8, 14]}], [0.3, {"pos": [-11, -8, 14], "down": 1}], [0.8, {"pos": [10, -10, 14], "down": 1}], [1.2, {"pos": [12, 9, 8], "down": 1}], [1.7, {"pos": [-9, 10, 8], "down": 1}], [1.8, {"pos": [-9, 10, 8]}], [2.6, {"pos": [9, -6, 4], "down": 1}], [3.6, {"pos": [12, 6, 3]}], [4.2, {"pos": [16, -14, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1.8, "caption": "Drag a lasso round the points"},
+    {"to": 3.6, "caption": "{fixed:shift} with the drag adds more"},
+    {"to": 5.0, "caption": "Keep, delete or copy the region"}
+   ]
+  },
+  {
+   "id": "cloud.sliceSketch", "duration": 4.8, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "r": 8, "h": 12, "n": 700, "px": 0.9, "band": [6, 0.6], "flatten": true},
+    {"el": "circle", "center": [0, 0, 6], "r": 8, "plane": "xy", "color": "sel", "width": 2, "from": 2.0, "keys": [[2.0, {"progress": 0}], [3.2, {"progress": 1}]]},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [8, 0, 6], "click": 1}], [1.6, {"pos": [16, -14, 4]}]]},
+    {"el": "chip", "screen": [0.04, 0.08], "text": "Slice to sketch", "icon": "sketch", "from": 1.0, "to": 2.2}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select a slice"},
+    {"to": 3.2, "caption": "Its points become lines of a new sketch"},
+    {"to": 4.8, "caption": "Fit arcs and dimensions to them"}
+   ]
+  },
+  {
+   "id": "cloud.colorBy", "duration": 4.8, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "r": 8, "h": 12, "n": 420, "color": "fg2", "keys": [[1.4, {"color": "fg2"}], [1.5, {"color": "blue"}], [2.9, {"color": "blue"}], [3.0, {"color": "green"}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Colour points by", "rows": [["Scan colours", ""], ["Normals", ""], ["Intensity or deviation", ""], ["Body colour", ""]], "from": 0.2, "to": 3.6}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Choose what the points are coloured by"},
+    {"to": 3.0, "caption": "Normals, or the scan's own colours"},
+    {"to": 4.8, "caption": "Intensity, or the deviation from a model"}
    ]
   }
  ]

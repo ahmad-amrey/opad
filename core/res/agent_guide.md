@@ -179,6 +179,41 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   optional).
 - The construction `plane` feature's `mode: "point_normal"` goes through `point` square to `normal` (any axis form).
 
+## Fitted references (meshes and scans)
+
+- A mesh body (STL, OBJ, 3MF, a 3D scan) has no exact faces or edges: its "faces" are triangles. Planes and axes on it
+  are fitted: `{"fit": {...}}` wherever a plane or an axis is taken (Align's from/to plane and line, Move's axis, a
+  sketch's plane, construction planes and axes, mirror, split, patterns).
+- Region from a seed: `{"fit": {"body": id, "seed": n, "tolerance": "10 deg"}}`; `seed` is a triangle index (the `n`
+  of `<body>/face/<n>`, e.g. from the live selection). A flat grows while its facets face within the tolerance of the
+  region's mean normal (default 10 deg; noise is averaged out, a sharp edge stops it). Or name the triangles:
+  `"triangles": [n, [first, last], ...]`.
+- Points: `{"fit": {"points": [[x, y, z] | vertex refs (a mesh's `<body>/vertex/<n>` is its node), ...]}}`: 3 or more
+  for a plane (best fit, a stray point left out; its normal turns as the first three non-collinear points), 2 or more
+  for `"of": "line"`. With `"body"` the points move with that body.
+- Points by ordinal: `{"fit": {"body": id, "vertices": [n, [first, last], ...]}}` (node ordinals: a point cloud's points,
+  whose bodies have no triangles to grow a region on; a mesh's nodes too) fits a plane, a `normal` or a `line`.
+- Kinds (`"of"`): planes `plane` (default for a plane input) and `scan_axes`; axes `auto` (default for an axis input: a
+  round region's axis, else the flat's normal), `cylinder` (a hole or a boss: tolerance neighbour to neighbour, default
+  20 deg), `normal`, `wall` (a flat wall's long direction), `line` (points), `intersection` (`"planes": [plane, plane]`,
+  any plane forms, fitted ones too: where they meet).
+- `fit_reference` fits one now and returns it with its `result` plus `world` (origin, normal or dir, x, radius) and
+  `quality`: `rms_mm`, `max_mm`, `used` of `total`, `extent_mm` and `grade` good | fair | poor. Poor means the region is
+  not that shape (a curved region taken for a plane): pick elsewhere or lower the tolerance. Pass the returned ref on
+  as it is: a feature keeps `result` (with the body key it was fitted on) and never fits again while the mesh is the
+  same; a feature given a `fit` without one fits it and stores it.
+- Standing a scan on the axes: `scan_axes {body}` lists the candidates, never one guess: `bases` (flats found by mean
+  shift of the area-weighted normals, the ones the whole scan lies behind first, then by area; `method: "pca"` when it
+  has no flats: the principal directions, the least spread standing up) with quality and share, each with its X
+  `turns` (the walls' main direction and its quarter turns). `align_inputs` is a ready Align: `from_plane: {"fit":
+  {"body", "of": "scan_axes", "base": 0, "turn": 0, "origin": "auto"}}` onto `{"base": "xy"}` with `"frame": true`
+  (origin and X onto the plane's too). Choose another with `base` / `turn`, `"flip": true` stands it the other way up,
+  `origin` "base" (centred, on its base) or "centre" (the box centre; pca's default).
+- Live server: a `seed` or `triangles` names no entity and needs no reference token (a triangle the user selected is
+  the `n` of its `<body>/face/<n>`); vertex refs in `points` do, as any vertex input, so pass coordinates there.
+- Align's `frame` (to a plane): the From plane's frame onto the To plane's, origin, normal and x; `offset` and `angle`
+  then lift and turn it about the To normal.
+
 ## Feature conventions
 
 - Primitives (box, cylinder, sphere, cone, torus, coil) sit on their `plane` at (`x`, `y`) in its frame and grow along
@@ -515,6 +550,34 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   lists every cell's camera); `edges: true` (viewport_image) or `edge_lines: true` (render; there `edges` is the
   silhouette outline, on by default) draws the model's edges; `highlight: [refs]` tints faces and edges orange;
   `shading: "smooth"` shades curved surfaces smoothly. All are off by default.
+
+## Point clouds
+
+- A raw scan opens or imports as one body of `representation: "points"`: a PLY without faces (ASCII or binary, with
+  colours, normals and a scalar such as `scalar_intensity`), XYZ (x y z, then r g b or nx ny nz, told apart by their
+  values), PTS (a count line, then x y z intensity r g b), CSV with a header row naming x, y, z, red..., E57 (every scan,
+  placed by its pose, invalid points left out) or LAS (point formats 0-10; LAZ is refused: convert it first). `import`
+  takes `scale` (mm per file unit; default E57 and LAS metres, the rest mm) and `up` (`"y"` turns a Y-up file to Z up).
+  Far coordinates (survey data) stay exact: the points sit near zero and the body's placement carries the offset.
+- A point is a vertex: `"<cloud>/vertex/<i>"` is point i (0-based). Clouds are measured, not modelled on: modelling
+  features refuse them.
+- `cloud` (a read; world mm): `action: "info"` gives the count, `bounds`, typical `spacing` and `attributes`;
+  `"points"` pages points (`offset`, `limit` up to 100000, `next_offset`), optionally of a region; `"region"` takes
+  `box: [[x,y,z],[x,y,z]]`, `sphere: {centre, radius}` or `plane` + `band` and returns `reference` (a region
+  reference), `count`, `centre`, `bounds` and a `sample`; `"slice"` takes `plane` (`{origin, normal[, x]}` or a plane
+  input) + `offset_along` + `band` (mm either side, default 0.25) and returns the points within the band (`uv` in the
+  plane's `frame`, `points` in world mm) and, with `profile` (default true), `polylines` chained along the profile
+  (`tolerance`, `gap` in mm; `closed` loops).
+- A region reference names points by ordinal ranges: `{"body": <cloud>, "kind": "region", "vertices": [[first, last],
+  ...]}` (inclusive). Features take it: `cloud_crop` `{region, keep: "inside" | "outside"}`.
+- Cloud features (`feature`): `cloud_normals` (`neighbours`), `cloud_outliers` (`neighbours`, `ratio` in standard
+  deviations), `cloud_downsample` (`voxel`, one measured point per voxel) and `cloud_crop` change the cloud in place
+  (the timeline keeps the points as they were); `cloud_slice` (`bodies` one cloud, `plane`, `offset`, `band`, `count`,
+  `spacing`) makes each slice a flat cloud on its plane (result `slices`: their frames). `cloud_sketch` (`body` a slice;
+  or any cloud with `plane` and `band`) turns a slice into lines of a new sketch on its plane (`tolerance` mm thins
+  them; `sketch_id` and `profile` {polylines, lines, points} come back): fit arcs, constraints and dimensions to them
+  with `sketch_edit`, then extrude or revolve as usual.
+- `export` writes clouds as `ply` (binary, every attribute), `xyz`, `pts`, `csv` or `e57` (metres), world mm.
 
 ## Drawings
 

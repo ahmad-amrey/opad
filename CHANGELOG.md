@@ -17,6 +17,24 @@ Simulate is now for everyone: pick the question that matches your case, from a p
 including a new airflow check for ducts and fittings.
 
 ### Added
+- **Line up 3D scans and STL meshes.** A scan has no exact faces or edges, so OPAD now fits them: click a mesh where a
+  plane or an axis is asked for (Align, Move, a sketch's plane, construction planes and axes) and it fits the flat around
+  the click, or a hole's or boss's axis, and says how good the fit is (how far the mesh strays from it, and over how
+  many triangles), so a curved region taken for a plane shows up as a poor fit. A box over the mesh fits the plane
+  through the triangles it takes, *Fit to points* the plane through picked vertices, and a construction axis can be
+  where two planes meet. **Align scan to axes** stands a scan on XY in one step, its base flat down, a wall along X
+  and centred, with *Next base*, *Next X* and *Flip* for the other ways it could stand. AI assistants get the same fits
+  (`fit_reference`, `scan_axes`).
+- **Point clouds: work with the raw scan.** A scanning app's mesh rounds edges, fills small holes and smooths detail
+  away; the measured points keep it. OPAD now opens and imports point clouds as bodies of their own: PLY files without
+  faces (they used to be refused), XYZ, PTS, CSV, E57 and LAS, with their colours, normals and intensity, in the right
+  units and the right way up. Clouds of tens of millions of points stay smooth to turn and zoom: the overview is drawn
+  from a sample and the part you zoom into at full density. The new *Design > Scan* tab estimates normals, removes
+  stray points, thins a cloud evenly, selects points with a lasso, a box or a brush to keep or delete them, and slices
+  a cloud with a plane: each slice is a flat profile you can sketch over, and *Slice to sketch* turns it into lines to
+  fit with arcs and dimensions, slice by slice. Points can be coloured by the scan's colours, their normals or their
+  intensity, and clouds export as PLY, XYZ, PTS, CSV or E57. AI assistants read clouds, query regions and slice them
+  too (`cloud`, `cloud_sketch`). LAZ files need converting to LAS or E57 first.
 - **Simulate asks what you want to find out.** The Simulate tabs are now goals (Air and fluids, Heat, Strength,
   Movement), and the start page shows each check as a plain question with a small picture of the case: "How much
   pressure does a fitting lose?", "Will my electronics box overheat?", "Will it bend or break under a load?", "Will my 3D
@@ -62,7 +80,8 @@ including a new airflow check for ducts and fittings.
   mean, median, RMS, the largest deviations and the share within tolerance, with a histogram and the worst spots, which
   are pinned on the model; rest the mouse on the map to read a spot, click to pin it. It can also measure both ways (to
   see what a scan does not cover), ignore far-off noise, keep to faces you pick, and fit the scan onto the reference
-  first as a preview you accept or discard. Scans of millions of triangles are measured in a second or two without
+  first as a preview you accept or discard. A point cloud can be the measured side too, its points coloured
+  the same way. Scans of millions of triangles are measured in a second or two without
   freezing the window, and AI assistants get the same numbers from the `deviation` tool.
 
 ### Changed

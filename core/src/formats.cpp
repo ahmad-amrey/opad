@@ -39,6 +39,7 @@
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
+#include "opad/point_cloud.hpp"
 
 namespace opad::detail {
 namespace {
@@ -579,130 +580,29 @@ ImportResult import_stl(Document& doc, const std::filesystem::path& file, const 
   return append_import(doc, file, opt, std::move(children), result);
 }
 
+ImportResult import_cloud_points(Document& doc, const std::filesystem::path& file, const ImportOptions& opt, cloud::Points points);
+
 // ---------------------------------------------------------------- PLY
 ImportResult import_ply(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
   report(opt, -1, "reading");
   const std::string data = read_binary(file);
-  const size_t headerEnd = data.find("end_header");
-  if (data.compare(0, 3, "ply") != 0 || headerEnd == std::string::npos) throw Error("not a PLY file: " + file.filename().string());
-  size_t body = data.find('\n', headerEnd);
-  if (body == std::string::npos) throw Error("truncated PLY header");
-  ++body;
-  enum class Format { Ascii, Little, Big } format = Format::Ascii;
-  struct Prop { std::string name; std::string type, countType; bool list = false; };
-  struct Element { std::string name; size_t count = 0; std::vector<Prop> props; };
-  std::vector<Element> elements;
-  {
-    std::istringstream header(data.substr(0, headerEnd));
-    std::string line;
-    while (std::getline(header, line)) {
-      std::istringstream ls(line);
-      std::string word;
-      ls >> word;
-      if (word == "format") {
-        std::string f;
-        ls >> f;
-        format = f == "binary_little_endian" ? Format::Little : f == "binary_big_endian" ? Format::Big : Format::Ascii;
-      } else if (word == "element") {
-        Element e;
-        ls >> e.name >> e.count;
-        elements.push_back(e);
-      } else if (word == "property" && !elements.empty()) {
-        Prop p;
-        ls >> p.type;
-        if (p.type == "list") { p.list = true; ls >> p.countType >> p.type; }
-        ls >> p.name;
-        elements.back().props.push_back(p);
-      }
-    }
-  }
-  auto size_of = [](const std::string& t) -> int {
-    if (t == "char" || t == "uchar" || t == "int8" || t == "uint8") return 1;
-    if (t == "short" || t == "ushort" || t == "int16" || t == "uint16") return 2;
-    if (t == "int" || t == "uint" || t == "int32" || t == "uint32" || t == "float" || t == "float32") return 4;
-    if (t == "double" || t == "float64") return 8;
-    throw Error("unsupported PLY property type: " + t);
-  };
-  const char* p = data.data() + body;
-  const char* end = data.data() + data.size();
-  // One value of a binary property, as a double.
-  auto binary = [&](const std::string& t) -> double {
-    const int n = size_of(t);
-    if (p + n > end) throw Error("truncated PLY data");
-    unsigned char b[8];
-    std::memcpy(b, p, n);
-    p += n;
-    if (format == Format::Big) std::reverse(b, b + n);
-    if (t == "char" || t == "int8") return static_cast<int8_t>(b[0]);
-    if (t == "uchar" || t == "uint8") return b[0];
-    if (t == "short" || t == "int16") { int16_t v; std::memcpy(&v, b, 2); return v; }
-    if (t == "ushort" || t == "uint16") { uint16_t v; std::memcpy(&v, b, 2); return v; }
-    if (t == "int" || t == "int32") { int32_t v; std::memcpy(&v, b, 4); return v; }
-    if (t == "uint" || t == "uint32") { uint32_t v; std::memcpy(&v, b, 4); return v; }
-    if (t == "float" || t == "float32") { float v; std::memcpy(&v, b, 4); return v; }
-    double v;
-    std::memcpy(&v, b, 8);
-    return v;
-  };
-  auto value = [&](const std::string& t) -> double {
-    if (format != Format::Ascii) return binary(t);
-    double v;
-    if (!next_number(p, end, v)) throw Error("invalid or truncated PLY data");
-    return v;
-  };
-  std::vector<float> xyz;
-  std::vector<uint32_t> triangles;
+  if (data.compare(0, 3, "ply") != 0 || data.find("end_header") == std::string::npos) throw Error("not a PLY file: " + file.filename().string());
+  std::vector<uint32_t> triangles, triangleRgb;
+  cloud::ReadOptions ro;
+  ro.scale = opt.cloud_scale;
+  ro.up = opt.up_axis;
+  ro.progress = opt.progress;
+  cloud::Points points = cloud::read_ply_data(data, ro, &triangles, &triangleRgb);
+  if (triangles.empty()) return import_cloud_points(doc, file, opt, std::move(points));
+  const size_t nv = points.size();
+  const bool vertexColours = points.colored();
+  std::vector<float> xyz = std::move(points.xyz);  // a mesh keeps its coordinates as the file gives them
+  if (points.offset != Vec3{0, 0, 0})
+    for (size_t i = 0; i < xyz.size(); ++i) xyz[i] = float(double(xyz[i]) + points.offset[i % 3]);
   constexpr uint32_t kNone = 0xFFFFFFFFu;
-  std::vector<uint32_t> vertexRgb, triangleRgb;  // 0xRRGGBB (0-255 per channel) or kNone
-  auto packed = [](const double* rgb) {
-    if (rgb[0] < 0 || rgb[1] < 0 || rgb[2] < 0) return kNone;
-    auto byte = [](double x) { return uint32_t(std::clamp(std::lround(x), 0l, 255l)); };
-    return byte(rgb[0]) << 16 | byte(rgb[1]) << 8 | byte(rgb[2]);
-  };
-  for (const Element& e : elements) {
-    const bool vertex = e.name == "vertex", face = e.name == "face";
-    for (size_t i = 0; i < e.count; ++i) {
-      double v[3] = {0, 0, 0}, rgb[3] = {-1, -1, -1};
-      const size_t firstTriangle = triangles.size() / 3;
-      for (const Prop& prop : e.props) {
-        if (prop.list) {
-          const size_t n = static_cast<size_t>(value(prop.countType));
-          if (n > 1000) throw Error("invalid PLY face");
-          uint32_t first = 0, previous = 0;
-          for (size_t k = 0; k < n; ++k) {
-            const double x = value(prop.type);
-            if (!face || (prop.name != "vertex_indices" && prop.name != "vertex_index")) continue;
-            if (x < 0 || x >= static_cast<double>(xyz.size() / 3)) throw Error("PLY face refers to a missing vertex");
-            const auto index = static_cast<uint32_t>(x);
-            if (k == 0) first = index;
-            else if (k >= 2) triangles.insert(triangles.end(), {first, previous, index});  // a fan over the polygon
-            previous = index;
-          }
-          continue;
-        }
-        const double x = value(prop.type);
-        if (!vertex && !face) continue;
-        // Colours as bytes; float ones (0-1) are scaled.
-        const double c = prop.type == "float" || prop.type == "float32" || prop.type == "double" || prop.type == "float64" ? x * 255 : x;
-        if (prop.name == "x") v[0] = x;
-        else if (prop.name == "y") v[1] = x;
-        else if (prop.name == "z") v[2] = x;
-        else if (prop.name == "red" || prop.name == "diffuse_red") rgb[0] = c;
-        else if (prop.name == "green" || prop.name == "diffuse_green") rgb[1] = c;
-        else if (prop.name == "blue" || prop.name == "diffuse_blue") rgb[2] = c;
-      }
-      if (vertex) {
-        if (!std::isfinite(v[0] + v[1] + v[2]) || std::max({std::abs(v[0]), std::abs(v[1]), std::abs(v[2])}) > 1e12) throw Error("invalid PLY vertex");
-        xyz.insert(xyz.end(), {static_cast<float>(v[0]), static_cast<float>(v[1]), static_cast<float>(v[2])});
-        vertexRgb.push_back(packed(rgb));
-      } else if (face) {
-        triangleRgb.resize(triangles.size() / 3, kNone);
-        if (const uint32_t own = packed(rgb); own != kNone) std::fill(triangleRgb.begin() + std::ptrdiff_t(firstTriangle), triangleRgb.end(), own);
-      }
-      if ((i & 0x3FFFF) == 0x3FFFF) report(opt, double(p - data.data()) / data.size(), "translating " + e.name + "s");
-    }
-  }
-  if (triangles.empty()) throw Error("the PLY file has no faces (point clouds are not shown)");
+  std::vector<uint32_t> vertexRgb(nv, kNone);
+  if (vertexColours)
+    for (size_t i = 0; i < vertexRgb.size(); ++i) vertexRgb[i] = uint32_t(points.rgb[3 * i]) << 16 | uint32_t(points.rgb[3 * i + 1]) << 8 | points.rgb[3 * i + 2];
   report(opt, 0.0, "building");
   // A triangle's colour: its face's, else the one most of its corners have. A few colours (a part coloured by region) become
   // the body's (the commonest) and faces of their own; a scan's colours, which vary point by point, their average.
@@ -1020,6 +920,42 @@ void stamp_source(json& op, const std::filesystem::path& file, const ImportOptio
   auto utf8 = [](const std::u8string& s) { return std::string(reinterpret_cast<const char*>(s.data()), s.size()); };
   op["source_path"] = utf8(full.generic_u8string());
   if (const auto top = repo_top(full); !top.empty()) op["source_repo"] = utf8(full.lexically_relative(top).generic_u8string());
+}
+
+}  // namespace opad::detail
+
+namespace opad::detail {
+
+// ---------------------------------------------------------------- point clouds (opad/point_cloud.hpp)
+ImportResult import_cloud_points(Document& doc, const std::filesystem::path& file, const ImportOptions& opt, cloud::Points points) {
+  if (points.empty()) throw Error("the file has no points: " + file.filename().string());
+  report(opt, 0.0, "building");
+  ImportResult result;
+  const std::string name = "Points";
+  json meta = {{"name", name}, {"units", "mm"}, {"source", file.filename().string()}};
+  meta.update(cloud::meta_of(points));
+  json body = {{"type", "body"}, {"id", new_uuid()}, {"name", name}, {"representation", "points"}};
+  // Far coordinates stay near zero in the points; the body's placement carries them out (opad::cloud::Points::offset).
+  if (points.offset != Vec3{0, 0, 0}) {
+    Mat4 at;
+    at.at(0, 3) = points.offset[0], at.at(1, 3) = points.offset[1], at.at(2, 3) = points.offset[2];
+    body["transform"] = at.to_json();
+    meta["offset"] = points.offset;
+  }
+  const TopoDS_Shape shape = cloud::to_shape(points);
+  points = cloud::Points();
+  body["key"] = store_body(doc, shape, meta, opt, true, &result);
+  ++result.bodies;
+  result.info = {{"points", meta["points"]}, {"attributes", meta["attributes"]}};
+  return append_import(doc, file, opt, json::array({body}), result);
+}
+
+ImportResult import_cloud(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
+  cloud::ReadOptions ro;
+  ro.scale = opt.cloud_scale;
+  ro.up = opt.up_axis;
+  ro.progress = opt.progress;
+  return import_cloud_points(doc, file, opt, cloud::read_file(file, ro));
 }
 
 }  // namespace opad::detail

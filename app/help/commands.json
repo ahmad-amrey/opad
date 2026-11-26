@@ -2337,9 +2337,17 @@
    "id": "design.align",
    "title": "Align",
    "summary": "Puts a point, edge or face of bodies or components onto another point, edge, face or plane, moving and turning them as one.",
-   "details": "Pick the bodies or components, then what to align them by and where it goes: a face onto a face or a plane (the two come to face each other; Flip lays them flush), an edge or axis along another, or a point onto a point, a line or a plane. Motion keeps it to a move or to a turn only, Offset leaves a gap from the plane, and Turn about it spins them about the line or the plane's normal. Nothing is rebuilt: the objects move by their placement, keep their geometry, and stay aligned when the face or edge they were put on changes.",
+   "details": "Pick the bodies or components, then what to align them by and where it goes: a face onto a face or a plane (the two come to face each other; Flip lays them flush), an edge or axis along another, or a point onto a point, a line or a plane. Motion keeps it to a move or to a turn only, Offset leaves a gap from the plane, and Turn about it spins them about the line or the plane's normal. Nothing is rebuilt: the objects move by their placement, keep their geometry, and stay aligned when the face or edge they were put on changes. On a mesh body (a scan or an STL), whose faces are triangles, a click fits a plane or an axis to the region around the triangle clicked and shows how well it fits.",
    "keywords": ["mate", "position", "place", "flush", "face to face", "snap to face"],
    "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "design.alignScan",
+   "title": "Align scan to axes",
+   "summary": "Stands a mesh body, such as a 3D scan, on the XY plane: its base flat down, a wall along X, its box centred on the origin.",
+   "details": "Select the scan and start: OPAD finds its flats from the facets' normals, fits the largest one it stands on as the base and lines its walls up with X; a scan with no flats is aligned by its principal axes. Next base and Next X in the From row offer the other candidates, Flip stands it the other way up and Box centre puts the middle of its box on the origin. Press {fixed:enter} to keep it: it is an Align step, and the fit is kept with it.",
+   "keywords": ["scan", "3d scan", "stl", "mesh", "level", "square up", "orient", "register", "best fit plane", "align to axes"],
+   "requires": "Select a mesh body first (a scan, an STL or an OBJ)."
   },
   {
    "id": "design.remove",
@@ -3563,6 +3571,69 @@
    "summary": "Says which solver a check misses, what it is and where it comes from.",
    "details": "CalculiX works out strength and heat, OpenFOAM the air, Project Chrono the forces in a moving mechanism. For a missing one the window gives its official download page and its size, or finds one already installed when you point at its folder or program; OPAD never downloads or installs anything by itself. When every solver is there it says so.",
    "keywords": ["solver", "OpenFOAM", "CalculiX", "Project Chrono", "install", "missing"]
+  },
+  {
+   "id": "design.cloud_normals",
+   "title": "Estimate normals",
+   "summary": "Gives every point of a point cloud a normal: the direction its surface faces there.",
+   "details": "Each point's normal comes from the plane through its nearest neighbours (Neighbours sets how many), turned so that neighbouring normals agree and the outside faces out. Clouds shade by their normals when they have no colours of their own, and the normals are kept in PLY and E57 exports.",
+   "keywords": ["point cloud", "scan", "normals", "orientation", "PCA", "surface direction"],
+   "requires": "Open or import a point cloud first; a cloud opened for viewing is saved as an OPAD document first."
+  },
+  {
+   "id": "design.cloud_outliers",
+   "title": "Remove outliers",
+   "summary": "Drops the stray points of a scan: the ones that stand apart from the surface.",
+   "details": "A point whose mean distance to its nearest neighbours is more than Standard deviations above the cloud's mean is taken out. Lower the ratio to remove more, raise it to keep more. The points as they were stay in the timeline: roll back or undo to get them back.",
+   "keywords": ["point cloud", "scan", "noise", "stray points", "clean", "filter", "statistical outlier"],
+   "requires": "Open or import a point cloud first; a cloud opened for viewing is saved as an OPAD document first."
+  },
+  {
+   "id": "design.cloud_downsample",
+   "title": "Downsample",
+   "summary": "Thins a point cloud to one measured point per voxel, so it is lighter but keeps its shape.",
+   "details": "The space is cut into cubes of Voxel size; in each one the point nearest the middle of its points is kept, with its colour and normal, so every point left is one that was measured. A voxel about the scan's point spacing keeps the detail; larger ones make a quick overview.",
+   "keywords": ["point cloud", "scan", "voxel", "thin", "decimate", "reduce points", "subsample"],
+   "requires": "Open or import a point cloud first; a cloud opened for viewing is saved as an OPAD document first."
+  },
+  {
+   "id": "design.cloud_crop",
+   "title": "Crop points",
+   "summary": "Keeps or deletes a region of a cloud's points, picked with Select points.",
+   "details": "Draw the region with Select points (a lasso, a box or a brush), then Keep only these or Delete these makes this one step. The region is stored with it as a reference to the points by number, so an AI agent can crop the same way.",
+   "keywords": ["point cloud", "scan", "crop", "trim", "delete points", "keep points", "region"],
+   "requires": "Open or import a point cloud first; a cloud opened for viewing is saved as an OPAD document first."
+  },
+  {
+   "id": "design.cloud_slice",
+   "title": "Slice points",
+   "summary": "Cuts a point cloud with a plane: the points within a band either side of it, laid onto the plane as a 2D profile.",
+   "details": "Pick the cloud and the plane, then set the Offset along its normal and the Band. Each slice becomes a flat cloud of its own on its plane, which you can sketch over or turn into lines with Slice to sketch; Slices and Spacing make a stack of them, to measure a part slice by slice.",
+   "keywords": ["point cloud", "scan", "section", "slice", "profile", "cross section", "reverse engineering", "measure"],
+   "requires": "Open or import a point cloud first; a cloud opened for viewing is saved as an OPAD document first."
+  },
+  {
+   "id": "cloud.region",
+   "title": "Select points",
+   "summary": "Selects a region of a point cloud's points with a lasso, a box or a brush.",
+   "details": "Choose Lasso, Box or Brush in the panel and drag over the cloud with the left button (the other buttons still turn and pan the view). {fixed:shift} with the drag adds to the region, {fixed:ctrl} with the drag takes points away. Keep only these or Delete these crops the cloud in one step; Copy reference copies the region for an AI agent or a fitted reference.",
+   "keywords": ["point cloud", "scan", "lasso", "brush", "box", "region", "select points", "paint"],
+   "requires": "Open or import a point cloud first."
+  },
+  {
+   "id": "cloud.sliceSketch",
+   "title": "Slice to sketch",
+   "summary": "Turns a slice of a point cloud into lines of a new sketch on the slice's plane.",
+   "details": "Select a slice made by Slice points: its points are chained along the profile, thinned to the scan's spacing and drawn as lines, closed loops closed. Select any other cloud to pick a plane first; the points within a quarter millimetre of it are used. The sketch is then yours to fit with arcs, constraints and dimensions.",
+   "keywords": ["point cloud", "scan", "profile", "trace", "slice", "reverse engineering", "sketch from points"],
+   "requires": "Open or import a point cloud first; a cloud opened for viewing is saved as an OPAD document first."
+  },
+  {
+   "id": "cloud.colorBy",
+   "title": "Colour points by",
+   "summary": "Chooses what point clouds are coloured by: the scan's colours, their normals, a scalar such as intensity or deviation, or the body's colour.",
+   "details": "Automatic uses the scan's own colours, else shading by the normals, else the body's colour. The command steps to the next choice; its menu lists them all. The choice is kept for the next time.",
+   "keywords": ["point cloud", "scan", "colours", "normals", "intensity", "deviation", "heat map"]
   }
  ]
 }

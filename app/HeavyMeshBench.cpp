@@ -161,7 +161,8 @@ OPAD_BENCH(OPAD_BENCH_HEAVYMESH, heavyMesh) {
           for (const auto& c : view->selectedCandidates()) seen << QString::fromStdString(c);
           trace::log("bench: heavy mesh: selected after the click: " + seen.join(" | "));
         }
-        require(form->picks("axis").contains("edge") && form->picks("axis")["edge"].value("body", "") == st->mesh, "the axis is an edge of the scan");
+        // A scan's side clicked for an axis is the axis fitted around it (FitPick), fitted on a worker.
+        require(form->picks("axis").contains("fit") && form->picks("axis")["fit"].value("body", "") == st->mesh, "the axis is fitted on the scan");
         if (!design->featureActive()) {
           require(false, "the feature is still open after the axis pick");
           return finish();

@@ -54,6 +54,7 @@
 #include "Units.hpp"
 #include "Viewport.hpp"
 #include "opad/deviation.hpp"
+#include "opad/point_cloud.hpp"
 #include "opad/geometry.hpp"
 
 using opad::json;
@@ -214,29 +215,13 @@ class Histogram : public QWidget {
 
 using deviation_map::Scale;
 
-// Point clouds (a mesh body with nodes and no triangles, from the point-cloud work): there are no triangles to paint, so
-// the cloud display colours its own points. The map hands it one colour per point, in node order, 0xAARRGGBB, alpha 0
+// Point clouds (opad/point_cloud.hpp: a mesh body with nodes and no triangles): there are no triangles to paint, so the cloud
+// display colours its own points (Viewport::setCloudColours): one colour per point in ordinal order, 0xAARRGGBB, alpha 0
 // where there is no value (the cloud's own colour shows); null clears it.
 namespace cloud_map {
 using Colours = std::shared_ptr<const std::vector<uint32_t>>;
-// The one line to wire once the cloud display is in the same build: view->setCloudColours(node, colours) (its signature as
-// agreed through the coordinating session). Until then a cloud is measured and reported, and drawn in its own colours.
-inline void set(Viewport* view, const std::string& node, const Colours& colours) {
-  (void)view, (void)node, (void)colours;
-}
-// A body with nodes and no triangles (TopoDS faces without surfaces holding only points).
-inline bool isCloud(const TopoDS_Shape& shape) {
-  if (!opad::is_mesh_shape(shape)) return false;
-  bool points = false;
-  for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
-    TopLoc_Location location;
-    const Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(f.Current()), location);
-    if (t.IsNull()) continue;
-    if (t->NbTriangles() > 0) return false;
-    points = points || t->NbNodes() > 0;
-  }
-  return points;
-}
+inline void set(Viewport* view, const std::string& node, const Colours& colours) { view->setCloudColours(node, colours); }
+inline bool isCloud(const TopoDS_Shape& shape) { return opad::cloud::is_cloud(shape); }
 }  // namespace cloud_map
 
 class Deviation : public AreaController {
@@ -1003,7 +988,9 @@ OPAD_AREA(Deviation)
 // ---------------------------------------------------------------- bench
 // OPAD_BENCH_DEVIATION=<prefix> on a document holding a big mesh (a scan) and a solid (its reference): the tool measures the
 // mesh against the solid, the map is drawn on the mesh (its vertex colours checked against the values), the stats are those
-// the generated data must give, a probe reads a spot, the pins show, a new tolerance recolours, and no step stalls the UI
+// the generated data must give, a probe reads a spot, the pins show, a new tolerance recolours, a best fit is previewed and
+// accepted, then a point cloud is measured against the solid (its points coloured by the cloud display, given back on
+// close), and no step stalls the UI
 // thread past 250 ms (trace::stalls). Logs "bench: deviation: ... PASS/FAIL", saves <prefix>.panel.png.
 
 OPAD_BENCH(OPAD_BENCH_DEVIATION, deviation) {
@@ -1011,7 +998,7 @@ OPAD_BENCH(OPAD_BENCH_DEVIATION, deviation) {
     int phase = 0, ticks = 0;
     size_t ops = 0;
     bool all = true;
-    std::string mesh, solid;
+    std::string mesh, solid, cloud;
     QElapsedTimer clock;
   };
   auto st = std::make_shared<State>();
@@ -1042,10 +1029,10 @@ OPAD_BENCH(OPAD_BENCH_DEVIATION, deviation) {
       for (const auto& id : doc->scene.all_bodies())
         try {
           const TopoDS_Shape shape = opad::body_shape(doc->doc, doc->scene.node(id)->body_key);
-          (opad::is_mesh_shape(shape) ? st->mesh : st->solid) = id;
+          (cloud_map::isCloud(shape) ? st->cloud : opad::is_mesh_shape(shape) ? st->mesh : st->solid) = id;
         } catch (const std::exception&) {
         }
-      if (!require(tool && !st->mesh.empty() && !st->solid.empty(), "a mesh and a solid in the document")) return finish();
+      if (!require(tool && !st->mesh.empty() && !st->solid.empty() && !st->cloud.empty(), "a mesh, a cloud and a solid in the document")) return finish();
       // A fit of the plain model first: what the window's own fit costs with this mesh (compared with the one after the map).
       trace::resetStalls();
       view->fitAll();
@@ -1167,6 +1154,35 @@ OPAD_BENCH(OPAD_BENCH_DEVIATION, deviation) {
       stalls("accept the fit");
       tool->panel()->hide();
       require(!view->vertexPaintDrawn(st->mesh) && view->deviationPinCount() == 0, "closing the panel takes the map and the pins away");
+      trace::resetStalls();
+      st->clock.start();
+      tool->startWith(st->cloud, st->solid);  // a point cloud as the measured side: its points coloured by the cloud display
+      st->phase = 6;
+      st->ticks = 0;
+      return;
+    }
+    if (st->phase == 6) {
+      if (st->ticks < 4 || ((tool->busy() || !view->benchCloudOverlaid(st->cloud)) && st->clock.elapsed() < 120000)) return;
+      const json& r = tool->report();
+      trace::log(QString::fromStdString("bench: deviation: cloud " + json{{"stats", r["stats"]}, {"sampling", r["sampling"]}}.dump()));
+      require(view->benchCloudOverlaid(st->cloud), QStringLiteral("the cloud's points are coloured by the map (%1 ms)").arg(st->clock.elapsed()));
+      require(r["sampling"]["source"] == "cloud points" && r["sampling"]["points"].get<size_t>() == 100000, "the cloud's points are the samples, every one");
+      // The bench's cloud lies 0.15 mm outside the reference's side; the side is measured meshed (its chords inside the
+      // circle: up to ~0.03 mm more between the mesh's vertices).
+      const double median = r["stats"]["median"].get<double>();
+      require(median > 0.14 && median < 0.2 && r["stats"]["within_tolerance_pct"].get<double>() > 99, "the cloud reads about +0.15 mm, within tolerance");
+      require(!view->vertexPaintDrawn(st->cloud), "a cloud gets no vertex paint (no triangles)");
+      stalls("measure and colour the cloud");
+      tool->panel()->hide();
+      st->clock.start();
+      st->phase = 7;
+      st->ticks = 0;
+      return;
+    }
+    if (st->phase == 7) {
+      if (view->benchCloudOverlaid(st->cloud) && st->clock.elapsed() < 30000) return;
+      require(!view->benchCloudOverlaid(st->cloud), QStringLiteral("closing the panel gives the cloud its own colours back (%1 ms)").arg(st->clock.elapsed()));
+      stalls("clear the cloud's colours");
       finish();
     }
   });

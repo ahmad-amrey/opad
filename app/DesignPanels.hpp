@@ -114,6 +114,8 @@ class FeaturePanel : public QWidget {
   void activeInputChanged(const QString& input);
   // "By rule…" on a face or edge input holding one picked entity (TODO 10 B7): the controller offers rules.
   void ruleRequested(const QString& input, QWidget* anchor);
+  // A fitted plane or axis changed in its row (tolerance, kind, base, X): `ref` is the new request, to fit on a worker.
+  void fitEdited(const QString& input, const opad::json& ref);
   void accepted();
   void cancelled();       // Cancel
   void escapePressed();   // Esc in the panel: one step back, as in the view
@@ -162,7 +164,17 @@ class FeaturePanel : public QWidget {
     PickBox* pick = nullptr;
     QPushButton* rule = nullptr;  // "By rule…" (faces and edges)
     QLineEdit* text = nullptr;    // text and names inputs
+    // A plane or axis fitted on a mesh (FitPick): its quality and what refits it (tolerance, kind, a scan's base and X).
+    QWidget* fit = nullptr;
+    QLabel *fitText = nullptr, *fitToleranceLabel = nullptr;
+    QLineEdit* fitTolerance = nullptr;
+    QComboBox* fitKind = nullptr;
+    QPushButton *fitBase = nullptr, *fitTurn = nullptr;
+    QCheckBox* fitCentre = nullptr;
   };
+  void buildFitRow(const QString& key, Row& w, bool axis);
+  void refreshFitRow(const QString& key, Row& w, const opad::json& value);
+  void editFit(const QString& key, const std::function<void(opad::json&)>& change);
   std::map<QString, Row> m_widgets;
   opad::json m_values = opad::json::object();  // picks and the values of hidden inputs
   QString m_active;

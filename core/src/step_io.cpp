@@ -67,6 +67,7 @@
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
 #include "import_common.hpp"
+#include "opad/point_cloud.hpp"
 
 namespace opad {
 
@@ -650,7 +651,9 @@ std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const Impor
     doc.add_live_body(key, meta);
   } else {
     std::string brep;
-    if (mesh) {
+    if (meta.value("representation", "") == "points") {
+      brep = cloud::to_brep(shape);  // a point cloud: its nodes, normals and colours are the geometry
+    } else if (mesh) {
       // A mesh has no surfaces: its triangulation is the geometry, so it goes into the text.
       std::ostringstream ss;
       ss.precision(17);
@@ -682,6 +685,7 @@ std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const Impor
 
 std::string persist_body(TopoDS_Shape& shape, json& meta, bool& healed) {
   const std::string representation = meta.value("representation", "solid");
+  if (representation == "points") return cloud::to_brep(shape);
   if (representation == "mesh") {  // the triangulation is the geometry
     std::ostringstream ss;
     ss.precision(17);
@@ -1129,6 +1133,13 @@ ExportResult export_selection(const Document& doc, const Scene& scene, const std
   if (opt.format == "step" || opt.format == "stp")
     for (const auto& id : bodies)
       if (scene.node(id)->representation == "mesh") throw Error("Mesh objects cannot be exported as CAD solids; choose STL, OBJ or GLB");
+  // Point clouds have no faces to write here: they go to their own formats (cloud::export_points), and are left out of a
+  // mixed selection.
+  {
+    const size_t before = bodies.size();
+    bodies.erase(std::remove_if(bodies.begin(), bodies.end(), [&](const std::string& id) { return scene.node(id)->representation == "points"; }), bodies.end());
+    if (before && bodies.empty()) throw Error("Point clouds export as PLY, XYZ, PTS, CSV or E57");
+  }
   ExportResult res;
   bodies.erase(std::remove_if(bodies.begin(), bodies.end(),
                               [&](const std::string& id) {

@@ -381,6 +381,25 @@ class Viewport : public QWidget, protected AIS_ViewController {
   opad::Vec3 shownOffset(const std::string& node) const;
   opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
   Graphic3d_ZLayerId throughLayer() const { return m_throughLayer; }  // where a canvas shown through the model is drawn
+  // Point clouds (ViewportCloud.cpp): a cloud body's worker arrays (its points, spacing, the drawn sample) and its world
+  // placement, null for any other node; how many points are drawn of it now; the camera's world -> NDC matrix (row-major,
+  // `world` the body's placement) and a widget point in NDC, for lasso regions; the colour mode (BodyPrs::cloudColorMode);
+  // the point sizes and the zoomed-in part at full density (from the refinement's timer); a region overlay (null clears).
+  std::shared_ptr<const BodyPrs> cloudPrs(const std::string& node, opad::Mat4* world = nullptr) const;
+  size_t benchCloudDrawn(const std::string& node) const;
+  std::array<double, 16> worldToNdc(const opad::Mat4& world) const;
+  QPointF widgetToNdc(const QPointF& widget) const;
+  void setCloudColorMode(int mode);
+  // A display-only colour overlay on one cloud node (a deviation map): one 0xAARRGGBB per point by its ordinal (QRgb, as
+  // qRgba makes), alpha 0 = no value there (the cloud's own colour). Null or empty clears it. It never changes the body or
+  // its cached shape: the node's drawn points are recoloured on a worker (RecomputePrsOnly, no Redisplay), its sample or
+  // its zoomed-in part alike, again through every level-of-detail swap. Other instances of the same body keep their look.
+  void setCloudColours(const std::string& node, std::shared_ptr<const std::vector<uint32_t>> colours);
+  bool benchCloudOverlaid(const std::string& node) const;  // the node is drawn now with the overlay it was given last
+  void updateClouds();
+  void showCloudRegion(const std::string& node, std::shared_ptr<const std::vector<uint32_t>> indices);
+  bool pickCloudPoint(const QPointF& widget, opad::Vec3& point);  // the drawn surface (or point) under a widget point
+  void setCloudLasso(const QPolygonF& widget, bool closed);  // the region tool's lasso or box over the view; under two points: none
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
   void benchClickAt(int x, int y);  // a left click at this device pixel through the mouse handlers, then the frame's flush
@@ -1163,6 +1182,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QTimer m_refineTimer;
   Graphic3d_WorldViewProjState m_refineCamera;
   Job* m_refineJob = nullptr;
+  Job* m_cloudJob = nullptr;  // ViewportCloud.cpp
+  Handle(AIS_InteractiveObject) m_cloudLasso;
+  std::map<std::string, std::shared_ptr<const std::vector<uint32_t>>> m_cloudColours;  // colour overlays by node
+  std::set<std::string> m_cloudColourDirty;  // nodes whose overlay changed since they were drawn
+  std::set<std::string> m_cloudRecolour, m_cloudShown;  // cloud keys to draw again in the colour mode
+  Graphic3d_WorldViewProjState m_cloudCamera;
+  std::map<std::string, Handle(AIS_InteractiveObject)> m_cloudRegion;  // region overlays by node
   qint64 m_refineClock = 0;
   void scheduleRefinement();
   void refineVisible();
