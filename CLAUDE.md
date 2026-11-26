@@ -172,7 +172,7 @@ the local bulk way) in face-connected groups touching a wall. Shared OpenFOAM re
 OpenFOAM v2512 and CalculiX 2.22 for Windows, built from pinned upstream sources by `engines/<id>/make-pack.sh` (CI:
 `.github/workflows/engines.yml`, artifacts only; publishing is by hand, docs/releasing.md "Solver packs"), released as
 `engines-<id>-<ver>-<rev>` (not latest), their size + SHA-256 pinned in `engine_packs.cpp` (no hash = not offered).
-Install (check's Run step "Install OpenFOAM (37 MB)", `SolverWindow`'s Install): `engineinstall::Installer` downloads in a
+Install (check's Run step "Install OpenFOAM (42 MB)", `SolverWindow`'s Install): `engineinstall::Installer` downloads in a
 `Downloading` job (only `engine_pack_url_allowed` URLs: github.com/ahmad-amrey/opad/releases/download/, or 127.0.0.1 when
 `OPAD_ENGINE_PACKS=<json>` replaces the table), then `install_pack` on a worker: size, hash, every member inside the
 folder, `opad-pack.json` id/version, unpacked to `<folder>.partial` then renamed, other versions removed. Folder:

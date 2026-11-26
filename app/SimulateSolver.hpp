@@ -1,7 +1,7 @@
 #pragma once
 // The window a check opens when its solver is not on this computer (SimChecks::Solver): what the solver is, where it comes
 // from and how big it is, what uses it, and the answers. Where this OPAD has a pack of it (opad/sim/engine_packs.hpp:
-// OpenFOAM and CalculiX on Windows), "Install (37 MB)" hands it to `install` (Simulate::installSolver: the download from
+// OpenFOAM and CalculiX on Windows), "Install (42 MB)" hands it to `install` (Simulate::installSolver: the download from
 // OPAD's own GitHub release, checked against the pinned SHA-256, unpacked into the user's engines folder, progress in the
 // status bar) and closes; "Official page" opens the solver's own download page in the browser. Without a pack that page
 // is the main button. "I already have it: find it" asks for its folder (OpenFOAM) or program (ccx.exe), checks it, and

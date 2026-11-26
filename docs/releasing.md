@@ -210,7 +210,7 @@ settings yet) and leaves the old folder as it was.
 
 ## Solver packs (OpenFOAM, CalculiX)
 
-Simulate installs OpenFOAM and CalculiX from inside OPAD (`Install OpenFOAM (37 MB)` on a check, `opad/sim/engine_packs.hpp`).
+Simulate installs OpenFOAM and CalculiX from inside OPAD (`Install OpenFOAM (42 MB)` on a check, `opad/sim/engine_packs.hpp`).
 The packs are separate programs, built from their unmodified upstream sources by the recipes in `engines/<id>/`
 (`make-pack.sh`, our patches in `patches/`) and published on this repository's releases, never fetched from anywhere else.
 

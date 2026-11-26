@@ -1,5 +1,5 @@
 #pragma once
-// Installs a solver pack (opad/sim/engine_packs.hpp) from inside OPAD: Simulate's "Install OpenFOAM (37 MB)" on a check and
+// Installs a solver pack (opad/sim/engine_packs.hpp) from inside OPAD: Simulate's "Install OpenFOAM (42 MB)" on a check and
 // in the solver window. The zip comes only from the URL compiled into OPAD (a release of github.com/ahmad-amrey/opad; a
 // local fake release only through OPAD_ENGINE_PACKS, for tests), downloads in a "Downloading <solver>" job (the status
 // bar's strip, its Cancel aborts it), then a worker checks its size and SHA-256 against the pinned ones and unpacks it into
@@ -21,7 +21,7 @@ namespace engineinstall {
 
 // The pack this OPAD can install for a solver ("openfoam", "calculix"), or none here.
 std::optional<opad::sim::EnginePack> pack(const QString& solver);
-// "37 MB" (one decimal below 10 MB).
+// "42 MB" (one decimal below 10 MB).
 QString sizeText(quint64 bytes);
 
 class Installer : public QObject {
