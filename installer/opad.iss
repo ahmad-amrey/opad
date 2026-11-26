@@ -82,8 +82,8 @@ Type: files; Name: "{app}\opad-cli.exe.*.old"
 // Every open session of an AI app connected to OPAD (Claude Code, Claude Desktop, Codex) runs its own `opad-cli mcp`,
 // for as long as the session is open: ten sessions are ten opad-cli processes. Windows lets a running exe be renamed but
 // not replaced, so an update moves a running opad-cli.exe aside (opad-cli.exe.<n>.old) rather than asking to close each
-// one: those sessions keep their connection, new ones start the new opad-cli. Copies moved aside by an earlier update
-// are removed once nothing runs them.
+// one: those sessions keep their connection, new ones start the new opad-cli. OPAD removes the copies moved aside each
+// time it starts, once nothing runs them (appdata::removeMovedAside); the next update and the uninstall do too.
 procedure RemoveOldCli;
 var
   R: TFindRec;

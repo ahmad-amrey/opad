@@ -31,6 +31,7 @@ including a new airflow check for ducts and fittings.
   missing, *Install* downloads it (about 45 MB for OpenFOAM, 13 MB for CalculiX) from OPAD's own releases, checks it
   and sets it up for you on Windows, Linux and macOS, with no admin rights and nothing else to install. A copy you
   installed yourself still works, and the solvers' licences and sources are listed under *Help > Third-party licences*.
+  Each release's notes link the solver versions it installs.
 - **A .gitignore when you set up a repository.** *Set up repository* offers a recommended .gitignore that keeps exports
   (STEP, STL, 3MF, drawings, renders) and OPAD's temporary files out of the history; *Customise* shows the groups to tick.
   Files your design links stay tracked even when their type is ignored, and an existing .gitignore is only added to.
@@ -114,7 +115,7 @@ including a new airflow check for ducts and fittings.
 - **Updating no longer asks to close OPAD's command-line tool.** Each open session of an AI app connected to OPAD
   (Claude Code, Claude Desktop, Codex) keeps its own `opad-cli` running, so the installer used to list ten or more of
   them to close. It now leaves them running, and those sessions keep their connection; only an open OPAD still has to be
-  closed first.
+  closed first. The old copy is removed the next time OPAD starts after those sessions end.
 - **3D scans and other big meshes no longer freeze OPAD.** Choosing the axis in *Move / copy*, or switching to the
   Face, Edge or Vertex filter, used to make OPAD wait while it prepared every triangle of the mesh for picking: over
   three minutes on a 3-million-triangle scan. It now takes no noticeable time, picking a scan's edges, points and

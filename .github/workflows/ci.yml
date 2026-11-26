@@ -868,6 +868,7 @@ jobs:
           else
             sh tools/changelog_section.sh "$VERSION" > notes.md
           fi
+          sh tools/solver_packs_notes.sh >> notes.md  # the solver packs this version installs, with their releases
           sed "s/@LABEL@/$LABEL/g" tools/release_downloads.md >> notes.md
           # What the update check reads: the build these packages carry and the version they say.
           printf '\n<!-- opad-build: %s; opad-version: %s -->\n' "$BUILD" "$VERSION" >> notes.md

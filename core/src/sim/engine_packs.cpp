@@ -14,9 +14,10 @@ namespace fs = std::filesystem;
 namespace {
 
 // Built by engines/<id>/make-pack.sh in .github/workflows/engines.yml and published by it on dev, one release per pack
-// revision and system (tag engines-<id>-<version>-<platform>, never replaced: a change is a new revision). The size and
-// SHA-256 are the release's (its SHA256SUMS), pinned here in the commit after it was published; until then they are
-// empty and the pack is not offered, so no Install button points at a missing file.
+// revision with every system's zip (tag engines-<id>-<version>, version = <solver version>-<pack revision>, never
+// replaced: a change is a new revision). The size and SHA-256 are the release's (its SHA256SUMS), pinned here in the
+// commit after it was published; until then they are empty and the pack is not offered, so no Install button points at
+// a missing file.
 constexpr const char* kReleases = "https://github.com/ahmad-amrey/opad/releases/download/";
 
 struct Pin {
@@ -112,8 +113,8 @@ std::string engine_pack_platform() {
 std::vector<EnginePack> engine_pack_table() {
   std::vector<EnginePack> out;
   for (const Pin& p : kPins) {
-    const std::string stem = std::string(p.id) + "-" + p.version + "-" + p.platform;
-    out.push_back({p.id, p.name, p.version, p.platform, std::string(kReleases) + "engines-" + stem + "/opad-" + stem + ".zip", p.size, p.sha256});
+    const std::string release = std::string(p.id) + "-" + p.version, stem = release + "-" + p.platform;
+    out.push_back({p.id, p.name, p.version, p.platform, std::string(kReleases) + "engines-" + release + "/opad-" + stem + ".zip", p.size, p.sha256});
   }
   return out;
 }
