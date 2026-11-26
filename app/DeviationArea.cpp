@@ -27,7 +27,11 @@
 
 #include <BRepBndLib.hxx>
 #include <Graphic3d_ArrayOfTriangles.hxx>
+#include <BRep_Tool.hxx>
 #include <OSD_Parallel.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -209,6 +213,31 @@ class Histogram : public QWidget {
 }  // namespace deviation_map
 
 using deviation_map::Scale;
+
+// Point clouds (a mesh body with nodes and no triangles, from the point-cloud work): there are no triangles to paint, so
+// the cloud display colours its own points. The map hands it one colour per point, in node order, 0xAARRGGBB, alpha 0
+// where there is no value (the cloud's own colour shows); null clears it.
+namespace cloud_map {
+using Colours = std::shared_ptr<const std::vector<uint32_t>>;
+// The one line to wire once the cloud display is in the same build: view->setCloudColours(node, colours) (its signature as
+// agreed through the coordinating session). Until then a cloud is measured and reported, and drawn in its own colours.
+inline void set(Viewport* view, const std::string& node, const Colours& colours) {
+  (void)view, (void)node, (void)colours;
+}
+// A body with nodes and no triangles (TopoDS faces without surfaces holding only points).
+inline bool isCloud(const TopoDS_Shape& shape) {
+  if (!opad::is_mesh_shape(shape)) return false;
+  bool points = false;
+  for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
+    TopLoc_Location location;
+    const Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(f.Current()), location);
+    if (t.IsNull()) continue;
+    if (t->NbTriangles() > 0) return false;
+    points = points || t->NbNodes() > 0;
+  }
+  return points;
+}
+}  // namespace cloud_map
 
 class Deviation : public AreaController {
  public:
@@ -655,9 +684,13 @@ class Deviation : public AreaController {
     const bool onB = mapOnReference();
     std::map<std::string, std::shared_ptr<const VertexPaint>> paints;
     const Scale s = scale();
+    std::vector<std::string> clouds;
     if (!onB) {
-      auto paint = std::make_shared<deviation_map::Paint>(m_study->to, gp_Trsf(), maxDistance(), s, m_cache);  // A drawn where it was measured
-      for (const auto& id : m_study->from_bodies) paints[id] = paint;
+      // A where it was measured: moved by a previewed fit (the viewport draws it moved; its arrays stay in its own frame).
+      auto paint = std::make_shared<deviation_map::Paint>(m_study->to, m_fitPreview ? m_study->alignment : gp_Trsf(), maxDistance(), s, m_cache);
+      for (const auto& id : m_study->from_bodies)
+        if (isCloud(id)) clouds.push_back(id);  // no triangles to paint: the cloud display colours its points
+        else paints[id] = paint;
     } else {
       if (!m_backCache) m_backCache = std::make_shared<deviation_map::Cache>();
       // B against A as A was measured (moved by a previewed fit): B's vertices taken back into A's frame of that study.
@@ -667,9 +700,79 @@ class Deviation : public AreaController {
     if (trace::enabled()) trace::log(QStringLiteral("deviation: map on %1, tolerance %2 mm, range %3 mm").arg(onB ? "the reference" : "the measured body").arg(s.tolerance).arg(s.range));
     setRunning(tr("Colouring the map…"));
     view->setVertexPaints(std::move(paints));
+    colourClouds(clouds, s);
     showPins();
     const json back = m_report.value("reverse", json());
     if (m_histogram) m_histogram->set(onB && back.is_object() ? back.value("histogram", json()) : m_report.value("histogram", json()), s);
+  }
+
+  bool isCloud(const std::string& id) const {
+    const AppDocument* doc = services().document();
+    const opad::Node* n = doc->scene.node(id);
+    try {
+      return n && cloud_map::isCloud(opad::body_shape(doc->doc, n->body_key));  // cached: a lookup and a walk over its few faces
+    } catch (const std::exception&) {
+      return false;
+    }
+  }
+
+  // Each cloud of A coloured per point, as the map colours a mesh: its points (node order) placed where A was measured,
+  // their distances to B on a worker, handed to the cloud display. Clouds no longer listed are given back their colours.
+  void colourClouds(const std::vector<std::string>& clouds, const Scale& s) {
+    Viewport* view = services().viewport();
+    for (const auto& id : m_cloudsColoured)
+      if (std::find(clouds.begin(), clouds.end(), id) == clouds.end()) cloud_map::set(view, id, nullptr);
+    m_cloudsColoured = clouds;
+    if (Job* old = std::exchange(m_cloudJob, nullptr)) old->cancel();
+    if (clouds.empty() || !m_study) return;
+    struct Item {
+      std::string id;
+      TopoDS_Shape shape;
+      gp_Trsf world;
+      cloud_map::Colours colours;
+    };
+    auto items = std::make_shared<std::vector<Item>>();
+    const AppDocument* doc = services().document();
+    const gp_Trsf motion = m_fitPreview ? m_study->alignment : gp_Trsf();
+    for (const auto& id : clouds)
+      try {
+        const opad::Mat4 world = doc->scene.world(id);
+        if (opad::mat_is_rigid(world)) items->push_back({id, opad::body_shape(doc->doc, doc->scene.node(id)->body_key), motion * opad::trsf_from_mat(world), nullptr});
+      } catch (const std::exception&) {
+      }
+    auto to = m_study->to;
+    const double reach = maxDistance() > 0 ? maxDistance() : std::numeric_limits<double>::infinity();
+    auto study = m_study;
+    m_cloudJob = services().jobs()->async(tr("Colouring the deviation map"), [items, to, reach, s](Progress p) {
+      for (auto& item : *items) {
+        std::vector<gp_Pnt> points;
+        for (TopExp_Explorer f(item.shape, TopAbs_FACE); f.More(); f.Next()) {
+          TopLoc_Location location;
+          const Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(f.Current()), location);
+          if (t.IsNull()) continue;
+          const gp_Trsf place = item.world * location.Transformation();
+          for (int i = 1; i <= t->NbNodes(); ++i) points.push_back(t->Node(i).Transformed(place));
+        }
+        auto colours = std::make_shared<std::vector<uint32_t>>(points.size(), 0u);
+        const int n = int(points.size());
+        for (int start = 0; start < n; start += 1 << 16) {
+          if (p.cancelled()) return;
+          OSD_Parallel::For(start, std::min(n, start + (1 << 16)), [&](int i) {
+            const dev::Surface::Hit hit = to->nearest(points[size_t(i)], reach);
+            if (!hit.found()) return;  // alpha 0: the cloud's own colour
+            (*colours)[size_t(i)] = s.color(hit.distance, hit.sign_defined).rgba() | 0xFF000000u;
+          });
+        }
+        item.colours = std::move(colours);
+      }
+    }, [this, items, study](bool ok, const QString&) {
+      m_cloudJob = nullptr;
+      if (!ok || study != m_study) return;
+      for (const auto& item : *items)
+        if (item.colours && std::find(m_cloudsColoured.begin(), m_cloudsColoured.end(), item.id) != m_cloudsColoured.end())
+          cloud_map::set(services().viewport(), item.id, item.colours);
+      setRunning(QString());
+    });
   }
 
   void applyLooks() {
@@ -709,6 +812,7 @@ class Deviation : public AreaController {
     if (Job* old = std::exchange(m_job, nullptr)) old->cancel();
     Viewport* view = services().viewport();
     view->setVertexPaints({});
+    colourClouds({}, scale());
     view->clearLookLayer(LookSource::Deviation);
     view->setDeviationPins({});
     dropFitPreview();
@@ -886,7 +990,8 @@ class Deviation : public AreaController {
   std::shared_ptr<deviation_map::Cache> m_cache, m_backCache;
   json m_report = json::object();  // the last study's report (an object always: value() on null throws)
   bool m_fitPreview = false;
-  Job *m_job = nullptr, *m_summaryJob = nullptr;
+  Job *m_job = nullptr, *m_summaryJob = nullptr, *m_cloudJob = nullptr;
+  std::vector<std::string> m_cloudsColoured;  // clouds handed colours (cloud_map::set), cleared with the map
   QTimer m_probeTimer;
   QPointF m_probeAt, m_pressAt;
   QString m_probeHint;

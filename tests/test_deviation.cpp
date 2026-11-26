@@ -196,4 +196,45 @@ TEST(open_reference_says_sign_undefined) {
   CHECK(refused);
 }
 
+// A point cloud (what a scanner's raw output imports as: a mesh body with nodes and no triangles): its points are the
+// samples, in node order. 20000 points on a sphere of radius 25 (a Fibonacci spiral), each moved along its radius by
+// uniform noise in +-0.1 mm, read their own noise against the exact sphere. A cloud has no surface: as the reference it is
+// refused, and both ways is skipped.
+TEST(point_cloud_against_exact_sphere) {
+  Document d = Document::create();
+  Scene scene;
+  constexpr int n = 20000;
+  Handle(Poly_Triangulation) points = new Poly_Triangulation(n, 0, false);
+  std::mt19937 random(11);
+  std::uniform_real_distribution<double> noise(-0.1, 0.1);
+  double sq = 0, sum = 0;
+  for (int i = 0; i < n; ++i) {
+    const double z = 1 - 2 * (i + 0.5) / n, r = std::sqrt(1 - z * z), a = i * M_PI * (3 - std::sqrt(5.0)), e = noise(random);
+    points->SetNode(i + 1, gp_Pnt(r * std::cos(a), r * std::sin(a), z).XYZ() * (25 + e));
+    sq += e * e, sum += e;
+  }
+  TopoDS_Face face;
+  BRep_Builder().MakeFace(face, points);
+  CHECK(is_mesh_shape(face));
+  const deviation::Triangles t = deviation::triangles_of(face, 0.01);
+  CHECK(t.cloud && t.tri.empty() && t.vertex_count() == size_t(n));
+  const std::string cloud = add_body(d, scene, "cloud", face);
+  const std::string sphere = add_body(d, scene, "sphere", BRepPrimAPI_MakeSphere(gp_Pnt(0, 0, 0), 25).Shape());
+  const json r = deviation::command(d, scene, {{"from", cloud}, {"to", sphere}, {"tolerance", 0.05}, {"both_ways", true}, {"exact", true}});
+  std::printf("cloud: rms %.4f (noise %.4f), mean %.4f (noise %.4f)\n", stat(r, "rms"), std::sqrt(sq / n), stat(r, "mean"), sum / n);
+  CHECK(r["from"]["kind"] == "cloud" && r["sampling"]["source"] == "cloud points" && r["sampling"]["points"] == n && r["sampling"]["cloud_points"] == n);
+  CHECK(about(stat(r, "rms"), std::sqrt(sq / n), 3e-3) && about(stat(r, "mean"), sum / n, 3e-3) && stat(r, "max_abs") < 0.11);
+  CHECK(about(stat(r, "within_tolerance_pct"), 50, 3) && r.contains("reverse_note") && !r.contains("reverse"));
+  // A box region keeps the points inside it.
+  const json cap = deviation::command(d, scene, {{"from", cloud}, {"to", sphere}, {"region", {{"min", {-30, -30, 20}}, {"max", {30, 30, 30}}}}});
+  CHECK(cap["sampling"]["points"].get<size_t>() > 0 && cap["sampling"]["points"].get<size_t>() < size_t(n) / 4);
+  bool refused = false;
+  try {
+    deviation::command(d, scene, {{"from", sphere}, {"to", cloud}});
+  } catch (const Error& e) {
+    refused = std::string(e.what()).find("point cloud") != std::string::npos;
+  }
+  CHECK(refused);
+}
+
 int main(int argc, char** argv) { return check::run_all(argc, argv); }

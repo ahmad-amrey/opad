@@ -494,7 +494,8 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   holds mean, median, rms, std_dev, min, max, max_abs and p90/p95/p99 of |d|; `histogram` (`from`, `to`, `bin_mm`,
   `counts`, `below`, `above`) and `worst` (the places beyond tolerance, worst first, clustered so they are apart:
   `position`, `value`, `nearest` on `to`, `points` in the cluster) say where. A scan's vertices are the samples (thinned
-  evenly past `sample`, default 500000), a solid's faces are sampled by area; `sampling` says what was taken. Options:
+  evenly past `sample`, default 500000), a point cloud's points likewise (`from` only: a cloud has no surface to be `to`), a
+  solid's faces are sampled by area; `sampling` says what was taken. Options:
   `both_ways` adds `reverse` (`to` against `from`: what the scan does not cover, filled holes), `max_distance` ignores
   points farther than that (noise, other parts; counted in `ignored`), `region` keeps faces of `from`
   (`"<body>/face/<n>"`) or a world box `{"min", "max"}`, `align: true` fits `from` onto `to` first (ICP,

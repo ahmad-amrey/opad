@@ -109,6 +109,7 @@ size_t append_offset(Triangles& into, const Triangles& other) {
   into.xyz.insert(into.xyz.end(), other.xyz.begin(), other.xyz.end());
   for (uint32_t i : other.tri) into.tri.push_back(i + shift);
   for (int f : other.face) into.face.push_back(f < 0 ? f : f + base);
+  into.cloud = into.cloud || other.cloud;
   return size_t(base);
 }
 
@@ -151,7 +152,12 @@ Triangles triangles_of(const TopoDS_Shape& world, double deflection) {
       ++facet;
     }
   }
-  if (rawTri.empty()) return out;
+  if (rawTri.empty()) {  // a point cloud (a mesh body with nodes and no triangles): its points as they are, point i = node i
+    if (mesh)
+      for (double c : raw) out.xyz.push_back(float(c));
+    out.cloud = !out.xyz.empty();
+    return out;
+  }
   Bnd_Box box;
   for (size_t i = 0; i < raw.size(); i += 3) box.Add(gp_Pnt(raw[i], raw[i + 1], raw[i + 2]));
   const double diagonal = box.IsVoid() ? 1.0 : std::sqrt(box.SquareExtent());
@@ -383,7 +389,7 @@ Samples sample(const Triangles& a, bool mesh, size_t limit, const Region& region
   if (!faces.empty())
     for (size_t t = 0; t < nt; ++t) keepTri[t] = faces.count(a.face[t]) ? 1 : 0;
   if (mesh) {
-    out.source = "mesh vertices";
+    out.source = a.cloud && a.tri.empty() ? "cloud points" : "mesh vertices";
     out.population = a.vertex_count();
     std::vector<int> faceOf(a.vertex_count(), -2);  // -2: on no kept triangle
     for (size_t t = 0; t < nt; ++t)
@@ -392,7 +398,7 @@ Samples sample(const Triangles& a, bool mesh, size_t limit, const Region& region
           if (faceOf[a.tri[3 * t + k]] == -2) faceOf[a.tri[3 * t + k]] = a.face[t];
     std::vector<uint32_t> chosen;
     for (uint32_t v = 0; v < faceOf.size(); ++v)
-      if (faceOf[v] != -2 && inBox(gp_Pnt(vertex(a.xyz, v)))) chosen.push_back(v);
+      if ((faceOf[v] != -2 || (a.cloud && faces.empty())) && inBox(gp_Pnt(vertex(a.xyz, v)))) chosen.push_back(v);  // a cloud's points belong to no triangle
     out.region_population = chosen.size();
     const size_t n = std::min(limit, chosen.size());
     out.subsampled = n < chosen.size();
@@ -400,7 +406,7 @@ Samples sample(const Triangles& a, bool mesh, size_t limit, const Region& region
     for (size_t i = 0; i < n; ++i) {
       const uint32_t v = chosen[out.subsampled ? size_t((double(i) + 0.5) * double(chosen.size()) / double(n)) : i];
       out.points.emplace_back(vertex(a.xyz, v));
-      out.face.push_back(faceOf[v]);
+      out.face.push_back(std::max(faceOf[v], -1));
     }
     return out;
   }
@@ -720,7 +726,7 @@ json spots_json(const std::vector<Spot>& spots) {
 
 json sampling_json(const Samples& s, size_t limit) {
   json j = {{"source", s.source}, {"points", s.points.size()}, {"limit", limit}, {"subsampled", s.subsampled}};
-  j[s.source == "mesh vertices" ? "vertices" : "triangles"] = s.population;
+  j[s.source == "mesh vertices" ? "vertices" : s.source == "cloud points" ? "cloud_points" : "triangles"] = s.population;
   if (s.region_population != s.population) j["in_region"] = s.region_population;
   return j;
 }
@@ -782,7 +788,9 @@ Study run(const Document& doc, const Scene& scene, const json& args, const std::
   say("Meshing the reference", 2);
   bool meshB = false, meshA = false;
   Triangles trisB = collect(study.to_bodies, deflB, meshB, nullptr);
-  if (trisB.tri.empty()) throw Error("The to side has no surface to measure against (no faces).");
+  if (trisB.tri.empty())
+    throw Error(trisB.cloud ? "The to side is a point cloud, which has no surface to measure against: measure the cloud (from) against a mesh or solid (to)."
+                            : "The to side has no surface to measure against (no faces).");
   const size_t trianglesB = trisB.triangle_count();
   say("Indexing the reference", 10);
   study.to = Surface::build(std::move(trisB), cancelled);
@@ -790,7 +798,7 @@ Study run(const Document& doc, const Scene& scene, const json& args, const std::
   say("Sampling", 25);
   std::map<std::string, size_t> bases;
   Triangles trisA = collect(study.from_bodies, deflA, meshA, &bases);
-  if (trisA.tri.empty()) throw Error("The from side has no surface to measure (no faces).");
+  if (trisA.tri.empty() && !trisA.cloud) throw Error("The from side has no surface to measure (no faces).");
   Region region;
   if (const json r = args.value("region", json()); r.is_object()) {
     const json lo = r.value("min", json()), hi = r.value("max", json());
@@ -846,7 +854,7 @@ Study run(const Document& doc, const Scene& scene, const json& args, const std::
   study.limit = limit;
   const double radius = std::max(10 * tolerance, diagA * 0.06);
   json forward = side_report(study.samples, study.values, tolerance, bins, range, worst, radius, limit);
-  report["from"] = {{"bodies", study.from_bodies}, {"kind", meshA ? "mesh" : "solid"}, {"triangles", trisA.triangle_count()}};
+  report["from"] = {{"bodies", study.from_bodies}, {"kind", trisA.tri.empty() ? "cloud" : meshA ? "mesh" : "solid"}, {"triangles", trisA.triangle_count()}};
   if (!meshA) report["from"]["deflection_mm"] = r4(deflA);
   report["to"] = {{"bodies", study.to_bodies}, {"kind", meshB ? "mesh" : "solid"}, {"triangles", trianglesB}, {"closed", study.to->closed()},
                   {"open_border_edges", study.to->border_edges()}};
@@ -858,7 +866,9 @@ Study run(const Document& doc, const Scene& scene, const json& args, const std::
   if (!study.to->closed())
     report["sign_note"] = "to is open (" + std::to_string(study.to->border_edges()) + " border edges): where the nearest point lies on its border the sign is undefined (sign_undefined counts those points; their size still counts).";
   for (auto& [k, v] : forward.items()) report[k] = v;
-  if (both) {
+  if (both && trisA.tri.empty()) {
+    report["reverse_note"] = "from is a point cloud: it has no surface to measure to against, so both_ways was skipped.";
+  } else if (both) {
     stopped();
     say("Measuring back", 75);
     if (align)  // A where it was measured: moved by the fit

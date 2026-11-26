@@ -780,7 +780,8 @@ How far body A (a scan, a print, a revision) lies from B, signed per sampled poi
 missing). Core: B's triangles (a mesh as stored, a solid meshed on a copy at `deflection_for(tol, size)`, welded on a
 1e-7 x size grid) in a median-split BVH (`Surface`); the sign from angle-weighted pseudo-normals, undefined where the
 nearest point is on an open border (`sign_undefined`, `sign_note`); a closed B with a negative volume is turned round.
-A mesh's welded vertices are the samples (thinned evenly past `sample`), a solid's faces sampled by area (fixed seed);
+A mesh's welded vertices are the samples (thinned evenly past `sample`), a point cloud's points too (node order, `from`
+only; the app colours it through `cloud_map::set`, the stub to wire to the cloud display), a solid's faces by area (fixed seed);
 2000 points or fewer on a solid B are refined on the exact face (BRepExtrema). Worst spots: greedy by |d|, each 6% of A's
 size (at least 10 tolerances) from the others. ICP (`best_fit`): point-to-plane, 6x6 solve about the centroid, pairs past
 3x the median dropped. Command `deviation` (CLI, MCP, live MCP; guide "Checking the result"); `summary` re-summarises a

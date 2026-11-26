@@ -29,13 +29,15 @@ struct Triangles {
   std::vector<float> xyz;
   std::vector<uint32_t> tri;
   std::vector<int> face;
+  bool cloud = false;  // a point cloud: xyz holds its points in node order (no triangles, no weld)
   size_t triangle_count() const { return tri.size() / 3; }
   size_t vertex_count() const { return xyz.size() / 3; }
   void append(const Triangles& other);  // the other's faces are offset past this one's highest
 };
 
 // The triangles of a world shape: a mesh as stored, a solid meshed on a copy at `deflection` (the cached shape keeps its
-// own triangulation). Vertices that coincide (shared face borders) are welded.
+// own triangulation; a point cloud, nodes without triangles, gives its points only: `cloud`). Vertices that coincide (shared
+// face borders) are welded.
 Triangles triangles_of(const TopoDS_Shape& world, double deflection);
 
 // Nearest-point index over a triangle set.
