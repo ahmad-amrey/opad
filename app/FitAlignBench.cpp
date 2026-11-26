@@ -141,6 +141,12 @@ OPAD_BENCH(OPAD_BENCH_FITALIGN, fitAlign) {
         if (!require(design->pickingPlane(), "the From plane box opens the plane picker")) return finish();
         end(QStringLiteral("active input %1").arg(form->activeInput()));
         if (!require(view->benchBodyPoint(st->mesh, st->x, st->y), "a point of the view on the scan")) return finish();
+        st->settled = 0;
+        st->phase = 101;  // a few ticks on: the search's own gap (picks over the whole view) is not the click's
+        return;
+      }
+      case 101: {
+        if (++st->settled < 15) return;
         begin("a triangle of the scan clicked for From plane");
         view->benchClickAt(st->x, st->y);
         st->phase = 2;
