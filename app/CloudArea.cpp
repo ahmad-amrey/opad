@@ -191,6 +191,8 @@ class Cloud : public AreaController {
       if (cloudBody(id)) return id;
     for (const auto& r : services().selection().refs)
       if (cloudBody(r.body)) return r.body;
+    for (const auto& r : services().viewport()->selection())  // a selection made in the view before the window heard of it
+      if (cloudBody(r.body)) return r.body;
     std::string only;
     for (const auto& id : doc->scene.all_bodies())
       if (cloudBody(id) && doc->scene.effectively_visible(id)) {

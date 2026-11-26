@@ -499,6 +499,34 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   silhouette outline, on by default) draws the model's edges; `highlight: [refs]` tints faces and edges orange;
   `shading: "smooth"` shades curved surfaces smoothly. All are off by default.
 
+## Point clouds
+
+- A raw scan opens or imports as one body of `representation: "points"`: a PLY without faces (ASCII or binary, with
+  colours, normals and a scalar such as `scalar_intensity`), XYZ (x y z, then r g b or nx ny nz, told apart by their
+  values), PTS (a count line, then x y z intensity r g b), CSV with a header row naming x, y, z, red..., E57 (every scan,
+  placed by its pose, invalid points left out) or LAS (point formats 0-10; LAZ is refused: convert it first). `import`
+  takes `scale` (mm per file unit; default E57 and LAS metres, the rest mm) and `up` (`"y"` turns a Y-up file to Z up).
+  Far coordinates (survey data) stay exact: the points sit near zero and the body's placement carries the offset.
+- A point is a vertex: `"<cloud>/vertex/<i>"` is point i (0-based). Clouds are measured, not modelled on: modelling
+  features refuse them.
+- `cloud` (a read; world mm): `action: "info"` gives the count, `bounds`, typical `spacing` and `attributes`;
+  `"points"` pages points (`offset`, `limit` up to 100000, `next_offset`), optionally of a region; `"region"` takes
+  `box: [[x,y,z],[x,y,z]]`, `sphere: {centre, radius}` or `plane` + `band` and returns `reference` (a region
+  reference), `count`, `centre`, `bounds` and a `sample`; `"slice"` takes `plane` (`{origin, normal[, x]}` or a plane
+  input) + `offset_along` + `band` (mm either side, default 0.25) and returns the points within the band (`uv` in the
+  plane's `frame`, `points` in world mm) and, with `profile` (default true), `polylines` chained along the profile
+  (`tolerance`, `gap` in mm; `closed` loops).
+- A region reference names points by ordinal ranges: `{"body": <cloud>, "kind": "region", "vertices": [[first, last],
+  ...]}` (inclusive). Features take it: `cloud_crop` `{region, keep: "inside" | "outside"}`.
+- Cloud features (`feature`): `cloud_normals` (`neighbours`), `cloud_outliers` (`neighbours`, `ratio` in standard
+  deviations), `cloud_downsample` (`voxel`, one measured point per voxel) and `cloud_crop` change the cloud in place
+  (the timeline keeps the points as they were); `cloud_slice` (`bodies` one cloud, `plane`, `offset`, `band`, `count`,
+  `spacing`) makes each slice a flat cloud on its plane (result `slices`: their frames). `cloud_sketch` (`body` a slice;
+  or any cloud with `plane` and `band`) turns a slice into lines of a new sketch on its plane (`tolerance` mm thins
+  them; `sketch_id` and `profile` {polylines, lines, points} come back): fit arcs, constraints and dimensions to them
+  with `sketch_edit`, then extrude or revolve as usual.
+- `export` writes clouds as `ply` (binary, every attribute), `xyz`, `pts`, `csv` or `e57` (metres), world mm.
+
 ## Drawings
 
 Drawings are file-level: the commands below are in the CLI, Python and the headless MCP server, not in the live tool

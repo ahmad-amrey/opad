@@ -1,5 +1,8 @@
 {
  "Select points": "تحديد النقاط",
+ "Point clouds export as PLY, XYZ, PTS, CSV or E57": "تُصدَّر سحب النقاط بصيغة PLY أو XYZ أو PTS أو CSV أو E57",
+ "PLY, XYZ, PTS, CSV and E57 export point clouds: the selection has none": "صيغ PLY وXYZ وPTS وCSV وE57 تصدّر سحب النقاط: والتحديد لا يحوي أيًّا منها",
+ "Point clouds (*.ply *.xyz *.pts *.csv *.e57 *.las)": "سحب النقاط (*.ply *.xyz *.pts *.csv *.e57 *.las)",
  "lasso": "حبل",
  "brush": "فرشاة",
  "crop points": "قص النقاط",

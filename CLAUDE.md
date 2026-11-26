@@ -127,6 +127,33 @@ Bench: `OPAD_BENCH_VIEWER=<out.opad>` (gui case "viewer"); benches that open a S
 the main window) covers the workspace, blocks the mouse and shows a spinner; actions other than file/panel ones wait.
 Benches (`--bench-select`) keep every other top-level window off screen (`BenchQuiet`) and never ask on quit.
 
+## Point clouds (`core/src/cloud/`, `opad/point_cloud.hpp`, app `CloudArea.cpp`, `ViewportCloud.cpp`)
+
+A cloud body is a mesh body with nodes and no triangles: one surface-less face whose `Poly_Triangulation` holds the points
+(single precision), normals, and in its UV nodes the colour (U = 0xRRGGBB, exact in a float; -1 none) and one scalar (V).
+So it rides the shape cache, BinTools (viewer cache), make_editable and linked assets as any mesh; `is_mesh_shape` is true,
+`cloud::is_cloud` says which. Node/meta `representation: "points"`; a point is vertex ordinal i. Body-store text is
+`cloud::to_brep` (BREP format 3, precision 9: normals kept, floats exact) in `store_body`, `persist_body` and the engine's
+`materialize`; never `brep_from_shape` (no triangulation). Far scans: readers keep points near zero (`Points::offset`, the
+first point rounded to a metre beyond 10 m) and the import puts the offset into the body's `transform`. Readers
+(`cloud/io.cpp`, `e57.cpp`): PLY (the mesh reader's parser too, `read_ply_data`), XYZ/PTS/CSV (columns by header or by
+value ranges, parsed in parallel blocks), LAS 0-10 (LAZ refused: LASzip is LGPL), E57 without a library (pages + CRC-32C,
+XML, bit-packed streams joined per field, pose, invalid points; a writer too). Tools (`cloud/tools.cpp`): `Grid` (kNN,
+radius), `spacing` (sampled above 400k points), `slice` + `profile` (chained polylines, Douglas-Peucker), `outliers`,
+`voxel_downsample`, `estimate_normals` (PCA, oriented by a walk over grid cells). Features `cloud_*` in
+`design/cloud_features.cpp` (one dispatch line in `compute_feature`): normals/outliers/downsample/crop change the cloud in
+place (a result located by its node, `materialize` keeps it in its own frame), `cloud_slice` makes flat clouds; the region
+input type "region" = `{"body", "kind": "region", "vertices": [[first, last], ...]}`; `design::slice_sketch_op` turns a slice
+into lines. Commands `cloud` (read: info/points/region/slice) and `cloud_sketch` (`cloud/commands_cloud.cpp`), export
+ply/xyz/pts/csv/e57. App: `BodyPrs::buildCloud` (worker) draws a stride sample of `cloudBudget` (8M) points, picks through
+`CloudPickSet` (runs of 32 points in Morton order under one BVH: mode 0 and the Vertex filter as `meshGroups[2]`, no owner
+per point); `Viewport::updateClouds` (from `refineVisible`) sets point sizes from spacing/pixel and, zoomed in, draws the
+visible part at full density (`setDisplayPrs`); `setCloudColorMode` (view/cloudColor). Select points: lasso/box (NDC
+polygon, `cloud::in_polygon` on a worker), brush (spheres at navigation picks), overlay in Topmost; Keep/Delete = one
+`cloud_crop`. Known limit: a non-linked 20M cloud is ~700 MB of BREP text, and `applyOps` copies the Document on the UI
+thread: big scans are best linked (`import --link`). `ctest -R point-cloud`; gui case `cloud-20m` (OPAD_BENCH_CLOUD,
+tools/bench_cases/cloud.py makes a 20M-point PLY).
+
 ## Parasolid X_T / X_B (`core/src/xt/`, no dependency)
 
 `xt_parse.cpp` reads text and neutral/typed binary (bare binary refused) into nodes; layouts: embedded edits (V14+ keys

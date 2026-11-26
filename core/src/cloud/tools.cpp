@@ -307,7 +307,13 @@ std::vector<std::vector<std::array<double, 2>>> profile(const std::vector<float>
   for (size_t i = 0; i < n; ++i) flat.xyz[3 * i] = uv[2 * i], flat.xyz[3 * i + 1] = uv[2 * i + 1], flat.xyz[3 * i + 2] = 0;
   const double sp = std::max(spacing(flat), 1e-6);
   if (gap <= 0) gap = 4 * sp;
-  if (tolerance <= 0) tolerance = sp;
+  if (tolerance <= 0) {
+    // Twice the spacing, and no finer than 1/2000 of the profile's size: a dense slice of a smooth wall would otherwise keep
+    // a line per point (80 mm round: about 60 lines).
+    double u0 = 1e300, v0 = 1e300, u1 = -1e300, v1 = -1e300;
+    for (size_t i = 0; i < n; ++i) u0 = std::min(u0, double(uv[2 * i])), u1 = std::max(u1, double(uv[2 * i])), v0 = std::min(v0, double(uv[2 * i + 1])), v1 = std::max(v1, double(uv[2 * i + 1]));
+    tolerance = std::max(2 * sp, std::hypot(u1 - u0, v1 - v0) / 2000);
+  }
   const double step = std::max(2.5 * sp, std::min(gap, 2 * tolerance));
   const Grid grid(flat, step);
   std::vector<char> used(n, 0);

@@ -1133,6 +1133,13 @@ ExportResult export_selection(const Document& doc, const Scene& scene, const std
   if (opt.format == "step" || opt.format == "stp")
     for (const auto& id : bodies)
       if (scene.node(id)->representation == "mesh") throw Error("Mesh objects cannot be exported as CAD solids; choose STL, OBJ or GLB");
+  // Point clouds have no faces to write here: they go to their own formats (cloud::export_points), and are left out of a
+  // mixed selection.
+  {
+    const size_t before = bodies.size();
+    bodies.erase(std::remove_if(bodies.begin(), bodies.end(), [&](const std::string& id) { return scene.node(id)->representation == "points"; }), bodies.end());
+    if (before && bodies.empty()) throw Error("Point clouds export as PLY, XYZ, PTS, CSV or E57");
+  }
   ExportResult res;
   bodies.erase(std::remove_if(bodies.begin(), bodies.end(),
                               [&](const std::string& id) {
