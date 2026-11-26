@@ -148,7 +148,9 @@ into lines. Commands `cloud` (read: info/points/region/slice) and `cloud_sketch`
 ply/xyz/pts/csv/e57. App: `BodyPrs::buildCloud` (worker) draws a stride sample of `cloudBudget` (8M) points, picks through
 `CloudPickSet` (runs of 32 points in Morton order under one BVH: mode 0 and the Vertex filter as `meshGroups[2]`, no owner
 per point); `Viewport::updateClouds` (from `refineVisible`) sets point sizes from spacing/pixel and, zoomed in, draws the
-visible part at full density (`setDisplayPrs`); `setCloudColorMode` (view/cloudColor). Select points: lasso/box (NDC
+visible part at full density (`setDisplayPrs`); `setCloudColorMode` (view/cloudColor); `setCloudColours(node, colours)`
+(one 0xAARRGGBB a point, alpha 0 none; null clears) a display-only overlay per node (deviation maps), redrawn per node
+through every level-of-detail pass. Select points: lasso/box (NDC
 polygon, `cloud::in_polygon` on a worker), brush (spheres at navigation picks), overlay in Topmost; Keep/Delete = one
 `cloud_crop`. Known limit: a non-linked 20M cloud is ~700 MB of BREP text, and `applyOps` copies the Document on the UI
 thread: big scans are best linked (`import --link`). `ctest -R point-cloud`; gui case `cloud-20m` (OPAD_BENCH_CLOUD,
