@@ -334,6 +334,14 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   group["description"]="Body or component ids; a component stands for all its bodies.";
   add({"clearance","Read-only clearance between two groups (a, b): the smallest distance (min_distance_mm, closest pair and points) and, worst first and paged, the pairs across that intersect (overlap volume and box), touch (0 mm, no volume) or come closer than clearance_mm; status intersecting|touching|too_close|clear. Bodies of linked files not loaded are listed in not_loaded.",
     bounded({{"a",group},{"b",group},{"clearance_mm",{{"type","number"},{"minimum",0},{"default",0}}}}),false},run([](const Document& d,const Scene& s,const json& a){return check_clearance(d,s,a);}));
+  // Fitted references (design/fit_refs.cpp): what a scan has instead of exact faces and edges, fitted on the worker that
+  // runs the command, so an agent needs no offline maths to align a mesh.
+  add({"fit_reference","Fit a plane, line or axis to a mesh body (a scan or STL has no exact face or edge) or to points. ref {fit: {body, seed (triangle index as in body/face/N), tolerance (deg)} | {body, triangles: [N | [first, last]]} | {points: [[x,y,z] | vertex refs]} | {of: intersection, planes: [p, p]}; of: plane, normal, cylinder, wall, line, auto, scan_axes}; as plane|axis. Returns the ref with its result (pass it to plane/axis inputs as it is: no refit), world (now, mm) and quality (rms_mm, used/total, grade good|fair|poor: poor = not that shape, e.g. a curved region as a plane).",
+    {{"doc",{{"type","string"}}},{"ref",{{"type","object"},{"required",{"fit"}}}},{"as",{{"type","string"},{"enum",{"plane","axis"}},{"default","plane"}}}},false},
+    run([](const Document& d,const Scene& s,const json& a){return design::fit_reference(d,s,a.at("ref"),a.value("as",std::string("plane")));}));
+  add({"scan_axes","Candidates for standing a mesh body (a scan) on the main axes: bases (flats from the normals' mean shift, best first; method pca: principal directions when there are none) with quality and X turns (wall directions, quarter turns). align_inputs stands it on XY with base 0, turn 0, centred; change from_plane.fit.base / turn to choose another, flip to turn it over.",
+    {{"doc",{{"type","string"}}},{"body",{{"type","string"}}}},false},
+    run([](const Document& d,const Scene& s,const json& a){return design::scan_axes_report(d,s,a.at("body").get<std::string>());}));
   add({"feature_schema","Input schema, defaults and an example for one supported feature kind",{{"kind",{{"type","string"}}}},false},[](Document*,const json& a){
     const auto kind=a.at("kind").get<std::string>();const auto schema=agent::feature_schema(kind);json example=json::object();
     for(const auto& input:design::feature_spec(kind)->inputs){
