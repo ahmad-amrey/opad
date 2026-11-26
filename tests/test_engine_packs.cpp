@@ -5,11 +5,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "check.hpp"
+#include "opad/sim/cfd.hpp"
 #include "opad/sim/engine_packs.hpp"
 #include "opad/sim/fea.hpp"
 #include "opad/util.hpp"
@@ -28,8 +30,9 @@ void set_env(const char* name, const std::string& value) {
 #endif
 }
 
-// A zip of `files` (name, data): stored or deflated by turns, so both of the reader's ways are used.
-std::string make_zip(const std::vector<std::pair<std::string, std::string>>& files) {
+// A zip of `files` (name, data): stored or deflated by turns, so both of the reader's ways are used. A member named in
+// `modes` is written as made on Unix with those mode bits (as the Linux and macOS packs are: cmake -E tar on Unix).
+std::string make_zip(const std::vector<std::pair<std::string, std::string>>& files, const std::map<std::string, unsigned>& modes = {}) {
   std::string out, dir;
   auto u16 = [](std::string& s, unsigned v) { s += char(v & 0xFF), s += char((v >> 8) & 0xFF); };
   auto u32 = [&](std::string& s, unsigned long v) { u16(s, unsigned(v & 0xFFFF)), u16(s, unsigned((v >> 16) & 0xFFFF)); };
@@ -51,13 +54,14 @@ std::string make_zip(const std::vector<std::pair<std::string, std::string>>& fil
     }
     const unsigned long crc = crc32(0, reinterpret_cast<const Bytef*>(data.data()), uInt(data.size()));
     const unsigned long at = static_cast<unsigned long>(out.size());
+    const auto mode = modes.find(name);
     auto header = [&](std::string& s, bool central) {
       u32(s, central ? 0x02014b50 : 0x04034b50);
-      if (central) u16(s, 20);
+      if (central) u16(s, mode != modes.end() ? (3u << 8) | 20 : 20);  // version made by: 3 = Unix
       u16(s, 20), u16(s, 0), u16(s, squeeze ? 8 : 0), u16(s, 0), u16(s, 0);
       u32(s, crc), u32(s, static_cast<unsigned long>(body.size())), u32(s, static_cast<unsigned long>(data.size()));
       u16(s, unsigned(name.size())), u16(s, 0);
-      if (central) u16(s, 0), u16(s, 0), u16(s, 0), u32(s, 0), u32(s, at);
+      if (central) u16(s, 0), u16(s, 0), u16(s, 0), u32(s, mode != modes.end() ? (unsigned long)(0100000u | mode->second) << 16 : 0), u32(s, at);
       s += name;
     };
     header(out, false);
@@ -144,8 +148,61 @@ TEST(a_pack_whose_hash_matches_is_unpacked_with_names_as_written) {
   CHECK(opad::sim::installed_pack("calculix") == dir);
 #ifdef _WIN32
   CHECK(opad::sim::ccx_program() == dir / "bin" / "ccx.exe");
+#else
+  CHECK(opad::sim::ccx_program() != dir / "bin" / "ccx.exe");  // a Windows pack's program is no program here
 #endif
   CHECK(opad::sim::remove_pack("calculix") && opad::sim::installed_pack("calculix").empty() && box.folders().empty());
+}
+
+// The Linux and macOS packs: programs keep the mode bits they were zipped with (a program that is not executable cannot
+// run), and discovery takes the pack's own program names (no .exe).
+TEST(a_unix_pack_keeps_its_programs_runnable_and_is_found) {
+  Sandbox box;
+  set_env("OPAD_OPENFOAM", "");
+  const char* foam = "#!/bin/sh\necho stand-in\n";
+  const EnginePack of = box.pack(make_zip({{"bin/simpleFoam", foam}, {"bin/blockMesh", foam}, {"lib/libOpenFOAM.so", "library"},
+                                           {"etc/controlDict", "// controlDict"}, {"opad-pack.json", meta("openfoam", "v2512-9")}},
+                                          {{"bin/simpleFoam", 0755}, {"bin/blockMesh", 0755}, {"lib/libOpenFOAM.so", 0644}}),
+                                 "openfoam", "v2512-9");
+  const fs::path dir = opad::sim::install_pack(of, box.download(of));
+  const EnginePack cx = box.pack(make_zip({{"bin/ccx", "program"}, {"opad-pack.json", meta("calculix", "2.22-9")}}, {{"bin/ccx", 0755}}));
+  const fs::path cdir = opad::sim::install_pack(cx, box.download(cx));
+#ifndef _WIN32
+  const auto perms = fs::status(dir / "bin" / "simpleFoam").permissions();
+  CHECK((perms & fs::perms::owner_exec) != fs::perms::none && (perms & fs::perms::owner_read) != fs::perms::none);
+  CHECK((fs::status(dir / "lib" / "libOpenFOAM.so").permissions() & fs::perms::owner_exec) == fs::perms::none);
+  CHECK((fs::status(cdir / "bin" / "ccx").permissions() & fs::perms::owner_exec) != fs::perms::none);
+  CHECK(opad::sim::ccx_program() == cdir / "bin" / "ccx");
+  // Its programs and etc/ (WM_PROJECT_DIR): no MPI, nothing else to set up.
+  const auto found = opad::sim::openfoam();
+  CHECK(found.bin == dir / "bin" && found.project == dir && found.problem.empty());
+#else
+  CHECK(opad::read_text_file(dir / "bin" / "simpleFoam") == foam && fs::exists(cdir / "bin" / "ccx"));  // written; modes mean nothing here
+#endif
+}
+
+// The table compiled in: one pack per revision and system, each at its own release.
+TEST(every_system_has_its_own_release_of_each_pack) {
+  Sandbox box;
+  const std::string here = opad::sim::engine_pack_platform();
+#if defined(_WIN32)
+  CHECK(here == "windows-x64");
+#elif defined(__APPLE__)
+  CHECK(here == "macos-arm64");
+#else
+  CHECK(here == "linux-x64");
+#endif
+  std::map<std::string, int> systems;
+  for (const auto& p : opad::sim::engine_pack_table()) {
+    const std::string stem = p.id + "-" + p.version + "-" + p.platform;
+    CHECK(p.url == "https://github.com/ahmad-amrey/opad/releases/download/engines-" + stem + "/opad-" + stem + ".zip");
+    CHECK(opad::sim::engine_pack_url_allowed(p.url));
+    CHECK(p.sha256.empty() == (p.size == 0));  // published: both pinned; else neither
+    ++systems[p.id + " " + p.platform];
+  }
+  for (const char* id : {"openfoam", "calculix"})
+    for (const char* platform : {"windows-x64", "linux-x64", "macos-arm64"}) CHECK(systems[std::string(id) + " " + platform] == 1);
+  for (const auto& p : opad::sim::engine_packs()) CHECK(p.platform == here && !p.sha256.empty());  // only this system's published ones
 }
 
 TEST(a_download_that_differs_is_refused_and_nothing_is_installed) {
