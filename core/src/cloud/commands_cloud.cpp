@@ -142,9 +142,7 @@ json frame_json(const Frame& f) {
 
 void register_cloud_commands(const std::function<void(const commands::CommandInfo&, commands::Handler)>& add) {
   add({"cloud",
-       "Point clouds (raw scans), a read: info (count, box, typical spacing, attributes), points (paged, optionally of a region), region (the points in a box, "
-       "a sphere or a band about a plane: a region reference for Crop points and fitted references, with its centre and box) and slice (the points within a "
-       "band either side of a plane, on it in the plane's frame, and the profile's polylines). World mm",
+       "Point cloud reads (world mm): info (count, box, spacing, attributes), points (paged, of a region), region (points in a box, sphere or plane band: a region reference) and slice (points within a band of a plane, in its frame, with profile polylines)",
        {{"doc", "path"}, {"body", "uuid - a point cloud body"}, {"action", "info|points|region|slice"},
         {"region", "object - {\"body\", \"kind\": \"region\", \"vertices\": [[first, last], ...]}"}, {"box", "[[x,y,z],[x,y,z]] - mm"},
         {"sphere", "object - {centre: [x,y,z], radius}"}, {"plane", "object - {origin, normal[, x]} mm, or a plane input {base|face|feature}"},
@@ -233,8 +231,7 @@ void register_cloud_commands(const std::function<void(const commands::CommandInf
       });
 
   add({"cloud_sketch",
-       "Turn a cloud's slice into sketch geometry: its points chained into polylines, thinned to the tolerance and drawn as lines on the slice's plane "
-       "(a body made by Slice points), or on the plane given with the points within band of it. Returns the sketch id",
+       "A cloud slice as sketch lines on its plane (a Slice points body), or a cloud cut by plane within band. Returns sketch_id",
        {{"doc", "path"}, {"body", "uuid - a slice (or any cloud with plane)"}, {"plane", "object - a plane input {base|face|feature}; default the slice's own"},
         {"band", "number - mm either side, with plane (default 0.25)"}, {"tolerance", "number - mm (0: the spacing)"}, {"gap", "number - mm (0: automatic)"},
         {"name", "string"}, {"by", "string"}},

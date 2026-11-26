@@ -349,6 +349,7 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
       else if(input.type=="plane")example[input.name]={{"base","xy"}};
       else if(input.type=="path")example[input.name]={{"sketch","<sketch-id from context>"}};
       else if(input.type=="points")example[input.name]=json::array({{{"sketch","<sketch-id from context>"},{"point",1}}});
+      else if(input.type=="region")example[input.name]={{"body","<cloud-id from context>"},{"kind","region"},{"vertices",json::array({json::array({0,99})})}};  // the cloud command's region action gives one
       else example[input.name]=json::array({{{"body","<body-id from context>"},{"kind",input.type=="faces"?"face":input.type=="edges"?"edge":"body"},{"index",0}}});
       if(example[input.name].is_array())while(example[input.name].size()<size_t(input.min_count))example[input.name].push_back(example[input.name].front());
     }

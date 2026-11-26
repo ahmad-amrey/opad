@@ -306,15 +306,16 @@ std::vector<std::vector<std::array<double, 2>>> profile(const std::vector<float>
   flat.xyz.resize(n * 3);
   for (size_t i = 0; i < n; ++i) flat.xyz[3 * i] = uv[2 * i], flat.xyz[3 * i + 1] = uv[2 * i + 1], flat.xyz[3 * i + 2] = 0;
   const double sp = std::max(spacing(flat), 1e-6);
-  if (gap <= 0) gap = 4 * sp;
-  if (tolerance <= 0) {
-    // Twice the spacing, and no finer than 1/2000 of the profile's size: a dense slice of a smooth wall would otherwise keep
-    // a line per point (80 mm round: about 60 lines).
-    double u0 = 1e300, v0 = 1e300, u1 = -1e300, v1 = -1e300;
-    for (size_t i = 0; i < n; ++i) u0 = std::min(u0, double(uv[2 * i])), u1 = std::max(u1, double(uv[2 * i])), v0 = std::min(v0, double(uv[2 * i + 1])), v1 = std::max(v1, double(uv[2 * i + 1]));
-    tolerance = std::max(2 * sp, std::hypot(u1 - u0, v1 - v0) / 2000);
-  }
-  const double step = std::max(2.5 * sp, std::min(gap, 2 * tolerance));
+  double u0 = 1e300, v0 = 1e300, u1 = -1e300, v1 = -1e300;
+  for (size_t i = 0; i < n; ++i) u0 = std::min(u0, double(uv[2 * i])), u1 = std::max(u1, double(uv[2 * i])), v0 = std::min(v0, double(uv[2 * i + 1])), v1 = std::max(v1, double(uv[2 * i + 1]));
+  const double size = std::hypot(u1 - u0, v1 - v0);
+  // Thinned to twice the spacing, no finer than 1/2000 of the profile's size: a dense slice of a smooth wall would otherwise
+  // keep a line per point (80 mm round: about 60 lines).
+  if (tolerance <= 0) tolerance = std::max(2 * sp, size / 2000);
+  // Each step of a chain takes the points within `step` of it: wider than a slice's band of points is thick (a scan's noise,
+  // a wall leaning across the band), else a chain runs along one edge of it and leaves the rest as fragments.
+  const double step = std::max({2.5 * sp, 2 * tolerance, size / 250});
+  if (gap <= 0) gap = std::max(4 * sp, 2 * step);
   const Grid grid(flat, step);
   std::vector<char> used(n, 0);
   std::vector<uint32_t> nearby;
@@ -365,6 +366,14 @@ std::vector<std::vector<std::array<double, 2>>> profile(const std::vector<float>
     while (advance(c)) backward.push_back(c);
     std::vector<P2> chain(backward.rbegin(), backward.rend());
     chain.insert(chain.end(), forward.begin(), forward.end());
+    // What lies beside the chain is its own (no second chain along the band's far edge); a fragment of a few steps is noise.
+    double along = 0;
+    for (size_t k = 0; k < chain.size(); ++k) {
+      if (k) along += std::hypot(chain[k][0] - chain[k - 1][0], chain[k][1] - chain[k - 1][1]);
+      const float q[3] = {float(chain[k][0]), float(chain[k][1]), 0};
+      grid.within(q, 1.5 * step, nearby);
+      for (uint32_t i : nearby) used[i] = 1;
+    }
     if (chain.size() < 3) continue;
     const double cx = chain.front()[0] - chain.back()[0], cy = chain.front()[1] - chain.back()[1];
     const bool closed = chain.size() > 6 && std::sqrt(cx * cx + cy * cy) <= gap;
@@ -380,6 +389,11 @@ std::vector<std::vector<std::array<double, 2>>> profile(const std::vector<float>
     return s;
   };
   std::stable_sort(result.begin(), result.end(), [&](const auto& a, const auto& b) { return length(a) > length(b); });
+  // Fragments (a few steps long, beside a profile many times longer) are noise left over; a sparse slice keeps all it has.
+  if (!result.empty()) {
+    const double longest = length(result.front());
+    result.erase(std::remove_if(result.begin(), result.end(), [&](const auto& c) { const double l = length(c); return l < 3 * step && l < 0.2 * longest; }), result.end());
+  }
   return result;
 }
 

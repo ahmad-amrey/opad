@@ -161,7 +161,7 @@ struct Slice {
 // frame's X direction in the plane.
 Slice slice(const Points& p, const Vec3& origin, const Vec3& normal, double half_band, const Vec3& x = {0, 0, 0});
 // A slice as polylines: points chained to their nearest neighbours (a jump over `gap` starts a new chain; 0: 4 x the
-// spacing), thinned to within `tolerance` of the chain (Douglas-Peucker; 0: twice the spacing, at least 1/2000 of its size). Closed loops end on their first
+// spacing; 0: automatic), thinned to within `tolerance` of the chain (Douglas-Peucker; 0: twice the spacing, at least 1/2000 of its size). Closed loops end on their first
 // point. Chains of fewer than three points are left out.
 std::vector<std::vector<std::array<double, 2>>> profile(const std::vector<float>& uv, double gap = 0, double tolerance = 0);
 // Statistical outliers: points whose mean distance to their k nearest neighbours is over the cloud's mean + std_ratio x its
