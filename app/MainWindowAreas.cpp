@@ -128,9 +128,10 @@ QString AreaServices::ribbonTab() const { return m_window->m_ribbon->currentTabI
 bool AreaServices::setRibbonTab(const QString& id) { return m_window->m_ribbon->setCurrentTabId(id); }
 bool AreaServices::setContextualTab(const QString& id, bool shown) { return m_window->setContextualTab(id, shown); }
 void AreaServices::addTabRowWidget(QWidget* widget) { m_window->m_ribbon->addTabRowWidget(widget); }
-void AreaServices::setCentralPage(QWidget* page) {
+void AreaServices::setCentralPage(QWidget* page, bool browser) {
   if (page && m_window->m_stack->indexOf(page) < 0) m_window->m_stack->addWidget(page);
   m_window->m_centralPage = page;
+  m_window->m_centralBrowser = !page || browser;
   m_window->showCentral();
 }
 QWidget* AreaServices::centralPage() const { return m_window->m_centralPage; }

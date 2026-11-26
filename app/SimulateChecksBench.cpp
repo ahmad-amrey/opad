@@ -14,6 +14,7 @@
 
 #include "AppDocument.hpp"
 #include "BenchRegistry.hpp"
+#include "BrowserOverlay.hpp"
 #include "GuidedSteps.hpp"
 #include "MainWindow.hpp"
 #include "Ribbon.hpp"
@@ -82,6 +83,13 @@ OPAD_BENCH(OPAD_BENCH_SIMCHECKS, simchecks) {
   QCoreApplication::processEvents();
   SimulateStart* start = area->start();
   require(start && services.centralPage() == start, "Start shows the page of checks in the view's place");
+  require(!w.m_browserOverlay->isVisible(), "the browser is hidden over the page of checks");
+  w.m_ribbon->setCurrentTabId("simulate.goal.air");
+  QCoreApplication::processEvents();
+  require(services.centralPage() != start && w.m_browserOverlay->isVisible(), "another tab: the view and the browser come back");
+  w.m_ribbon->setCurrentTabId("simulate.home");
+  QCoreApplication::processEvents();
+  require(!w.m_browserOverlay->isVisible(), "Start again: the browser hides again");
   require(start && start->cards().size() == simchecks::all().size() && start->shown().size() == simchecks::all().size(), "a card per check, every one shown");
   require(until([area] { return area->engines().contains("motion"); }, 20000), "the solvers are looked for on a worker");
   const opad::json engines = area->engines();

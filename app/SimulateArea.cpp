@@ -761,7 +761,7 @@ void Simulate::tabChanged(const QString& tabId) {
   const bool home = tabId == "simulate.home" && services().workspace() == "simulate" && services().document()->hasDocument;
   if (home) {
     showMade();
-    services().setCentralPage(m_start);
+    services().setCentralPage(m_start, false);  // the checks need no parts list: the browser comes back with the view
     if (m_checkPanel && !m_checkPanel->pinned()) m_checkPanel->hide();
   } else if (services().centralPage() == m_start) {
     services().setCentralPage(nullptr);

@@ -55,6 +55,24 @@ bool debianFamily() {
 }
 }  // namespace
 
+QString releaseAssetName(const QString& tag, const QString& asset) {
+  if (!asset.startsWith("OPAD-") || !tag.startsWith('v') || tag.size() < 2) return asset;
+  return "OPAD-" + tag.mid(1) + "-" + asset.mid(5);
+}
+
+QString findAsset(const QJsonArray& assets, const QString& asset) {
+  if (asset.isEmpty()) return {};
+  // OPAD-0.11.0-windows-x64-setup.exe, OPAD-0.11.0-rc.72-..., OPAD-0.11.1-dev.80-...; before 0.11.0 the name alone.
+  const QRegularExpression named("^OPAD-\\d+\\.\\d+\\.\\d+(?:-(?:rc|dev)\\.\\d+)?-" + QRegularExpression::escape(asset.mid(5)) + "$");
+  QString plain;
+  for (const QJsonValue& file : assets) {
+    const QString name = file.toObject().value("name").toString(), url = file.toObject().value("browser_download_url").toString();
+    if (asset.startsWith("OPAD-") && named.match(name).hasMatch()) return url;
+    if (name == asset) plain = url;
+  }
+  return plain;
+}
+
 std::optional<Release> parseLatest(const QByteArray& json, const QString& asset) {
   QJsonParseError error;
   const QJsonDocument doc = QJsonDocument::fromJson(json, &error);
@@ -71,9 +89,7 @@ std::optional<Release> parseLatest(const QByteArray& json, const QString& asset)
   r.summary = summarize(r.notes);
   r.page = o.value("html_url").toString();
   r.published = QDateTime::fromString(o.value("published_at").toString(), Qt::ISODate);
-  if (!asset.isEmpty())
-    for (const QJsonValue& file : o.value("assets").toArray())
-      if (file.toObject().value("name").toString() == asset) r.download = file.toObject().value("browser_download_url").toString();
+  r.download = findAsset(o.value("assets").toArray(), asset);
   return r;
 }
 
@@ -165,9 +181,8 @@ std::vector<Release> parseList(const QByteArray& json, const QString& asset) {
     r.page = o.value("html_url").toString();
     r.published = QDateTime::fromString(o.value("published_at").toString(), Qt::ISODate);
     if (!asset.isEmpty()) {
-      for (const QJsonValue& file : o.value("assets").toArray())
-        if (file.toObject().value("name").toString() == asset) r.download = file.toObject().value("browser_download_url").toString();
-      if (r.download.isEmpty()) r.download = assetDownloadUrl(r.tag, asset);  // the release's files keep their names
+      r.download = findAsset(o.value("assets").toArray(), asset);
+      if (r.download.isEmpty()) r.download = assetDownloadUrl(r.tag, releaseAssetName(r.tag, asset));  // the files are named after the tag
     }
     out.push_back(r);
   }
@@ -344,7 +359,7 @@ void Checker::pageAnswered() {
   if (r.version.isEmpty()) return emit failed(m_apiError.isEmpty() ? reply->errorString() : m_apiError, std::exchange(m_userAsked, false));
   r.name = "OPAD " + r.version;
   r.page = target.toString();
-  if (const QString asset = installerAssetName(); !asset.isEmpty()) r.download = assetDownloadUrl(r.tag, asset);
+  if (const QString asset = installerAssetName(); !asset.isEmpty()) r.download = assetDownloadUrl(r.tag, releaseAssetName(r.tag, asset));
   finish(r);
 }
 
