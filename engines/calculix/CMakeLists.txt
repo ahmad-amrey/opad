@@ -1,5 +1,6 @@
 # CalculiX ccx with SPOOLES and ARPACK, one static program. Configured by make-pack.sh with
 #   -DSRC=<folder holding CalculiX/ and SPOOLES.2.2/> -DCCX_VERSION=2.22 -DARPACK=<libarpack.a> -DBLAS=<libopenblas.a>
+#   -DLINK=<link options, a CMake list: "-static;pthread;m">
 # The source lists are read from the upstream makefiles (SPOOLES: each package's src/makefile; ccx: src/Makefile.inc), so
 # the build compiles exactly what upstream's make does, without needing make.
 cmake_minimum_required(VERSION 3.20)
@@ -55,9 +56,18 @@ endforeach()
 list(LENGTH ffiles nf)
 list(LENGTH cfiles nc)
 message(STATUS "ccx: ${nf} Fortran, ${nc} C files")
-add_executable(ccx "${ccx}/ccx_${CCX_VERSION}.c" ${ffiles} ${cfiles})
+# buildinfo.c (2.24 on: the compile time ccx prints) is outside SCCXC, as upstream recompiles it with every build.
+set(extra)
+if(EXISTS "${ccx}/buildinfo.c")
+  set(extra "${ccx}/buildinfo.c")
+endif()
+add_executable(ccx "${ccx}/ccx_${CCX_VERSION}.c" ${ffiles} ${cfiles} ${extra})
 set_target_properties(ccx PROPERTIES LINKER_LANGUAGE Fortran OUTPUT_NAME ccx)
 target_include_directories(ccx PRIVATE "${spooles}" "${ccx}")
 target_compile_definitions(ccx PRIVATE ARCH=Linux SPOOLES ARPACK MATRIXSTORAGE NETWORKOUT)
-target_compile_options(ccx PRIVATE -O2 $<$<COMPILE_LANGUAGE:C>:${old_c}> $<$<COMPILE_LANGUAGE:Fortran>:-fallow-argument-mismatch -w>)
-target_link_libraries(ccx PRIVATE spooles "${ARPACK}" "${BLAS}" -static -fopenmp pthread m)
+# As upstream's Makefile: OpenMP in both languages (OPAD sets the thread count, OPAD_CCX_THREADS), Fortran preprocessed.
+target_compile_options(ccx PRIVATE -O2 -fopenmp $<$<COMPILE_LANGUAGE:C>:${old_c}> $<$<COMPILE_LANGUAGE:Fortran>:-cpp -fallow-argument-mismatch -w>)
+if(NOT DEFINED LINK)
+  set(LINK -static -fopenmp pthread m)
+endif()
+target_link_libraries(ccx PRIVATE spooles "${ARPACK}" "${BLAS}" ${LINK})

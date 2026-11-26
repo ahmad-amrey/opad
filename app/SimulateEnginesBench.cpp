@@ -16,6 +16,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QPushButton>
 #include <QSaveFile>
@@ -60,20 +61,22 @@ quint32 crc32(const QByteArray& data) {
   return ~c;
 }
 
-// A zip of stored members: the fake pack.
-QByteArray zipOf(const QList<QPair<QString, QByteArray>>& files) {
+// A zip of stored members: the fake pack. Members in `programs` are written as made on Unix with mode 0755, as the Linux
+// and macOS packs are (their programs must stay executable).
+QByteArray zipOf(const QList<QPair<QString, QByteArray>>& files, const QStringList& programs = {}) {
   QByteArray out, dir;
   auto u16 = [](QByteArray& s, quint32 v) { s.append(char(v & 0xFF)).append(char((v >> 8) & 0xFF)); };
   auto u32 = [&](QByteArray& s, quint32 v) { u16(s, v & 0xFFFF), u16(s, v >> 16); };
   for (const auto& [name, data] : files) {
     const QByteArray n = name.toUtf8();
     const quint32 at = quint32(out.size()), crc = crc32(data);
+    const bool program = programs.contains(name);
     auto header = [&](QByteArray& s, bool central) {
       u32(s, central ? 0x02014b50 : 0x04034b50);
-      if (central) u16(s, 20);
+      if (central) u16(s, program ? (3u << 8) | 20 : 20);  // made on Unix
       u16(s, 20), u16(s, 0), u16(s, 0), u16(s, 0), u16(s, 0), u32(s, crc), u32(s, quint32(data.size())), u32(s, quint32(data.size()));
       u16(s, quint32(n.size())), u16(s, 0);
-      if (central) u16(s, 0), u16(s, 0), u16(s, 0), u32(s, 0), u32(s, at);
+      if (central) u16(s, 0), u16(s, 0), u16(s, 0), u32(s, program ? quint32(0100755) << 16 : 0), u32(s, at);
       s += n;
     };
     header(out, false);
@@ -156,11 +159,17 @@ OPAD_BENCH(OPAD_BENCH_ENGINE_INSTALL, engineinstall) {
   auto* release = new FakeRelease(&w);
   QByteArray filler(3 * 1024 * 1024, '\0');  // a pack of some size, so the download runs a moment
   for (int i = 0; i < filler.size(); ++i) filler[i] = char((i * 7919) >> 3);
-  QByteArray good = zipOf({{"bin/simpleFoam.exe", "not a program: the bench's stand-in"},
-                           {"bin/libfiller.dll", filler},
+#ifdef Q_OS_WIN
+  const QString solver = "bin/simpleFoam.exe", library = "bin/libfiller.dll";
+#else
+  const QString solver = "bin/simpleFoam", library = "lib/libfiller.so";
+#endif
+  QByteArray good = zipOf({{solver, "not a program: the bench's stand-in"},
+                           {library, filler},
                            {"etc/controlDict", "// the bench's stand-in"},
                            {"NOTICE.txt", "OpenFOAM vBench for OPAD (the bench's fake pack)"},
-                           {"opad-pack.json", R"({"id": "openfoam", "version": "vbench-1"})"}});
+                           {"opad-pack.json", R"({"id": "openfoam", "version": "vbench-1"})"}},
+                          {solver});
   QString version = "vbench-1";
   if (const QString real = qEnvironmentVariable("OPAD_BENCH_ENGINE_ZIP"); !real.isEmpty()) {
     QFile f(real);
@@ -179,11 +188,12 @@ OPAD_BENCH(OPAD_BENCH_ENGINE_INSTALL, engineinstall) {
   auto publish = [&](const QString& file) {
     QSaveFile f(table);  // whole or not at all: the solvers may be read meanwhile
     if (f.open(QIODevice::WriteOnly))
-      f.write(QString(R"([{"id": "openfoam", "name": "OpenFOAM vBench", "version": "%4", "platform": "windows-x64", "url": "%1", "size": %2, "sha256": "%3"}])")
+      f.write(QString(R"([{"id": "openfoam", "name": "OpenFOAM vBench", "version": "%4", "platform": "%5", "url": "%1", "size": %2, "sha256": "%3"}])")
                   .arg(release->url(file))
                   .arg(good.size())
                   .arg(QString::fromLatin1(QCryptographicHash::hash(good, QCryptographicHash::Sha256).toHex()))
                   .arg(version)
+                  .arg(QString::fromStdString(opad::sim::engine_pack_platform()))
                   .toUtf8());
     f.commit();
   };
@@ -257,7 +267,10 @@ OPAD_BENCH(OPAD_BENCH_ENGINE_INSTALL, engineinstall) {
   require(until([&] { return toastWith("is installed"); }, 60000), "the pack is installed");
   require(until([area] { return area->engines().value("flow", false); }, 20000), "the solvers are read again: OpenFOAM is found");
   const QString dir = QDir(engines).filePath("openfoam-" + version);
-  require(QFile::exists(dir + "/bin/simpleFoam.exe") && QFile::exists(dir + "/etc/controlDict"), "it is unpacked into the engines folder");
+  require(QFile::exists(dir + "/" + solver) && QFile::exists(dir + "/etc/controlDict"), "it is unpacked into the engines folder");
+#ifndef Q_OS_WIN
+  require(QFileInfo(dir + "/" + solver).isExecutable(), "its programs stay executable");
+#endif
   require(QDir(engines).entryList(QDir::AllEntries | QDir::NoDotAndDotDot) == QStringList{"openfoam-" + version}, "the download is gone, only the pack stays");
   require(area->engines()["packs"]["openfoam"].value("installed", opad::json()).is_string(), "engines() names it as installed");
   require(!button->isVisibleTo(check), "the check no longer asks for the solver");

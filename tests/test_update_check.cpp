@@ -42,6 +42,7 @@ TEST(latest_release_is_read_and_drafts_are_not) {
   CHECK(!parseLatest(release("v0.3.0", false, true)));
   CHECK(!parseLatest("not json"));
   CHECK(!parseLatest(R"({"tag_name":"nightly"})"));  // not a version
+  CHECK(!parseLatest(R"({"tag_name":"engines-openfoam-v2512-1-windows-x64","body":"OpenFOAM for OPAD"})"));  // a solver pack
 }
 
 TEST(the_daily_check_is_due_after_a_day) {
@@ -262,6 +263,10 @@ TEST(the_list_keys_releases_and_development_builds) {
       listEntry("dev-96", true, "<!-- opad-build: 96; opad-version: 0.10.0 -->"),         // the old tag: left out
       listEntry("v0.11.0", false, "draft", "", true),                         // a draft: left out
       listEntry("nightly", true, "<!-- opad-build: 5; opad-version: 0.1.0 -->"),          // another prerelease: left out
+      // Solver packs (engines.yml): releases of their own, never OPAD versions, whatever their notes say.
+      listEntry("engines-openfoam-v2512-1-windows-x64", false, "OpenFOAM v2512 for OPAD", "OpenFOAM v2512 for OPAD (Windows x64)"),
+      listEntry("engines-calculix-2.22-1-linux-x64", false, "<!-- opad-build: 999; opad-version: 9.9.9 -->"),
+      listEntry("engines-calculix-2.22-1-macos-arm64", true, "<!-- opad-build: 999; opad-version: 9.9.9 -->"),
   });
   const auto all = parseList(list, "OPAD-windows-x64-setup.exe");
   CHECK(all.size() == 5);

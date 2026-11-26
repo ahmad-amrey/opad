@@ -151,6 +151,10 @@ if(Python3_Interpreter_FOUND AND OPAD_BUILD_CLI)
   add_test(NAME cli COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_cli.py $<TARGET_FILE:opad-cli> ${OPAD_FIXTURE_DIR})
   set_tests_properties(cli PROPERTIES FIXTURES_REQUIRED step_fixtures ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
 endif()
+if(Python3_Interpreter_FOUND)
+  # tools/deps.json still finds every pin the weekly deps-watch workflow reads (offline: no upstream lookups).
+  add_test(NAME deps-pins COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/deps_watch.py --check)
+endif()
 
 # The desktop safety net (tools/gui_benches.py): hidden windows driven by in-app benches. Needs a desktop session with
 # OpenGL, so the default test presets leave the "gui" label out; `ctest --preset windows-gui` runs it.

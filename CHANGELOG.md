@@ -26,8 +26,11 @@ including a new airflow check for ducts and fittings.
   The earlier tools are all still there under *Advanced*.
 - **Airflow through ducts and fittings.** A new airflow check (and `flow` study) works out the pressure a fitting loses
   at a given airflow, or the airflow a fan really delivers through it, shows the air speed, pressure and streamlines, and
-  marks where the air swirls. Round parts are solved as a thin slice, so a run takes a minute or so. It needs OpenFOAM;
-  OPAD says so and points to the download when it is missing.
+  marks where the air swirls. Round parts are solved as a thin slice, so a run takes a minute or so.
+- **Solvers installed from inside OPAD.** The airflow and strength checks need OpenFOAM and CalculiX; when one is
+  missing, *Install* downloads it (about 45 MB for OpenFOAM, 13 MB for CalculiX) from OPAD's own releases, checks it
+  and sets it up for you on Windows, Linux and macOS, with no admin rights and nothing else to install. A copy you
+  installed yourself still works, and the solvers' licences and sources are listed under *Help > Third-party licences*.
 - **A .gitignore when you set up a repository.** *Set up repository* offers a recommended .gitignore that keeps exports
   (STEP, STL, 3MF, drawings, renders) and OPAD's temporary files out of the history; *Customise* shows the groups to tick.
   Files your design links stay tracked even when their type is ignored, and an existing .gitignore is only added to.

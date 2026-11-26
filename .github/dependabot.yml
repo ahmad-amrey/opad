@@ -1,0 +1,15 @@
+# Dependabot reads this file from the default branch (main) and opens its pull requests into dev.
+# GitHub Actions are pinned by SHA with a version comment (`uses: x@<sha> # v1.2.3`): Dependabot keeps that form.
+# The LibreDWG submodule is left to tools/deps_watch.py (deps-watch.yml): Dependabot's gitsubmodule updates move a
+# submodule to the newest commit of its branch, not to a release tag, and OPAD pins LibreDWG's release tags.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:  # one pull request a week for all of them
+        patterns: ["*"]
