@@ -5,8 +5,10 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
-## [0.11.0] - 2026-11-26
+## [0.11.0] - 2026-11-27
 
+OPAD now works with 3D scans: open the raw point cloud, line a scan up with the axes from fitted planes and axes, and
+see how far it is from your CAD on a colour map. Solvers install from inside OPAD, and downloads carry their version.
 Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,
 dimensions between lines draw properly, and Sketch fillet says why a corner can't be rounded. Version control keeps each
 design in a folder of its own, with linked files saved by relative paths, and OPAD can offer you development builds
