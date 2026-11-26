@@ -18,6 +18,7 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepFilletAPI_LocalOperation.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
@@ -49,12 +50,14 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <GProp_GProps.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
@@ -78,6 +81,7 @@
 #include "opad/design/sketch_reference.hpp"
 #include "opad/checks.hpp"
 #include "opad/geometry.hpp"
+#include "opad/kernel_guard.hpp"
 #include "opad/mesh_solid.hpp"
 
 namespace opad::design {
@@ -1649,16 +1653,74 @@ struct Blend {
   bool two = false;  // chamfer with two distances
   double r = 0, r2 = 0;
 };
-std::optional<TopoDS_Shape> blend_edges(const TopoDS_Shape& body, const std::vector<TopoDS_Edge>& edges, const Blend& how, double scale = 1,
-                                        std::vector<std::vector<TopoDS_Edge>>* follow = nullptr) {
+
+// Where an edge runs and how long it is: to find it again in a result the kernel rebuilt.
+struct EdgeMark {
+  gp_Pnt mid;
+  double length = 0, tolerance = 0;
+};
+std::optional<EdgeMark> edge_mark(const TopoDS_Edge& e) {
+  if (BRep_Tool::Degenerated(e)) return std::nullopt;
+  BRepAdaptor_Curve c(e);
+  return EdgeMark{c.Value((c.FirstParameter() + c.LastParameter()) / 2), GCPnts_AbscissaPoint::Length(c), BRep_Tool::Tolerance(e)};
+}
+
+// A blend's result for each edge of `group` (edges of the blended body): its images. The edges of the blended contours
+// (an edge takes its whole tangent chain along) are gone into the blend. One the kernel only rebuilt (a fillet remakes the
+// faces around it, and IsDeleted says yes for edges it never touched: one edge of a spline outline at a time used to
+// carry 2 of 198 waiting edges over and drop the rest, so the fillet "succeeded" with almost none of them) is found in the
+// result by where it runs. False when one is not found: the sequence cannot go on without it.
+bool carry_edges(BRepFilletAPI_LocalOperation& local, BRepBuilderAPI_MakeShape& mk, const TopoDS_Shape& result, std::vector<TopoDS_Edge>& group) {
+  TopTools_IndexedMapOfShape taken, kept;
+  for (int c = 1; c <= local.NbContours(); ++c)
+    for (int k = 1; k <= local.NbEdges(c); ++k) taken.Add(local.Edge(c, k));
+  TopExp::MapShapes(result, TopAbs_EDGE, kept);
+  std::vector<std::pair<TopoDS_Edge, EdgeMark>> marks;  // the result's edges, measured once when first needed
+  std::vector<TopoDS_Edge> carried;
+  for (const auto& e : group) {
+    if (taken.Contains(e)) continue;
+    const TopTools_ListOfShape& images = mk.Modified(e);
+    if (!images.IsEmpty()) {
+      for (TopTools_ListIteratorOfListOfShape it(images); it.More(); it.Next())
+        if (it.Value().ShapeType() == TopAbs_EDGE) carried.push_back(TopoDS::Edge(it.Value()));
+      continue;
+    }
+    if (kept.Contains(e)) {
+      carried.push_back(e);
+      continue;
+    }
+    const auto mine = edge_mark(e);
+    if (!mine) continue;  // a degenerated edge has nothing to blend
+    if (marks.empty())
+      for (int i = 1; i <= kept.Extent(); ++i)
+        if (const auto m = edge_mark(TopoDS::Edge(kept(i)))) marks.push_back({TopoDS::Edge(kept(i)), *m});
+    const TopoDS_Edge* same = nullptr;
+    for (const auto& [candidate, m] : marks) {
+      const double reach = 1e-3 + 2 * std::max(mine->tolerance, m.tolerance);
+      if (m.mid.Distance(mine->mid) <= reach && std::abs(m.length - mine->length) <= reach + 1e-4 * mine->length) {
+        same = &candidate;
+        break;
+      }
+    }
+    if (!same) return false;
+    carried.push_back(*same);
+  }
+  group = std::move(carried);
+  return true;
+}
+
+// `faulty`: when a fillet is not done, the edges of the contours the kernel could not blend.
+std::optional<TopoDS_Shape> blend_edges_unguarded(const TopoDS_Shape& body, const std::vector<TopoDS_Edge>& edges, const Blend& how, double scale,
+                                                  std::vector<std::vector<TopoDS_Edge>>* follow, std::vector<TopoDS_Edge>* faulty) {
   try {
     std::unique_ptr<BRepFilletAPI_MakeFillet> fillet;
     std::unique_ptr<BRepFilletAPI_MakeChamfer> chamfer;
     BRepBuilderAPI_MakeShape* mk = nullptr;
+    BRepFilletAPI_LocalOperation* local = nullptr;
     if (how.fillet) {
       fillet = std::make_unique<BRepFilletAPI_MakeFillet>(body);
       for (const auto& e : edges) fillet->Add(how.r * scale, e);
-      mk = fillet.get();
+      mk = local = fillet.get();
     } else {
       chamfer = std::make_unique<BRepFilletAPI_MakeChamfer>(body);
       TopTools_IndexedDataMapOfShapeListOfShape faces;
@@ -1671,28 +1733,36 @@ std::optional<TopoDS_Shape> blend_edges(const TopoDS_Shape& body, const std::vec
         if (!faces.Contains(e) || faces.FindFromKey(e).IsEmpty()) throw Error("an edge to chamfer has no face");
         chamfer->Add(how.r * scale, how.r2 * scale, e, TopoDS::Face(faces.FindFromKey(e).First()));
       }
-      mk = chamfer.get();
+      mk = local = chamfer.get();
     }
     mk->Build();
-    if (!mk->IsDone()) return std::nullopt;
+    if (!mk->IsDone()) {
+      if (faulty && fillet)
+        for (int i = 1; i <= fillet->NbFaultyContours(); ++i) {
+          const int c = fillet->FaultyContour(i);
+          for (int k = 1; k <= fillet->NbEdges(c); ++k) faulty->push_back(fillet->Edge(c, k));
+        }
+      return std::nullopt;
+    }
     const TopoDS_Shape result = mk->Shape();
     if (solids_of(result).empty()) return std::nullopt;
     if (follow)
-      for (auto& group : *follow) {
-        std::vector<TopoDS_Edge> carried;
-        for (const auto& e : group) {
-          if (mk->IsDeleted(e)) continue;
-          const TopTools_ListOfShape& images = mk->Modified(e);
-          if (images.IsEmpty()) carried.push_back(e);
-          for (TopTools_ListIteratorOfListOfShape it(images); it.More(); it.Next())
-            if (it.Value().ShapeType() == TopAbs_EDGE) carried.push_back(TopoDS::Edge(it.Value()));
-        }
-        group = std::move(carried);
-      }
+      for (auto& group : *follow)
+        if (!carry_edges(*local, *mk, result, group)) return std::nullopt;
     return result;
   } catch (const Standard_Failure&) {
     return std::nullopt;
   }
+}
+// The kernel can also fault outright: an access violation in ChFi3d (BRep_Tool::CurveOnSurface from StartSol, on top edges
+// of joined extrusions with short spline edges and walls thinner than the blend, 2026-11-26) ended the whole app. Under
+// the kernel guard the fault is a Standard_Failure at ChFi3d's own try block (it then reports the contour faulty and the
+// fillet not done) or, outside one, an empty result here: either way one more "does not fit", so the caller's refusal and
+// its search for a size that fits carry on.
+std::optional<TopoDS_Shape> blend_edges(const TopoDS_Shape& body, const std::vector<TopoDS_Edge>& edges, const Blend& how, double scale = 1,
+                                        std::vector<std::vector<TopoDS_Edge>>* follow = nullptr, std::vector<TopoDS_Edge>* faulty = nullptr) {
+  auto done = kernel_guarded([&] { return blend_edges_unguarded(body, edges, how, scale, follow, faulty); });
+  return done ? *done : std::nullopt;
 }
 
 // The same edges blended one at a time, each on the result of the last: what a fillet of several edges together cannot
@@ -2122,7 +2192,8 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       std::vector<TopoDS_Edge> edges;
       for (const auto& p : picked) edges.push_back(TopoDS::Edge(same_in(body, p.first)));
       auto name_of = [&](size_t i) { return std::to_string(picked[i].second); };
-      std::optional<TopoDS_Shape> result = blend_edges(body, edges, how);
+      std::vector<TopoDS_Edge> faulty;  // the picked edges' contours the kernel could not blend together
+      std::optional<TopoDS_Shape> result = blend_edges(body, edges, how, 1, nullptr, &faulty);
       // Together the blends can run into each other where one alone fits: one edge at a time on the last result.
       if (!result && edges.size() > 1) {
         result = blend_one_by_one(ctx, body, edges, how);
@@ -2136,6 +2207,12 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
             ctx.check_cancel();
             if (edges.size() == 1 || !blend_edges(body, {edges[i]}, how)) misfits.push_back(name_of(i));
           }
+        else {  // too many to try one by one: the picked edges on the contours the kernel said it could not blend
+          TopTools_IndexedMapOfShape bad;
+          for (const auto& e : faulty) bad.Add(e);
+          for (size_t i = 0; i < edges.size(); ++i)
+            if (bad.Contains(edges[i])) misfits.push_back(name_of(i));
+        }
         double fits = 0, misses = 1;  // a fraction of the size asked for
         for (int step = 0; step < 6; ++step) {
           ctx.check_cancel();

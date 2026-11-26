@@ -352,6 +352,21 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   the panel's plan/commit path, edits the extrude rolled back, fillets, saves, quits; trace lines `bench: design:` /
   `bench: sketch:`. Core coverage: `ctest -R "design|sketch"`.
 
+## Kernel faults (`opad/kernel_guard.hpp`, `core/src/kernel_guard.cpp`)
+
+OCCT built by its CMake with any compiler but MSVC has `OCC_CONVERT_SIGNALS` (MSYS2, the static build, Linux, Homebrew;
+its package passes the define to us too), but nothing calls `OSD::SetSignal`, so an access violation in the kernel ended
+the app (a live-MCP fillet preview, 2026-11-26: `ChFi3d_Builder::StartSol` -> `BRep_Tool::CurveOnSurface`, where a lobe's
+arc turns into its side right where a lower slot ends). `kernel_guarded(f)` registers a `Standard_ErrorHandler` and a
+vectored exception handler (POSIX: a signal handler) hands a fault on a guarded thread to `Standard_Failure::Jump` from
+inside the dispatch, as OCCT's own handler would: the nearest OCC_CATCH_SIGNALS takes it (ChFi3d then reports the contour
+faulty), else the guard (nullopt). Never `__builtin_longjmp` past OCCT frames: their handlers stay in OCCT's global
+handler list and the next `Standard_Mutex::Sentry` (type registration, even at exit) walks into dead stack. Guard only
+kernel calls on shapes the caller owns (skipped frames leak, no OPAD lock may be held). Fillet/chamfer (`blend_edges`)
+are guarded; `OPAD_NO_KERNEL_GUARD=1` turns it off (`ctest -R fillet-fault` then crashes: the stand-in faults).
+`blend_one_by_one` carries the waiting edges by contour membership, images, then position (`carry_edges`): `IsDeleted`
+says yes for edges a fillet only rebuilt. `ctest -R "kernel-guard|fillet"`.
+
 ## Mesh to solid (`core/src/meshsolid/`, `core/src/design/mesh_solid.cpp`, `app/MeshSolidWizard.cpp`)
 
 `design.mesh_solid` is the feature kind's action, overridden to open its own panel (`MainWindow::meshToSolid`), which
