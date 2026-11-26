@@ -127,7 +127,8 @@ changes from two branches and stops only on real conflicts, such as both sides e
 You never need a terminal:
 
 - **Set up repository** creates the repository, `.gitattributes`, `.gitignore` and the merge and diff settings
-  (Git LFS for big assets, when installed). **Clone repository** does the same for an existing project.
+  (Git LFS for big assets, when installed). The `.gitignore` keeps exports (STEP, STL, PDF...) and temporary files out
+  of the history, while the files a design links stay tracked; **Customise** chooses what it leaves out. **Clone repository** does the same for an existing project.
 - The **Version control** panel commits (with a suggested message), pushes, pulls, switches and merges branches, and
   shows the history. Before a pull merges anything, it shows what the merge will do to the design.
 - **Resolve conflicts** goes through a stopped merge change by change: mine, theirs, or all of one side.

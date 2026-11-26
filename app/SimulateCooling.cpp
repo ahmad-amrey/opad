@@ -39,6 +39,7 @@
 #include "I18n.hpp"
 #include "DesignPanels.hpp"
 #include "HelpClip.hpp"
+#include "GuidedSteps.hpp"
 #include "Jobs.hpp"
 #include "SearchCombo.hpp"
 #include "Theme.hpp"
@@ -125,46 +126,21 @@ CoolingAssistant::CoolingAssistant(Hooks hooks, QWidget* parent) : QWidget(paren
       if (m_writing || !isVisible() || m_syncTimer->isActive() || !doc) return;
       if (std::make_pair(doc->generation, doc->revision) != m_loaded) reload();
     });
-  // A panel (ToolPanel, SimulateArea): the steps as tabs over the page shown, Back and Next under it.
+  // A panel (ToolPanel, SimulateArea) on the guided frame the checks use (GuidedSteps): the steps as tabs over the page
+  // shown, Back and Next under it.
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
   outer->setSpacing(0);
-  m_steps = new QTabBar(this);
-  m_steps->setObjectName("coolingSteps");
-  m_steps->setExpanding(true);
-  m_steps->setDrawBase(false);
-  for (const QString& s : {tr("Box"), tr("Heat"), tr("Air"), tr("Run")}) m_steps->addTab(s);
-  outer->addWidget(m_steps);
-  m_pages = new QStackedWidget(this);
-  outer->addWidget(m_pages, 1);
-  auto* nav = new QHBoxLayout();
-  nav->setContentsMargins(12, 6, 12, 10);
-  auto* back = m_back = new QPushButton(tr("Back"), this);
-  auto* next = m_next = new QPushButton(tr("Next"), this);
-  next->setObjectName("coolingNext");
-  nav->addStretch(1);
-  nav->addWidget(back);
-  nav->addWidget(next);
-  outer->addLayout(nav);
-  connect(m_steps, &QTabBar::currentChanged, this, &CoolingAssistant::showStep);
+  m_frame = new GuidedSteps("cooling", this);
+  outer->addWidget(m_frame);
+  m_steps = m_frame->tabs();
+  m_back = m_frame->back();
+  m_next = m_frame->next();
+  connect(m_frame, &GuidedSteps::stepShown, this, &CoolingAssistant::showStep);
   if (m_hooks.onFilterApplied) m_hooks.onFilterApplied(this, [this] { filterApplied(); });
-  connect(back, &QPushButton::clicked, this, [this] { m_steps->setCurrentIndex(std::max(0, m_steps->currentIndex() - 1)); });
-  connect(next, &QPushButton::clicked, this, [this] { m_steps->setCurrentIndex(std::min(steps() - 1, m_steps->currentIndex() + 1)); });
   // Each page scrolls by itself (as tall as it is, never as the tallest), as wide as the panel.
-  auto page = [this](const QString&, const QString& intro) {  // its title is its tab
-    auto* scroll = new QScrollArea(m_pages);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    auto* w = new QWidget(scroll);
-    auto* v = new QVBoxLayout(w);
-    v->setContentsMargins(12, 10, 12, 8);
-    v->setSpacing(10);
-    v->addWidget(text(intro, w));
-    scroll->setWidget(w);
-    m_pages->addWidget(scroll);
-    return v;
-  };
+  const QStringList tabs = {tr("Box"), tr("Heat"), tr("Air"), tr("Run")};  // a page's title is its tab
+  auto page = [this, tabs](const QString&, const QString& intro) { return m_frame->addPage(tabs.value(m_frame->count()), intro); };
 
   // An Add button: on while it picks (it then says Done); Remove takes out the rows chosen.
   auto adder = [this](const QString& label, const char* object) {
@@ -641,10 +617,7 @@ void CoolingAssistant::keyPressEvent(QKeyEvent* e) {
 }
 
 void CoolingAssistant::showStep(int i) {
-  if (i >= 0 && i < m_pages->count()) m_pages->setCurrentIndex(i);
-  if (i == 2) estimateVents();
-  m_back->setEnabled(i > 0);
-  m_next->setVisible(i < steps() - 1);  // the last page runs (its Run button)
+  if (i == 2) estimateVents();  // the frame showed the page, Back and Next (the last page runs: its Run button)
   // A page picks only while one of its Add buttons (or a fan's pick boxes) is on; the rows chosen in its list are lit in the
   // view in the colour of what they are (a selection's blue over them would turn a heat source's red purple).
   stopPicking();

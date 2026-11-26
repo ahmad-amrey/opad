@@ -9,6 +9,7 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QTabBar>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -58,6 +59,18 @@ SimulatePanel::SimulatePanel(QWidget* parent) : QWidget(parent) {
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
   outer->setSpacing(0);
+  // What the panel is about: Simulate's Advanced tab holds every raw tool, so the panel chooses its own subject.
+  m_modes = new QTabBar(this);
+  m_modes->setObjectName("simModes");
+  m_modes->setExpanding(true);
+  m_modes->setDrawBase(false);
+  m_modes->addTab(tr("Mechanism"));
+  m_modes->addTab(tr("Structure"));
+  m_modes->addTab(tr("Thermal"));
+  outer->addWidget(m_modes);
+  connect(m_modes, &QTabBar::currentChanged, this, [this](int i) {
+    if (i >= 0) emit modeChosen(Mode(i));
+  });
   auto* scroll = new QScrollArea(this);
   scroll->setFrameShape(QFrame::NoFrame);
   scroll->setWidgetResizable(true);
@@ -267,6 +280,10 @@ SimulatePanel::Mode SimulatePanel::modeOf(const std::string& kind) {
 
 void SimulatePanel::setMode(Mode mode) {
   m_mode = mode;
+  {
+    const QSignalBlocker quiet(m_modes);
+    m_modes->setCurrentIndex(int(mode));
+  }
   m_mechanismBox->setVisible(mode == Mode::Mechanism);
   m_cooling->setVisible(mode == Mode::Thermal);
   m_studyHeader->setText(mode == Mode::Mechanism ? tr("MOTION STUDY") : mode == Mode::Structure ? tr("STRUCTURAL STUDY") : tr("THERMAL STUDY"));

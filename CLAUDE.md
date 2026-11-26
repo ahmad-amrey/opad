@@ -151,6 +151,45 @@ a "donut"; blends measure their normal against the ball's centre, `blend_normal_
 gains a natural bound, `OPAD_XT_SPILL=<file>` lists faces reaching past their edges). Tried and worse: extending blend arcs past the contacts,
 padding the spine range beyond 2%. State: 33 of 1036 solids invalid in the 196-file public survey, mostly blend faces.
 
+## Flow studies (`core/src/sim/flow.cpp`, study kind `flow`)
+
+OpenFOAM's simpleFoam, k-omega SST + Spalding wall functions (laminar below Re 2000), isothermal air or water. `inlet`/`outlet`
+= one flat face each: a wall's rim (its hole is the opening, mode "wall") or the end of a body that is the fluid ("volume").
+Stubs of straight pipe (`extend`, 2 and 12 diameters: an expansion's jet is still mixing at 6, and the stub's friction slope read there took 1.5 Pa of its loss) go before and after; `pressure_drop_pa` = mass-weighted total pressure
+at the inlet face minus 0.9 of the way down the outlet stub, the stub's own friction added back (its total-pressure slope
+from 0.6 to 0.9 carried back to the outlet face; Haaland when the stub is short). Round about the openings' axis (rays at
+six angles every 0.25 mm; Douglas-Peucker, corners put back where the lines meet; a wall steeper than 60 degrees, a sudden
+step, goes 3D) = a 5 degree wedge in blockMesh (blocks per profile stretch, collapsed axis vertices, the flow and the fan
+curve scaled by 5/360; past 30 degrees of wall the non-orthogonal correction), else blockMesh + snappyHexMesh (STLs
+wall/inlet/outlet, 3 layers). The fan curve is written inline (`fanCurve table`): openfoam.org reads no curve file. Settings, plan (`plan_flow`) and case files
+(`write_flow_case`) need no OpenFOAM: `study` with `run: false` returns `plan`. Recirculation = reversed cells (against
+the local bulk way) in face-connected groups touching a wall. Shared OpenFOAM readers and the program runner:
+`core/src/sim/foam_case.hpp` (moved out of cfd.cpp). `openfoam()` also finds OpenCFD's Windows installer (per user `%APPDATA%\ESI-OpenCFD\OpenFOAM\v<N>`, programs and DLLs in `msys64/home/ofuser/OpenFOAM/OpenFOAM-v<N>/platforms/<build>/bin`; OPAD_OPENFOAM may name either folder); its Pstream needs MS-MPI (`thirdParty/msmpisetup.exe`, admin), else `problem` says so and found() is false (OPAD's own pack, next section, has none). `ctest -R flow`; the solves: `flow-solve` (label slow,
+`OPAD_TEST_FLOW_3D=1` adds the full-part check); `OPAD_KEEP_CFD=1` keeps a case's folder.
+
+## Solver packs (`engines/`, `core/src/sim/engine_packs.cpp`, `app/EngineInstall.*`)
+
+OpenFOAM v2512 and CalculiX 2.22 for Windows, built from pinned upstream sources by `engines/<id>/make-pack.sh` (CI:
+`.github/workflows/engines.yml`, artifacts only; publishing is by hand, docs/releasing.md "Solver packs"), released as
+`engines-<id>-<ver>-<rev>` (not latest), their size + SHA-256 pinned in `engine_packs.cpp` (no hash = not offered).
+Install (check's Run step "Install OpenFOAM (42 MB)", `SolverWindow`'s Install): `engineinstall::Installer` downloads in a
+`Downloading` job (only `engine_pack_url_allowed` URLs: github.com/ahmad-amrey/opad/releases/download/, or 127.0.0.1 when
+`OPAD_ENGINE_PACKS=<json>` replaces the table), then `install_pack` on a worker: size, hash, every member inside the
+folder, `opad-pack.json` id/version, unpacked to `<folder>.partial` then renamed, other versions removed. Folder:
+`OPAD_ENGINES_DIR` (portable: `data/engines`, appdata::use) else `<LOCALAPPDATA>/opad/OPAD/engines`; `openfoam()` and
+`ccx_program()` look there right after OPAD_OPENFOAM / OPAD_CCX; `engines()["packs"]`. OpenFOAM pack: the 10 programs
+OPAD runs + their DLLs (objdump closure) + `etc/`, cross-built on Ubuntu with mingw-w64 (posix threads), `WM_MPLIB=dummy`
+(no MS-MPI), zlib static, only the libraries the programs link (`LIBRARIES`, src/Allwmake's order; some only named on
+link lines: dummy decomposers, fvOptions, regionModels...), wmake's `+ccache` when ccache is there; discovery takes any
+complete `<id>-*` folder (`installed_pack(id)`), so a pack works before its pin; traps: wmake `-q` links before compiling, a cross gcc ignores LIBRARY_PATH (`-L` through
+FOAM_EXTRA_CXXFLAGS), GCC 13 jump tables of COMDAT functions break `ld -r` ("relocation truncated": `-fno-jump-tables`).
+ccx pack: one static exe (SPOOLES serial, ARPACK-NG, OpenBLAS from MSYS2 MINGW64), built by `engines/calculix/CMakeLists.txt`
+from the upstream makefiles' lists (no make in MSYS2 here; `mafillmm.c` is listed but only the .f exists); patch 0001 drops
+a file-scope `_set_output_format` and `__USE_MINGW_ANSI_STDIO` keeps two-digit exponents (the .frd columns). MSYS2's
+`usr/bin` on PATH under Git Bash breaks gcc's TEMP: call pacman by path. Notices: Help > Third-party licences appends
+`engine_pack_notices()` (OpenCFD's trade mark statement, sources), About names both. `ctest -R engine-packs`, gui case
+`engine-install` (a fake release on a local socket: a tampered zip refused, the right one installed through the button).
+
 ## Floating tool panels (no right dock)
 
 Properties, Annotations and Section are `ToolPanel`s (`app/Panels.hpp`): frameless tool windows owned by the main
@@ -187,7 +226,16 @@ import's `source_path` saved relative too; an older document's absolute ones go 
 step via `followAssetPaths`; its old lines stay: append-only). `rebase_asset_paths` runs before the edits and leaves a relative
 path that only resolves from the destination (already written from there). In a repository, `Vcs::checkOutside` toasts the
 linked files outside it with Copy into the repository (`AssetsArea::copyIntoProject` = Pack, one step); the own-folder question
-offers the same copy (checked). Benches own-folder-linked(-keep), `ctest -R "assets|formats"`. `QMainWindow::separator:vertical` is the *upright* bar (named after its shape).
+offers the same copy (checked). Benches own-folder-linked(-keep), `ctest -R "assets|formats"`.
+`.gitignore` (Git.hpp "the OPAD blocks"): Set up repository offers it checked, groups under Customise (`git::ignoreGroups`:
+models, drawings, images, opad, system on; simulation off; exports per ExportDialog/Drawings/screenshot); OPAD writes only its
+two marked blocks (rules where first written, so the user's later lines win; linked block always last). Linked files stay
+tracked by `!/<path>` per document (`git::keepTracked`/`updateTracked`; app: `VcsArea::keepLinkedTracked` ->
+`GitWatch::keepTracked`, a quiet job on every refresh/asset look whose input changed; agents: `git_commit`/`git_init` paths
+via `opad::linked_files`, the .gitignore staged along when it had no other change), not `git add -f` (status would hide a new
+asset, renames would drop out, other git clients refuse to add it). A file inside an ignored *folder* cannot be re-included
+(git's rule). Issue revision adds its PDF with `-f` only when OPAD's block ignores it (`opadRuleAt`). `git_init` `ignore`:
+false or group ids. `ctest -R git-ignore` (matcher checked against git check-ignore), benches git, own-folder-linked(-keep), issue. `QMainWindow::separator:vertical` is the *upright* bar (named after its shape).
 
 UI check without driving the desktop (the user works on it, see memory): `OPAD_BENCH_UISHOT=<png>` with
 `--bench-select` saves `MainWindow::grab()` (widgets only, the native viewport is blank); `OPAD_BENCH_WORKSPACE=1`
@@ -304,6 +352,21 @@ do not go back to copying `op.data`, imports are huge). `SceneBuilder` is the on
   the panel's plan/commit path, edits the extrude rolled back, fillets, saves, quits; trace lines `bench: design:` /
   `bench: sketch:`. Core coverage: `ctest -R "design|sketch"`.
 
+## Kernel faults (`opad/kernel_guard.hpp`, `core/src/kernel_guard.cpp`)
+
+OCCT built by its CMake with any compiler but MSVC has `OCC_CONVERT_SIGNALS` (MSYS2, the static build, Linux, Homebrew;
+its package passes the define to us too), but nothing calls `OSD::SetSignal`, so an access violation in the kernel ended
+the app (a live-MCP fillet preview, 2026-11-26: `ChFi3d_Builder::StartSol` -> `BRep_Tool::CurveOnSurface`, where a lobe's
+arc turns into its side right where a lower slot ends). `kernel_guarded(f)` registers a `Standard_ErrorHandler` and a
+vectored exception handler (POSIX: a signal handler) hands a fault on a guarded thread to `Standard_Failure::Jump` from
+inside the dispatch, as OCCT's own handler would: the nearest OCC_CATCH_SIGNALS takes it (ChFi3d then reports the contour
+faulty), else the guard (nullopt). Never `__builtin_longjmp` past OCCT frames: their handlers stay in OCCT's global
+handler list and the next `Standard_Mutex::Sentry` (type registration, even at exit) walks into dead stack. Guard only
+kernel calls on shapes the caller owns (skipped frames leak, no OPAD lock may be held). Fillet/chamfer (`blend_edges`)
+are guarded; `OPAD_NO_KERNEL_GUARD=1` turns it off (`ctest -R fillet-fault` then crashes: the stand-in faults).
+`blend_one_by_one` carries the waiting edges by contour membership, images, then position (`carry_edges`): `IsDeleted`
+says yes for edges a fillet only rebuilt. `ctest -R "kernel-guard|fillet"`.
+
 ## Mesh to solid (`core/src/meshsolid/`, `core/src/design/mesh_solid.cpp`, `app/MeshSolidWizard.cpp`)
 
 `design.mesh_solid` is the feature kind's action, overridden to open its own panel (`MainWindow::meshToSolid`), which
@@ -360,6 +423,27 @@ The cube animation's back-to-back 16 ms frames starve the watchdog timer ("stall
 Bench: `OPAD_BENCH_TOOL=<tool>[,faces|edges|...]` with `--bench-select` starts the tool, clicks at the view centre
 and at `OPAD_BENCH_CLICK2=fx,fy` (default lands on the same face = un-pick; `0.3,0.45` hits another face on the as1
 sample), logs `bench: tool ...` after each step, saves `<OPAD_BENCH_UISHOT>.prompt.png/.panel.png`, then Esc x3.
+
+## Simulate's guided checks (`app/SimChecks.*`, `SimulateStart`, `SimulateCheck`, `SimulateSolver`, `GuidedSteps`)
+
+Simulate's tabs are goals: Start (`simulate.home`: `SimulateStart` set as the central page, cards with `SimPictures` drawn in
+code from the tokens, search `simchecks::match` with Unicode words and the Arabic article dropped, goal chips, the document's
+checks), Air and fluids / Heat / Strength / Movement (`simulate.goal.<id>`: the checks' commands `simulate.check.<id>` plus
+`checkRun`, `checkResults`, `compare`), and Advanced (`simulate.advanced`: every raw tool; the Simulation panel picks its subject
+with its own bar `simModes`, no longer from the tab). A check is one study whose `settings.check` names it, `settings.guided` keeps
+the panel's choices (load ids by role included), `settings.case` its own case; `GuidedCheck::write` (debounced, one `batch`) adds,
+changes in place only what differs, or deletes those loads; same choices again write nothing. Proposals (bottom faces as
+supports, top faces for the load, a duct's open ends) are read with `readAsync` (designBusy meanwhile: a bench's own commands
+wait for it); heat sources by name on the UI thread. Readiness from `sim::engines()` read by a `quiet` job; a kind not in
+`sim::study_kinds()` is Coming and writes nothing. Airflow checks: core's `flow_settings` accepts `check`/`guided`; a flow
+study is validated on every `study` write, so a check is saved only once inlet and outlet are known (made with its whole
+settings, nulls dropped) and shows core's mesh plan (`plan`, or `validateFlow` on a worker after a reload) before Run;
+`Simulate::showFlow` draws the cut through the fluid by speed or pressure, or streamlines. `SolverWindow` installs OPAD's
+pack where there is one (next section), opens the official page, or takes a folder/program (`simulate/solvers/<id>` +
+OPAD_OPENFOAM / OPAD_CCX, `applySaved` in Simulate::ready). Thermal
+setup's frame is `GuidedSteps`. A run's done callback calls `followStudy` before `refresh` (refresh drops a study of another
+panel subject). Clip element `simpic` draws a check's picture. Bench `simulate-checks(-rtl)` (OPAD_BENCH_SIMCHECKS), test
+`sim-checks` (`OPAD_SIMPIC_OUT=<png>` saves the pictures in three themes).
 
 ## Notes and hand drawing (`app/AnnotationEditor.hpp`, view parts in `ViewportNotes.cpp`)
 

@@ -207,3 +207,28 @@ touch them, and a new version (or development build) keeps a copy of the setting
 everything then lives in a `data` folder beside it. Single-file builds before 0.9.0 kept everything in an `opad-data`
 folder beside the exe; the first start of a newer one copies it into the user's folders (once, when they have no
 settings yet) and leaves the old folder as it was.
+
+## Solver packs (OpenFOAM, CalculiX)
+
+Simulate installs OpenFOAM and CalculiX from inside OPAD (`Install OpenFOAM (42 MB)` on a check, `opad/sim/engine_packs.hpp`).
+The packs are separate programs, built from their unmodified upstream sources by the recipes in `engines/<id>/`
+(`make-pack.sh`, our patches in `patches/`) and published on this repository's releases, never fetched from anywhere else.
+
+1. **Build**: run the `engines` workflow (Actions > engines > Run workflow; it also runs on pull requests that change
+   `engines/`). Each pack's job uploads an artifact with the pack's zip, the exact source archives it was built from, the
+   recipe (`opad-<id>-recipe.tar.gz`) and `SHA256SUMS`. Nothing is published by the workflow.
+2. **Publish** (by hand, from that run's artifact): a release whose tag is `engines-<id>-<version>-<rev>` (the folder
+   name in the pack's URL, for example `engines-openfoam-v2512-1`), with every file of the artifact attached and
+   **not marked latest** (`gh release create engines-openfoam-v2512-1 --latest=false --title "OpenFOAM v2512 for OPAD
+   (pack 1)" --notes-file engines/openfoam/NOTICE.txt out/*`). The update check reads `releases/latest`, and its list of
+   releases skips tags that are not versions, so these never look like an OPAD update; `ci.yml` starts on `v*` tags only.
+   GPL: the pack's source archives, recipe and patches stay on the same release as long as the pack does.
+3. **Pin**: the pack's size and SHA-256 from that run's `SHA256SUMS` into `core/src/sim/engine_packs.cpp` (an entry
+   without a hash is not offered). A new pack revision is a new release and a new pin; OPAD removes the older version of
+   a pack when it installs the newer one.
+
+The packs unpack into the user's engines folder (`%LOCALAPPDATA%\opad\OPAD\engines`, `~/.local/share/opad/OPAD/engines`,
+`~/Library/Application Support/opad/OPAD/engines`; `data/engines` beside a portable copy), where OPAD looks right after
+`OPAD_OPENFOAM` / `OPAD_CCX`. Linux and macOS packs: the same recipes would build there (OpenFOAM natively with
+`WM_MPLIB=dummy` and an `$ORIGIN` / `@loader_path` run path; ccx with Homebrew's or the distribution's gfortran), but
+none is published yet, so those systems keep the official download pages.

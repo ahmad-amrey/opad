@@ -29,6 +29,7 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QProcess>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
@@ -492,13 +493,14 @@ void GitWatch::setUpDialog() {
                                                           : tr("A new git repository in %1, branch %2.").arg(QDir::toNativeSeparators(*folder), branch));
   };
   describe();
+  auto reread = std::make_shared<std::function<void()>>();  // the folder's .gitignore read again (set below)
   auto* top = new QHBoxLayout;
   top->addWidget(where, 1);
   if (fresh) {
     auto* change = new QPushButton(tr("Change…"), d);
     change->setObjectName("gitSetupFolder");
     top->addWidget(change);
-    connect(change, &QPushButton::clicked, d, [this, d, folder, describe] {
+    connect(change, &QPushButton::clicked, d, [this, d, folder, describe, reread] {
       const QString f = QFileDialog::getExistingDirectory(d, tr("Repository folder"), *folder);
       if (f.isEmpty()) return;
       if (QDir(f).relativeFilePath(m_file).startsWith("..")) {
@@ -507,6 +509,7 @@ void GitWatch::setUpDialog() {
       }
       *folder = f;
       describe();
+      if (*reread) (*reread)();
     });
   }
   col->addLayout(top);
@@ -521,7 +524,109 @@ void GitWatch::setUpDialog() {
   const bool lfs = !m_repo.lfsVersion.isEmpty();
   QCheckBox* attributes = box("attributes", tr("Merge and diff .opad files with OPAD (.gitattributes)"), true);
   QCheckBox* assets = box("lfs", lfs ? tr("Keep big files under assets/ in Git LFS") : tr("Keep big files under assets/ in Git LFS (Git LFS is not installed)"), lfs);
-  QCheckBox* ignore = box("ignore", tr("Leave temporary saves, caches and recovery snapshots out (.gitignore)"), true);
+  // .gitignore: offered checked, its rule groups collapsed under Customise. An existing file is never replaced: OPAD's block
+  // goes into it (git::ignoreText), and the summary says what that adds or takes away.
+  auto existing = std::make_shared<QString>();
+  auto* ignoreRow = new QHBoxLayout;
+  auto* ignore = new QCheckBox(d);
+  ignore->setObjectName("ignore");
+  ignore->setChecked(true);
+  ignoreRow->addWidget(ignore, 1);
+  auto* customise = new QToolButton(d);
+  customise->setObjectName("gitIgnoreCustomise");
+  customise->setText(tr("Customise"));
+  customise->setCheckable(true);
+  customise->setAutoRaise(true);
+  customise->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  customise->setArrowType(Qt::RightArrow);
+  ignoreRow->addWidget(customise);
+  col->addLayout(ignoreRow);
+  auto* summary = new QLabel(d);
+  summary->setObjectName("gitIgnoreSummary");
+  summary->setProperty("role", "secondary");
+  summary->setWordWrap(true);
+  summary->setContentsMargins(24, 0, 0, 0);
+  col->addWidget(summary);
+  auto* details = new QWidget(d);
+  details->setObjectName("gitIgnoreGroups");
+  auto* list = new QVBoxLayout(details);
+  list->setContentsMargins(24, 0, 0, 0);
+  std::vector<std::pair<QString, QCheckBox*>> groups;
+  for (const git::IgnoreGroup& g : git::ignoreGroups()) {
+    static const char* const labels = "Git";  // the groups' labels: git::ignoreGroups (QT_TRANSLATE_NOOP)
+    auto* c = new QCheckBox(QCoreApplication::translate(labels, g.label), details);
+    c->setObjectName("ignore." + g.id);
+    auto* patterns = new QLabel(g.patterns.join("   "), details);
+    patterns->setObjectName("secondary");
+    patterns->setWordWrap(true);
+    patterns->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    patterns->setContentsMargins(24, 0, 0, 4);
+    list->addWidget(c);
+    list->addWidget(patterns);
+    groups.emplace_back(g.id, c);
+  }
+  auto* previewLabel = new QLabel(tr("What changes in .gitignore:"), details);
+  list->addWidget(previewLabel);
+  auto* preview = new QPlainTextEdit(details);
+  preview->setObjectName("gitIgnorePreview");
+  preview->setReadOnly(true);
+  preview->setLineWrapMode(QPlainTextEdit::NoWrap);
+  preview->setMaximumHeight(120);
+  list->addWidget(preview);
+  auto* assetsNote = new QLabel(tr("Files the document links (a STEP, an image, a drawing) stay tracked whatever their type: OPAD keeps a line for each in "
+                                   ".gitignore as they are added, moved or packed."),
+                                details);
+  assetsNote->setObjectName("secondary");
+  assetsNote->setWordWrap(true);
+  list->addWidget(assetsNote);
+  details->setVisible(false);
+  col->addWidget(details);
+  auto chosen = [groups] {
+    QStringList out;
+    for (const auto& [id, c] : groups)
+      if (c->isChecked()) out << id;
+    return out;
+  };
+  auto updateIgnore = [ignore, summary, preview, details, existing, chosen] {
+    const QStringList picked = chosen();
+    const git::IgnoreChange change = git::ignoreChange(*existing, picked);
+    QStringList lines;
+    for (const QString& l : change.added) lines << "+ " + l;
+    for (const QString& l : change.removed) lines << QStringLiteral("− ") + l;
+    preview->setPlainText(lines.isEmpty() ? tr("(nothing: it has these lines already)") : lines.join('\n'));
+    details->setEnabled(ignore->isChecked());
+    if (!ignore->isChecked()) summary->setText(tr("No .gitignore lines: exports and temporary saves show as new files to commit."));
+    else if (existing->isEmpty()) summary->setText(picked.isEmpty() ? tr("No groups chosen: no .gitignore is written.")
+                                                                    : tr("Exports (STEP, STL, PDF…), temporary saves and system clutter stay out of the history; "
+                                                                         "files the document links stay tracked."));
+    else if (change.added.isEmpty() && change.removed.isEmpty()) summary->setText(tr("The folder's .gitignore has OPAD's lines already: it stays as it is."));
+    else if (change.removed.isEmpty()) summary->setText(tr("Adds %n line(s) to the folder's .gitignore in a marked OPAD block; its own lines stay as they are.", nullptr, int(change.added.size())));
+    else summary->setText(tr("Changes OPAD's block in the folder's .gitignore (%1 added, %2 taken away); its own lines stay as they are.")
+                              .arg(change.added.size()).arg(change.removed.size()));
+  };
+  // The folder's .gitignore as it is (small; the folder may change with Change…): the label, the groups' ticks (those of
+  // OPAD's block in it, else the defaults), the summary.
+  auto readIgnore = [this, ignore, existing, groups, folder, fresh, updateIgnore] {
+    QFile f(QDir(fresh ? *folder : m_repo.top).filePath(".gitignore"));
+    *existing = f.size() < (4 << 20) && f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+    ignore->setText(existing->isEmpty() ? tr("Add a .gitignore (recommended)") : tr("Add OPAD's lines to the folder's .gitignore (recommended)"));
+    bool found = false;
+    const QStringList had = git::ignoreGroupsIn(*existing, &found);
+    for (const auto& [id, c] : groups) {
+      const QSignalBlocker quiet(c);
+      c->setChecked(found ? had.contains(id) : git::defaultIgnoreGroups().contains(id));
+    }
+    updateIgnore();
+  };
+  readIgnore();
+  *reread = readIgnore;
+  connect(ignore, &QCheckBox::toggled, d, updateIgnore);
+  for (const auto& [id, c] : groups) connect(c, &QCheckBox::toggled, d, updateIgnore);
+  connect(customise, &QToolButton::toggled, d, [d, details, customise](bool open) {
+    details->setVisible(open);
+    customise->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+    d->adjustSize();
+  });
   QCheckBox* driver = box("driver", tr("Use this OPAD as the merge and diff driver (this clone's settings)"), true);
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, d);
   auto* run = new QPushButton(tr("Set up"), d);
@@ -530,12 +635,13 @@ void GitWatch::setUpDialog() {
   run->setDefault(true);
   buttons->addButton(run, QDialogButtonBox::AcceptRole);
   connect(buttons, &QDialogButtonBox::rejected, d, &QDialog::reject);
-  connect(run, &QPushButton::clicked, d, [this, d, folder, attributes, assets, ignore, driver, branch] {
+  connect(run, &QPushButton::clicked, d, [this, d, folder, attributes, assets, ignore, chosen, driver, branch] {
     git::SetupOptions o;
     if (git::validBranchName(branch)) o.branch = branch;
     o.attributes = attributes->isChecked();
     o.lfs = assets->isChecked();
     o.ignore = ignore->isChecked();
+    o.ignoreGroups = chosen();
     o.driver = driver->isChecked();
     const QString chosen = *folder;
     d->accept();
@@ -564,6 +670,39 @@ void GitWatch::runSetUp(const QString& folder, const git::SetupOptions& o) {
     self->refresh(true);
     if (ok) self->ensureIdentity();  // before the first commit
   });
+}
+
+void GitWatch::keepTracked(const QStringList& files) {
+  using S = git::Repo::State;
+  if (m_file.isEmpty() || m_repo.state != S::Ready || m_repo.top.isEmpty() || m_repo.rel.isEmpty()) return;
+  if (m_trackJob) {  // the one running reads the files it was given: this set after it
+    m_trackNext = files;
+    m_trackAgain = true;
+    return;
+  }
+  QStringList sorted = files;
+  sorted.sort();
+  const QString top = m_repo.top, doc = m_repo.rel;
+  auto stamp = [top] {
+    const QFileInfo f(QDir(top).filePath(".gitignore"));
+    return f.exists() ? f.lastModified().toString(Qt::ISODateWithMs) + '/' + QString::number(f.size()) : QString();
+  };
+  const QString key = top + '\n' + doc + '\n' + sorted.join('\n');
+  if (key == m_trackedKey && stamp() == m_trackedStamp) return;  // nothing new: no job (a refresh comes after every save)
+  m_trackedKey = key;
+  m_trackJob = true;
+  ++m_trackRuns;
+  auto wrote = std::make_shared<bool>(false);
+  m_jobs->quiet(tr("Keeping linked files tracked"), [top, doc, sorted, wrote](Progress) { *wrote = git::updateTracked(top, doc, sorted); },
+                [self = QPointer<GitWatch>(this), stamp, wrote](bool ok, const QString& error) {
+                  if (!self) return;
+                  self->m_trackJob = false;
+                  self->m_trackedStamp = stamp();
+                  if (!ok) self->m_trackedKey.clear();  // tried again at the next refresh
+                  if (trace::enabled()) trace::log(QStringLiteral("git: linked files kept tracked: %1").arg(ok ? (*wrote ? "written" : "unchanged") : error));
+                  if (*wrote) self->schedule(false, 0);  // the status without the files now tracked as new
+                  if (std::exchange(self->m_trackAgain, false)) self->keepTracked(self->m_trackNext);
+                });
 }
 
 void GitWatch::setUpDriver() {
@@ -1131,7 +1270,37 @@ bool GitWatch::bench() {
         require(d && d->isVisible(), "the set-up dialog");
         auto* lfs = d->findChild<QCheckBox*>("lfs");
         require(lfs && lfs->isEnabled() == !m_repo.lfsVersion.isEmpty() && lfs->isChecked() == lfs->isEnabled(), "Git LFS offered when installed");
+        // The .gitignore offer: checked, its groups collapsed until Customise, then each group a tick with its patterns and
+        // the preview following the ticks.
+        auto* ignore = d->findChild<QCheckBox*>("ignore");
+        auto* customise = d->findChild<QToolButton*>("gitIgnoreCustomise");
+        auto* groups = d->findChild<QWidget*>("gitIgnoreGroups");
+        auto* summary = d->findChild<QLabel*>("gitIgnoreSummary");
+        auto* preview = d->findChild<QPlainTextEdit*>("gitIgnorePreview");
+        require(ignore && ignore->isChecked() && ignore->text() == tr("Add a .gitignore (recommended)"), "Add a .gitignore (recommended), checked");
+        require(customise && groups && summary && preview && !groups->isVisible() && summary->isVisible() && !summary->text().isEmpty(),
+                "its groups collapsed, a summary shown");
+        pass(".gitignore offered: " + summary->text());
         shot(d, ".setup.png");
+        const int collapsed = d->height();
+        customise->click();
+        require(groups->isVisible() && d->height() > collapsed, "Customise opens the groups");
+        for (const git::IgnoreGroup& g : git::ignoreGroups()) {
+          auto* c = d->findChild<QCheckBox*>("ignore." + g.id);
+          require(c && c->isVisible() && c->isChecked() == g.byDefault, "each group a tick, on as by default");
+        }
+        require(preview->toPlainText().contains("+ *.step") && preview->toPlainText().contains("+ *.opad.tmp") && preview->toPlainText().contains("+ *.png") &&
+                    !preview->toPlainText().contains("*.frd"),
+                "the preview lists the default groups' lines");
+        d->findChild<QCheckBox*>("ignore.simulation")->setChecked(true);
+        d->findChild<QCheckBox*>("ignore.images")->setChecked(false);
+        require(preview->toPlainText().contains("+ *.frd") && !preview->toPlainText().contains("*.png"), "the preview follows the ticks");
+        ignore->setChecked(false);
+        require(!groups->isEnabled() && summary->text() != tr("Add a .gitignore (recommended)"), "unticked: the groups off");
+        ignore->setChecked(true);
+        require(groups->isEnabled(), "ticked again: the groups on");
+        pass(".gitignore customised: simulation results on, rendered images off");
+        shot(d, ".setup-customised.png");
         for (QPushButton* b : d->findChildren<QPushButton*>())
           if (b->property("action") == "gitSetupRun") b->click();
         return true;
@@ -1165,7 +1334,15 @@ bool GitWatch::bench() {
         if (!settled() || m_repo.state != S::Ready) return false;
         QFile attributes(m_repo.top + "/.gitattributes"), ignore(m_repo.top + "/.gitignore");
         require(attributes.open(QIODevice::ReadOnly) && attributes.readAll().contains("*.opad text eol=lf merge=opad diff=opad"), ".gitattributes");
-        require(ignore.open(QIODevice::ReadOnly) && ignore.readAll().contains("*.opad.tmp"), ".gitignore");
+        require(ignore.open(QIODevice::ReadOnly), ".gitignore");
+        const QString ignored = QString::fromUtf8(ignore.readAll());
+        require(ignored.contains("*.opad.tmp\n") && ignored.contains("*.step\n") && ignored.contains("*.frd\n") && !ignored.contains("*.png") &&
+                    git::ignoreGroupsIn(ignored) == QStringList({"models", "drawings", "opad", "system", "simulation"}),
+                ".gitignore with the groups as customised");
+        // An export beside the document: never in the status, never in the first commit.
+        QFile exported(m_repo.top + "/exported.step");
+        require(exported.open(QIODevice::WriteOnly) && exported.write("ISO-10303-21;\n") > 0, "an export written");
+        exported.close();
         require(m_repo.managed && m_repo.driver == here.mergeDriver() && m_repo.textconv == here.textconv() && m_repo.difftool == here.difftool() && m_repo.wantsDriver,
                 "the managed driver config (merge, textconv, difftool)");
         require(m_repo.lfsVersion.isEmpty() || m_repo.lfsHooks, "Git LFS hooks in the clone");
@@ -1181,6 +1358,10 @@ bool GitWatch::bench() {
       [=, this] {
         if (!finished() || !settled() || m_repo.status.oid == "(initial)" || m_repo.doc() != D::Clean) return false;
         require(m_runs > st->runs && text() == "main", "the commit read by itself");
+        require(m_repo.status.entries.empty(), "nothing left to commit: the export is ignored");
+        require(git::run(context(), {"ls-files", "--error-unmatch", ".gitignore"}).ok() && !git::run(context(), {"ls-files", "--error-unmatch", "exported.step"}).ok(),
+                "the first commit took the .gitignore, not the export");
+        pass("the export ignored, the .gitignore committed");
         pass(QStringLiteral("commit from outside seen in %1 ms (%2 reads)").arg(st->clock.elapsed()).arg(m_runs - st->runs));
         st->runs = m_runs;
         st->ticks = 0;

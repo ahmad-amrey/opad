@@ -701,6 +701,19 @@ fs::path locate_asset(const Document& doc, const json& asset, const AssetOptions
   return {};
 }
 
+std::vector<fs::path> linked_files(const Document& doc) {
+  std::vector<fs::path> out;
+  for (const auto& e : asset_imports(doc)) {
+    const json& asset = e.data()["asset"];
+    if (asset.value("storage", "linked") == "embedded") continue;
+    fs::path found = locate_asset(doc, asset);
+    if (found.empty() && asset.contains("path") && !doc.path.empty()) found = doc_dir(doc) / path_from_utf8(asset.value("path", ""));
+    else if (found.empty() && asset.contains("abs")) found = path_from_utf8(asset.value("abs", ""));
+    if (!found.empty()) out.push_back(fs::absolute(found).lexically_normal());
+  }
+  return out;
+}
+
 std::vector<AssetState> asset_status(const Document& doc, const AssetOptions& opt) {
   std::vector<AssetState> out;
   for (const auto& e : asset_imports(doc)) out.push_back(status_of(doc, e, opt));

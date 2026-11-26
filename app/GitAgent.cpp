@@ -15,6 +15,7 @@
 #include "Git.hpp"
 #include "OwnFolder.hpp"
 #include "opad/commands.hpp"
+#include "opad/assets.hpp"
 #include "opad/diff.hpp"
 #include "opad/document.hpp"
 #include "opad/merge.hpp"
@@ -653,6 +654,41 @@ json switchTo(const json& args, const Call& call) {
           {"files_changed", changedFiles(r, before, r.status.oid)}};
 }
 
+// The OPAD documents among `rels` (relative to the top): the files each links keep their "!/<path>" lines in OPAD's
+// .gitignore block (git::updateTracked), so staging them is not refused as ignored. Whether the .gitignore changed. A
+// document that cannot be read is left as it is (staging it reports what is wrong).
+bool keepLinked(const Repo& r, const QStringList& rels) {
+  bool wrote = false;
+  for (const QString& rel : rels) {
+    if (!rel.endsWith(QLatin1String(".opad"), Qt::CaseInsensitive)) continue;
+    const QString file = QDir(r.top).filePath(rel);
+    if (!QFileInfo(file).isFile()) continue;
+    QStringList linked;
+    try {
+      const opad::Document doc = opad::Document::load_index(std::filesystem::path(file.toStdU16String()), [](const std::string&) { return true; });
+      for (const auto& p : opad::linked_files(doc)) linked << QString::fromStdU16String(p.u16string());
+    } catch (const std::exception&) {
+      continue;
+    }
+    wrote = git::updateTracked(r.top, rel, linked) || wrote;  // a .gitignore that cannot be written: said as such
+  }
+  return wrote;
+}
+
+// The .opad files `git add -A` would take: changed and new ones (not ignored).
+QStringList changedDocuments(const Repo& r) {
+  const git::Result listed = git::run(r.c, {"ls-files", "-z", "--modified", "--others", "--exclude-standard", "--", "*.opad"}, quick());
+  QStringList out;
+  for (const QByteArray& path : listed.out.split('\0'))
+    if (!path.isEmpty()) out << QString::fromUtf8(path);
+  out.removeDuplicates();
+  return out;
+}
+
+bool cleanIgnore(const Repo& r) {
+  return std::none_of(r.status.entries.begin(), r.status.entries.end(), [](const git::Entry& e) { return e.path == ".gitignore"; });
+}
+
 json commit(const json& args, const Call& call) {
   Repo r = open(call);
   const QString message = text(args, "message").trimmed();
@@ -675,6 +711,10 @@ json commit(const json& args, const Call& call) {
   if (!r.conflicts().isEmpty() && (all || std::any_of(rels.begin(), rels.end(), [&](const QString& p) { return r.conflicts().contains(p); }) || r.merging))
     refuse("conflicts", QStringLiteral("Files are still in conflict (%1): settle them with git_resolve first, or git_merge_abort.").arg(r.conflicts().join(", ")), "git_resolve");
   if (call.progress) call.progress(QStringLiteral("Adding the files"));
+  // Documents going in keep the files they link tracked whatever their type; the .gitignore line that does it goes with
+  // them when the .gitignore had no other change.
+  const bool ignoreWasClean = cleanIgnore(r);
+  if (keepLinked(r, all ? changedDocuments(r) : rels) && !all && ignoreWasClean && !rels.contains(".gitignore")) rels << QStringLiteral(".gitignore");
   const git::RunOptions o = slow(call);
   if (all) must(r, {"add", "-A"}, o);
   else must(r, QStringList{"--literal-pathspecs", "add", "--"} + rels, o);
@@ -982,6 +1022,23 @@ json init(const json& args, const Call& call) {
   }
   git::SetupOptions o;  // as the Set up repository dialog's defaults: attributes, .gitignore, LFS when installed, this OPAD as the driver
   o.branch = branch;
+  // ignore: false writes no .gitignore lines, a list of groups only those (absent or true: the defaults).
+  if (const auto ig = args.find("ignore"); ig != args.end()) {
+    if (ig->is_boolean()) {
+      o.ignore = ig->get<bool>();
+    } else if (ig->is_array()) {
+      QStringList known, groups;
+      for (const git::IgnoreGroup& g : git::ignoreGroups()) known << g.id;
+      for (const auto& g : *ig) {
+        const QString id = g.is_string() ? QString::fromStdString(g.get<std::string>()) : QString();
+        if (!known.contains(id)) refuse("invalid_arguments", QStringLiteral("ignore: \"%1\" is not a group; the groups are %2.").arg(id, known.join(", ")));
+        groups << id;
+      }
+      o.ignoreGroups = groups;
+    } else {
+      refuse("invalid_arguments", "ignore: false, true or a list of groups.");
+    }
+  }
   git::RunOptions ro;
   ro.cancelled = call.cancelled;
   if (call.progress) ro.progress = [p = call.progress](const QString& phase, int) { p(phase); };
@@ -994,11 +1051,18 @@ json init(const json& args, const Call& call) {
   opened.repo = folder;
   Repo r = open(opened);
   const git::Result driver = git::run(r.c, {"config", "--get", "merge.opad.driver"}, quick());
+  json ignoreGroups = json::array();
+  {  // closed again at once: keepLinked below replaces the file, which Windows refuses while it is open
+    QFile ignoreFile(r.top + "/.gitignore");
+    if (ignoreFile.open(QIODevice::ReadOnly))
+      for (const QString& g : git::ignoreGroupsIn(QString::fromUtf8(ignoreFile.readAll()))) ignoreGroups.push_back(str(g));
+  }
   json out = {{"state", "initialized"}, {"repo", str(QDir::toNativeSeparators(r.top))}, {"branch", str(branch)},
-              {"attributes", QFileInfo::exists(r.top + "/.gitattributes")}, {"ignore", QFileInfo::exists(r.top + "/.gitignore")},
+              {"attributes", QFileInfo::exists(r.top + "/.gitattributes")}, {"ignore", QFileInfo::exists(r.top + "/.gitignore")}, {"ignore_groups", ignoreGroups},
               {"lfs", git::run(r.c, {"lfs", "version"}, quick()).ok()}, {"driver", str(QString::fromUtf8(driver.out).trimmed())},
               {"protected", call.policy.protects(branch)}};
   if (rels.isEmpty()) return out;
+  keepLinked(r, rels);  // the first commit's documents keep their linked files tracked
   for (const char* own : {".gitattributes", ".gitignore"})
     if (QFileInfo::exists(r.top + "/" + own) && !rels.contains(QString::fromLatin1(own))) rels << QString::fromLatin1(own);
   QString message = text(args, "message").trimmed();

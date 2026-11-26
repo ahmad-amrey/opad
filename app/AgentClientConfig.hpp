@@ -51,3 +51,15 @@ QStringList codexCandidates();  // also the Codex app's own codex program (Windo
 bool isOpadProgram(const QString& path);  // opad-cli / opad itself: never a client's program (a Browse that picked it)
 
 }  // namespace agentclients
+
+namespace agentclients {
+
+// "Using another AI app?": a message the user pastes into any AI app's chat, asking its assistant to add the local stdio
+// MCP server "opad" (this copy's opad-cli, `mcp --live --discovery <dir>`) to its own user settings, keep its other servers,
+// reload its tools and open `document` in OPAD (empty: connect to the open OPAD window). Written for coding agents (Claude
+// Code, Codex, Cursor, VS Code Copilot), which can change their own settings.
+QString setupMessage(const QString& executable, const QString& discovery, const QString& document);
+// The same server as settings: {"mcpServers": {"opad": {"command", "args"}}} (apps that cannot edit their own settings).
+QString setupJson(const QString& executable, const QString& discovery);
+
+}  // namespace agentclients

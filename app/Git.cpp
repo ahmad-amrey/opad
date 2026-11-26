@@ -24,6 +24,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <algorithm>
@@ -584,18 +585,336 @@ QString attributesText(const QString& existing, bool lfs) {
   return out.join('\n') + '\n';
 }
 
-QString ignoreText(const QString& existing) {
-  QStringList lines = QString(existing).remove('\r').split('\n');
-  while (!lines.isEmpty() && lines.last().trimmed().isEmpty()) lines.removeLast();
-  QStringList missing;
-  for (auto p = kIgnored; *p; ++p)
-    if (!lines.contains(QString::fromLatin1(*p))) missing << QString::fromLatin1(*p);
-  if (missing.isEmpty()) return existing;
-  if (!lines.contains(kIgnoreNote)) {
-    if (!lines.isEmpty()) lines << QString();
-    lines << kIgnoreNote;
+const std::vector<IgnoreGroup>& ignoreGroups() {
+  static const std::vector<IgnoreGroup> groups = [] {
+    QStringList opad;
+    for (auto p = kIgnored; *p; ++p) opad << QString::fromLatin1(*p);
+    // What Export (ExportDialog: STEP, OBJ+MTL, STL, GLB, DXF, SVG, DWG, PDF, PNG), the Drawings' export and Issue (PDF,
+    // SVG, DXF), Save screenshot and opad-cli render (PNG) write, and the mesh formats the importers read, which an export
+    // plugin or another tool writes beside a design. Solver runs stay in the system's temporary folder (opad-ccx-*,
+    // opad-cfd-*, kept there with OPAD_KEEP_CCX / OPAD_KEEP_CFD): that group is for result files copied beside a design.
+    return std::vector<IgnoreGroup>{
+        {"models", QT_TRANSLATE_NOOP("Git", "Exported models (STEP, IGES, STL, 3MF, OBJ, glTF, PLY, VRML)"),
+         {"*.step", "*.stp", "*.iges", "*.igs", "*.stl", "*.3mf", "*.obj", "*.mtl", "*.gltf", "*.glb", "*.ply", "*.wrl", "*.vrml"}, true},
+        {"drawings", QT_TRANSLATE_NOOP("Git", "Exported drawings (DXF, DWG, SVG, PDF)"), {"*.dxf", "*.dwg", "*.svg", "*.pdf"}, true},
+        {"images", QT_TRANSLATE_NOOP("Git", "Rendered images and screenshots (PNG)"), {"*.png"}, true},
+        {"opad", QT_TRANSLATE_NOOP("Git", "OPAD's temporary saves, merge leftovers, portable data, caches and recovery snapshots"), opad, true},
+        {"system", QT_TRANSLATE_NOOP("Git", "System and editor clutter (Thumbs.db, desktop.ini, .DS_Store, backups ending in ~)"),
+         {"Thumbs.db", "ehthumbs.db", "desktop.ini", ".DS_Store", "._*", "*~"}, true},
+        {"simulation", QT_TRANSLATE_NOOP("Git", "Simulation results and solver case folders"),
+         {"opad-ccx-*/", "opad-cfd-*/", "*.frd", "*.vtk", "*.vtu", "*.foam"}, false},
+    };
+  }();
+  return groups;
+}
+
+QStringList defaultIgnoreGroups() {
+  QStringList out;
+  for (const IgnoreGroup& g : ignoreGroups())
+    if (g.byDefault) out << g.id;
+  return out;
+}
+
+namespace {
+const QString kRulesBegin = QStringLiteral("# >>> OPAD: files OPAD writes stay out of the repository (Set up repository; lines outside the OPAD blocks are yours)");
+const QString kLinkedBegin = QStringLiteral("# >>> OPAD: files the documents link stay tracked, also those of an ignored type");
+const QString kBlockEnd = QStringLiteral("# <<< OPAD");
+const QString kLinkedBy = QStringLiteral("# linked by ");
+
+// A .gitignore taken apart: the user's lines (the rules block's place marked by `rulesAt`), OPAD's rules lines and the
+// linked block's sections.
+struct IgnoreFile {
+  QStringList user;
+  int rulesAt = -1;  // index into user where the rules block goes; -1: after them
+  QStringList rules;
+  std::vector<std::pair<QString, QStringList>> linked;  // document -> its "!/" lines
+  bool crlf = false;
+};
+
+QString groupHeader(const IgnoreGroup& g) { return QStringLiteral("# ") + QString::fromLatin1(g.label); }
+
+IgnoreFile parseIgnore(const QString& text) {
+  IgnoreFile f;
+  f.crlf = text.contains(QLatin1String("\r\n"));
+  QStringList lines = QString(text).remove('\r').split('\n');
+  if (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
+  enum { None, Rules, Linked, Legacy } in = None;
+  QSet<QString> legacy;
+  for (auto p = kIgnored; *p; ++p) legacy.insert(QString::fromLatin1(*p));
+  for (const QString& line : lines) {
+    if (in == Legacy) {  // the old note's lines: consecutive kIgnored entries
+      if (legacy.contains(line.trimmed())) {
+        f.rules << line.trimmed();
+        continue;
+      }
+      in = None;
+    }
+    if (in == None) {
+      if (line.startsWith(kLinkedBegin.left(36))) {
+        in = Linked;
+      } else if (line.startsWith(QLatin1String("# >>> OPAD"))) {
+        in = Rules;
+        if (f.rulesAt < 0) f.rulesAt = int(f.user.size());
+      } else if (line == kIgnoreNote && f.rulesAt < 0) {
+        in = Legacy;
+        f.rulesAt = int(f.user.size());
+        for (const IgnoreGroup& g : ignoreGroups())
+          if (g.id == "opad") f.rules << groupHeader(g);
+      } else {
+        f.user << line;
+      }
+      continue;
+    }
+    if (line == kBlockEnd) {
+      in = None;
+      continue;
+    }
+    if (in == Rules) {
+      if (!line.trimmed().isEmpty()) f.rules << line;
+    } else if (line.startsWith(kLinkedBy)) {
+      f.linked.emplace_back(line.mid(kLinkedBy.size()), QStringList());
+    } else if (!line.trimmed().isEmpty() && !line.startsWith('#')) {
+      if (f.linked.empty()) f.linked.emplace_back(QString(), QStringList());
+      f.linked.back().second << line;
+    }
   }
-  return (lines + missing).join('\n') + '\n';
+  return f;
+}
+
+QStringList ignoreLines(const IgnoreFile& f) {
+  auto trimTail = [](QStringList& l) {
+    while (!l.isEmpty() && l.last().trimmed().isEmpty()) l.removeLast();
+  };
+  QStringList rules;
+  if (!f.rules.isEmpty()) rules << kRulesBegin << f.rules << kBlockEnd;
+  QStringList out;
+  if (f.rulesAt >= 0 && f.rulesAt < f.user.size()) {
+    out = f.user.mid(0, f.rulesAt);
+    out << rules << f.user.mid(f.rulesAt);
+  } else {
+    out = f.user;
+    trimTail(out);
+    if (!out.isEmpty() && !rules.isEmpty()) out << QString();
+    out << rules;
+  }
+  trimTail(out);
+  QStringList linked;
+  for (const auto& [doc, lines] : f.linked)
+    if (!lines.isEmpty()) linked << kLinkedBy + doc << lines;
+  if (!linked.isEmpty()) {
+    if (!out.isEmpty()) out << QString();
+    out << kLinkedBegin << linked << kBlockEnd;
+  }
+  return out;
+}
+
+QString joinIgnore(const IgnoreFile& f, const QString& existing) {
+  const QStringList lines = ignoreLines(f);
+  QStringList before = QString(existing).remove('\r').split('\n');
+  while (!before.isEmpty() && before.last().trimmed().isEmpty()) before.removeLast();
+  if (lines == before) return existing;
+  if (lines.isEmpty()) return QString();
+  const QString eol = f.crlf ? QStringLiteral("\r\n") : QStringLiteral("\n");
+  return lines.join(eol) + eol;
+}
+
+// One pattern line compiled (gitignore(5)).
+struct IgnoreRule {
+  QRegularExpression re;
+  bool negate = false, dirOnly = false, anchored = false;
+};
+
+bool compileIgnore(QString line, IgnoreRule& rule) {
+  if (line.isEmpty() || line.startsWith('#')) return false;
+  while (line.endsWith(' ') && !line.endsWith(QLatin1String("\\ "))) line.chop(1);  // trailing spaces go unless escaped
+  if (line.isEmpty()) return false;
+  if (line.startsWith('!')) {
+    rule.negate = true;
+    line.remove(0, 1);
+  }
+  if (line.endsWith('/')) {
+    rule.dirOnly = true;
+    line.chop(1);
+  }
+  if (line.isEmpty()) return false;
+  rule.anchored = line.contains('/');  // a slash at the start or in the middle: from the top only
+  if (line.startsWith('/')) line.remove(0, 1);
+  QString re;
+  for (int i = 0; i < line.size(); ++i) {
+    const QChar c = line[i];
+    if (c == '\\' && i + 1 < line.size()) {
+      re += QRegularExpression::escape(QString(line[++i]));
+    } else if (c == '*') {
+      if (i + 1 < line.size() && line[i + 1] == '*') {
+        const bool atStart = i == 0 || line[i - 1] == '/';
+        ++i;
+        if (atStart && i + 1 < line.size() && line[i + 1] == '/') {
+          ++i;
+          re += QStringLiteral("(?:.*/)?");  // "**/": any folders, none too
+        } else {
+          re += QStringLiteral(".*");
+        }
+      } else {
+        re += QStringLiteral("[^/]*");
+      }
+    } else if (c == '?') {
+      re += QStringLiteral("[^/]");
+    } else if (c == '[') {
+      const int close = line.indexOf(']', i + 2);
+      if (close < 0) {
+        re += QStringLiteral("\\[");
+        continue;
+      }
+      QString set = line.mid(i + 1, close - i - 1);
+      if (set.startsWith('!')) set[0] = '^';
+      set.replace(QLatin1String("\\"), QLatin1String("\\\\"));
+      re += '[' + set + ']';
+      i = close;
+    } else {
+      re += QRegularExpression::escape(QString(c));
+    }
+  }
+  rule.re = QRegularExpression(QRegularExpression::anchoredPattern(re),
+                               kPathCase == Qt::CaseInsensitive ? QRegularExpression::CaseInsensitiveOption : QRegularExpression::NoPatternOption);
+  return rule.re.isValid();
+}
+
+std::vector<IgnoreRule> ignoreRules(const QStringList& lines) {
+  std::vector<IgnoreRule> rules;
+  for (const QString& line : lines) {
+    IgnoreRule r;
+    if (compileIgnore(line, r)) rules.push_back(std::move(r));
+  }
+  return rules;
+}
+
+bool ignoredByRules(const std::vector<IgnoreRule>& rules, const QString& rel) {
+  const QStringList parts = QDir::cleanPath(QDir::fromNativeSeparators(rel)).split('/', Qt::SkipEmptyParts);
+  auto excluded = [&rules](const QString& path, const QString& name, bool dir) {
+    bool out = false;
+    for (const IgnoreRule& r : rules) {
+      if (r.dirOnly && !dir) continue;
+      if (r.re.match(r.anchored ? path : name).hasMatch()) out = !r.negate;
+    }
+    return out;
+  };
+  QString path;
+  for (int i = 0; i < parts.size(); ++i) {
+    path += (i ? QStringLiteral("/") : QString()) + parts[i];
+    if (excluded(path, parts[i], i + 1 < parts.size())) return true;  // an ignored folder: what it holds never comes back
+  }
+  return false;
+}
+
+// A path as a .gitignore line takes it literally.
+QString escapeIgnore(const QString& rel) {
+  QString out;
+  for (const QChar c : rel) {
+    if (c == '\\' || c == '*' || c == '?' || c == '[' || c == ']') out += '\\';
+    out += c;
+  }
+  if (out.endsWith(' ')) out.insert(out.size() - 1, '\\');
+  return out;
+}
+}  // namespace
+
+QStringList ignoreGroupsIn(const QString& existing, bool* found) {
+  const IgnoreFile f = parseIgnore(existing);
+  if (found) *found = !f.rules.isEmpty();
+  QStringList out;
+  for (const IgnoreGroup& g : ignoreGroups())
+    if (f.rules.contains(groupHeader(g))) out << g.id;
+  return out;
+}
+
+QString ignoreText(const QString& existing, const QStringList& groups) {
+  IgnoreFile f = parseIgnore(existing);
+  QSet<QString> theirs;
+  for (const QString& line : f.user) theirs.insert(line.trimmed());
+  f.rules.clear();
+  for (const IgnoreGroup& g : ignoreGroups()) {
+    if (!groups.contains(g.id)) continue;
+    QStringList missing;
+    for (const QString& p : g.patterns)
+      if (!theirs.contains(p)) missing << p;
+    if (!missing.isEmpty()) f.rules << groupHeader(g) << missing;
+  }
+  return joinIgnore(f, existing);
+}
+
+IgnoreChange ignoreChange(const QString& existing, const QStringList& groups) {
+  auto patterns = [](const QString& text) {
+    QStringList out;
+    for (const QString& line : QString(text).remove('\r').split('\n'))
+      if (!line.trimmed().isEmpty() && !line.startsWith('#')) out << line.trimmed();
+    return out;
+  };
+  const QStringList before = patterns(existing), after = patterns(ignoreText(existing, groups));
+  IgnoreChange c;
+  for (const QString& line : after)
+    if (!before.contains(line)) c.added << line;
+  for (const QString& line : before)
+    if (!after.contains(line)) c.removed << line;
+  return c;
+}
+
+bool ignoredBy(const QString& text, const QString& rel) { return ignoredByRules(ignoreRules(QString(text).remove('\r').split('\n')), rel); }
+
+QString keepTracked(const QString& existing, const QString& docRel, const QStringList& linkedRels) {
+  IgnoreFile f = parseIgnore(existing);
+  IgnoreFile rest = f;
+  rest.linked.clear();
+  const std::vector<IgnoreRule> rules = ignoreRules(ignoreLines(rest));
+  QStringList keep;
+  // A Windows drive path ("C:/x", "C:x") is outside the top on every system: a document saved on Windows can carry one.
+  auto drivePath = [](const QString& p) { return p.size() >= 2 && p[1] == QLatin1Char(':') && p[0].isLetter(); };
+  for (const QString& rel : linkedRels) {
+    const QString clean = QDir::cleanPath(QDir::fromNativeSeparators(rel));
+    if (clean.isEmpty() || clean == "." || clean == ".." || clean.startsWith(QLatin1String("../")) || QDir::isAbsolutePath(clean) ||
+        drivePath(clean))
+      continue;
+    if (ignoredByRules(rules, clean)) keep << QStringLiteral("!/") + escapeIgnore(clean);
+  }
+  keep.removeDuplicates();
+  keep.sort(Qt::CaseInsensitive);
+  auto at = std::find_if(f.linked.begin(), f.linked.end(), [&](const auto& s) { return s.first == docRel; });
+  if (at != f.linked.end()) at->second = keep;
+  else if (!keep.isEmpty()) f.linked.emplace_back(docRel, keep);
+  f.linked.erase(std::remove_if(f.linked.begin(), f.linked.end(), [](const auto& s) { return s.second.isEmpty(); }), f.linked.end());
+  return joinIgnore(f, existing);
+}
+
+QStringList trackedDocuments(const QString& existing) {
+  QStringList out;
+  for (const auto& section : parseIgnore(existing).linked) out << section.first;
+  return out;
+}
+
+bool opadRuleAt(const QString& text, int line) {
+  const QStringList lines = QString(text).remove('\r').split('\n');
+  bool in = false;
+  for (int i = 0; i < lines.size() && i < line; ++i) {
+    if (lines[i].startsWith(QLatin1String("# >>> OPAD"))) in = !lines[i].startsWith(kLinkedBegin.left(36));
+    else if (lines[i] == kBlockEnd) in = false;
+    else if (i + 1 == line) return in;
+  }
+  return false;
+}
+
+bool updateTracked(const QString& top, const QString& docRel, const QStringList& linkedFiles) {
+  const QDir root(top);
+  QStringList rels;
+  for (const QString& file : linkedFiles) {
+    const QString rel = QDir::cleanPath(root.relativeFilePath(QDir::fromNativeSeparators(file)));
+    if (!rel.startsWith(QLatin1String("..")) && !QDir::isAbsolutePath(rel)) rels << rel;
+  }
+  const QString path = root.filePath(QStringLiteral(".gitignore")), existing = readFile(path);
+  QString text = keepTracked(existing, docRel, rels);
+  for (const QString& other : trackedDocuments(text))  // a document renamed, moved or deleted since: its section goes
+    if (other != docRel && !QFileInfo::exists(root.filePath(other))) text = keepTracked(text, other, {});
+  if (text == existing) return false;
+  writeFile(path, text);
+  return true;
 }
 
 void configureDriver(const Context& c, const Install& in) {
@@ -643,9 +962,10 @@ QStringList setUp(const Context& base, const QString& folder, const Install& in,
   }
   if (o.ignore) {
     phase(tr("Writing .gitignore"));
-    const QString path = top + "/.gitignore", existing = readFile(path), text = ignoreText(existing);
+    const QString path = top + "/.gitignore", existing = readFile(path), text = ignoreText(existing, o.ignoreGroups);
     if (text != existing) writeFile(path, text);
-    done << tr(".gitignore: temporary saves, portable data, caches and recovery snapshots stay out.");
+    done << (existing.isEmpty() ? tr(".gitignore: exports, temporary saves, caches and recovery snapshots stay out.")
+                                : tr(".gitignore: OPAD's lines added to the existing file, its own lines kept."));
   }
   if (lfs) {
     phase(tr("Installing the Git LFS hooks"));

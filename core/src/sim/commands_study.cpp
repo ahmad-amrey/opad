@@ -12,6 +12,7 @@
 #include "opad/sim/kinematics.hpp"
 #include "opad/sim/airflow.hpp"
 #include "opad/sim/fea.hpp"
+#include "opad/sim/flow.hpp"
 #include "opad/sim/study.hpp"
 
 namespace opad::commands {
@@ -60,10 +61,11 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
 
   reg("study",
       "Define and run a study: motion (joints driven over time), dynamic (Chrono: gravity, contacts, motors, springs), static, "
-      "modal or thermal (Netgen + CalculiX on a load case; thermal: heat, convection, fans; the air solved with OpenFOAM), or sweep (one of "
+      "modal or thermal (Netgen + CalculiX on a load case; thermal: heat, convection, fans; the air solved with OpenFOAM), flow (OpenFOAM: "
+      "pressure drop through a part), or sweep (one of "
       "those again over parameter values: the best design). Returns its summary (and sampled series); id: run or change one",
       {{"doc", "path"},
-       {"kind", "motion|dynamic|static|modal|thermal|sweep"},
+       {"kind", "motion|dynamic|static|modal|thermal|flow|sweep"},
        {"name", "string"},
        {"settings", {{"type", "object"}, {"description", "see the agent guide, Motion and simulation"}}},
        {"id", "string - an existing study: run it again (settings: merged by key first)"},
@@ -90,9 +92,27 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           missing = why.get<std::string>();
           if (a.value("run", true)) throw Error("study: " + missing + " (run: false defines it without running it)");
         };
+        // A flow study's settings and openings, when given, are checked before anything is written (no OpenFOAM needed): its
+        // mesh plan.
+        json flow_plan;
+        auto check_flow = [&](const json& study) {
+          if (study.value("kind", std::string()) != "flow" || study.value("settings", json::object()).empty()) return;
+          flow_plan = sim::plan_flow(doc, s, sim::flow_settings(study.value("settings", json::object()))).to_json();
+        };
         if (a.contains("id")) {
           const Study* st = s.study(a["id"].get<std::string>());
           if (!st) throw Error("no study " + a["id"].get<std::string>());
+          if (st->kind == "flow" && a.contains("settings") && a["settings"].is_object()) {
+            json merged = st->def;
+            json& m = merged["settings"];
+            if (!m.is_object()) m = json::object();
+            for (const auto& [k, v] : a["settings"].items()) {
+              if (v.is_null()) m.erase(k);
+              else m[k] = v;
+            }
+            check_engine(st->kind);
+            check_flow(merged);
+          }
           check_engine(st->kind);
           id = st->id;
           def = st->def;
@@ -119,8 +139,9 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
         } else {
           const std::string kind = a.at("kind").get<std::string>();
           const auto& kinds = sim::study_kinds();
-          if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end()) throw Error("study: kind is motion, dynamic, static, modal, thermal or sweep");
+          if (std::find(kinds.begin(), kinds.end(), kind) == kinds.end()) throw Error("study: kind is motion, dynamic, static, modal, thermal, flow or sweep");
           check_engine(kind);
+          check_flow({{"kind", kind}, {"settings", a.value("settings", json::object())}});
           std::vector<std::string> taken;
           for (const auto& st : s.studies) taken.push_back(st.name);
           def = {{"op", "study"}, {"name", a.value("name", free_name(taken, capital(kind) + " study "))}, {"kind", kind},
@@ -128,6 +149,7 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           Document::validate_op(def);
         }
         json out = {{"name", def["name"]}, {"kind", def["kind"]}};
+        if (!flow_plan.is_null()) out["plan"] = flow_plan;
         if (!missing.empty()) out["warning"] = missing;
         if (!a.value("run", true)) {
           if (id.empty()) id = doc.append(def, by).id;
@@ -159,6 +181,14 @@ void register_study_commands(const std::function<void(const CommandInfo&, Handle
           for (const auto& p : a["probes"]) {
             const Vec3 at = p.get<Vec3>();
             json o = {{"at", at}};
+            if (r.flow_at) {  // a flow study: the fluid at that point
+              Vec3 u{0, 0, 0};
+              double p = 0;
+              if (r.flow_at(at, u, p)) o["velocity_ms"] = u, o["speed_ms"] = std::sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]), o["pressure_pa"] = p;
+              else o["outside"] = true;
+              probes.push_back(o);
+              continue;
+            }
             if (!r.temperature.empty()) o["temperature_C"] = sim::probe(r, at, "temperature");
             if (!r.von_mises.empty()) o["von_mises_MPa"] = sim::probe(r, at, "von_mises"), o["displacement_mm"] = sim::probe(r, at, "displacement");
             probes.push_back(o);

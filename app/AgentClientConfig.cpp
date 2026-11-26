@@ -1,5 +1,6 @@
 #include "AgentClientConfig.hpp"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QDateTime>
@@ -224,5 +225,31 @@ QStringList codexCandidates() {
 }
 
 bool isOpadProgram(const QString& path) { return QFileInfo(path).baseName().startsWith("opad", Qt::CaseInsensitive); }
+
+}  // namespace agentclients
+
+namespace agentclients {
+
+QString setupMessage(const QString& executable, const QString& discovery, const QString& document) {
+  const QStringList args = serverArgs(discovery);
+  auto quoted = [](const QString& s) { return s.contains(' ') ? '"' + s + '"' : s; };
+  QStringList shown;
+  for (const auto& a : args) shown << quoted(a);
+  QStringList lines;
+  lines << QCoreApplication::translate("agentclients", "Please connect to OPAD, my CAD app, so you can work on my designs.")
+        << QCoreApplication::translate("agentclients", "Add a local MCP server (stdio) named \"opad\" to your user settings, for all projects, and keep your other servers as they are:")
+        << "  " + QCoreApplication::translate("agentclients", "command: %1").arg(quoted(QDir::toNativeSeparators(executable)))
+        << "  " + QCoreApplication::translate("agentclients", "arguments: %1").arg(shown.join(' '))
+        << (document.isEmpty() ? QCoreApplication::translate("agentclients", "Then reload your tools (tell me if you need a restart) and use them to connect to the OPAD window that is open.")
+                               : QCoreApplication::translate("agentclients", "Then reload your tools (tell me if you need a restart) and use them to open \"%1\" in OPAD.").arg(document));
+  return lines.join('\n');
+}
+
+QString setupJson(const QString& executable, const QString& discovery) {
+  ojson args = ojson::array();
+  for (const auto& a : serverArgs(discovery)) args.push_back(a.toStdString());
+  const ojson j = {{"mcpServers", {{"opad", {{"command", QDir::toNativeSeparators(executable).toStdString()}, {"args", args}}}}}};
+  return QString::fromStdString(j.dump(2));
+}
 
 }  // namespace agentclients

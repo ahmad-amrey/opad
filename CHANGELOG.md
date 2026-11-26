@@ -13,8 +13,24 @@ design in a folder of its own, with linked files saved by relative paths, and OP
 before they ship.
 Working with an AI assistant is calm and readable now: OPAD tells you in plain words what Claude, Codex or another
 AI app looked at and changed, marks its steps in the timeline, and asks you only when it needs you.
+Simulate is now for everyone: pick the question that matches your case, from a picture, and OPAD walks you through it,
+including a new airflow check for ducts and fittings.
 
 ### Added
+- **Simulate asks what you want to find out.** The Simulate tabs are now goals (Air and fluids, Heat, Strength,
+  Movement), and the start page shows each check as a plain question with a small picture of the case: "How much
+  pressure does a fitting lose?", "Will my electronics box overheat?", "Will it bend or break under a load?", "Will my 3D
+  print hold?", "Does my mechanism move freely?", "How strong a motor do I need?" and more. Each check walks you through
+  a few steps, proposes what it can (the faces a part rests on, a duct's open ends, the parts that get hot), and answers
+  in words first ("Safe: holds 3.2 times this load"), then with the colour maps. Compare puts two designs side by side.
+  The earlier tools are all still there under *Advanced*.
+- **Airflow through ducts and fittings.** A new airflow check (and `flow` study) works out the pressure a fitting loses
+  at a given airflow, or the airflow a fan really delivers through it, shows the air speed, pressure and streamlines, and
+  marks where the air swirls. Round parts are solved as a thin slice, so a run takes a minute or so. It needs OpenFOAM;
+  OPAD says so and points to the download when it is missing.
+- **A .gitignore when you set up a repository.** *Set up repository* offers a recommended .gitignore that keeps exports
+  (STEP, STL, 3MF, drawings, renders) and OPAD's temporary files out of the history; *Customise* shows the groups to tick.
+  Files your design links stay tracked even when their type is ignored, and an existing .gitignore is only added to.
 - **See what the AI is working on at a glance.** An assistant can name the stage it is in, in a few words ("Opening the
   drawing", "Designing the mounting bracket"): the AI chip shows it beside the assistant's name, and the AI activity panel
   starts a heading with it, so the entries under it read as that stage's work.
@@ -38,6 +54,10 @@ AI app looked at and changed, marks its steps in the timeline, and asks you only
   that already touch at the start, like a pin in its bore, are listed apart. No more posing the worst frames one by one.
 
 ### Changed
+- **Connecting an AI app is one button.** *AI assistants* lists the AI apps found on this computer, each with one
+  Connect button, and then says what is left (restart the app, a first question to ask). For any other AI app, *Copy
+  setup message* gives you one message to paste into its chat, and its assistant adds OPAD itself. What the assistant may
+  do is one choice (Nothing, Look only, Look and edit); program paths and the raw settings moved under *Details*.
 - **AI activity in plain words.** The panel now reads like a log of what was done, with your part and step names and
   your units: "Looked at the model from the front", "Added a 40 × 20 × 10 mm box", "Filleted 4 edges of Bracket, 2 mm".
   Lookups fold into one line, a picture the assistant took shows as a thumbnail, and a task it does in several steps is

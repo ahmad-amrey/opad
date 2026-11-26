@@ -1,0 +1,15 @@
+# Simulate's checks and their pictures (app/SimChecks.cpp, app/SimPictures.cpp), built offscreen with the theme.
+if(TARGET opad)
+  target_sources(${target} PRIVATE ../app/SimChecks.cpp ../app/SimChecks.hpp ../app/SimPictures.cpp ../app/SimPictures.hpp ../app/Theme.cpp ../app/Theme.hpp
+                 ../app/I18n.cpp ../app/Icons.cpp)
+  set_target_properties(${target} PROPERTIES AUTOMOC ON)
+  target_include_directories(${target} PRIVATE ../app)
+  target_link_libraries(${target} PRIVATE Qt6::Widgets)
+  if(OPAD_STATIC)
+    qt_import_plugins(${target} INCLUDE Qt6::QOffscreenIntegrationPlugin EXCLUDE_BY_TYPE imageformats iconengines)
+  endif()
+  set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+else()
+  set_target_properties(${target} PROPERTIES EXCLUDE_FROM_ALL ON)
+  set_tests_properties(${name} PROPERTIES DISABLED ON)
+endif()

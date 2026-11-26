@@ -47,7 +47,9 @@
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/sim/airflow.hpp"
+#include "opad/sim/engine_packs.hpp"
 #include "opad/sim/fea.hpp"
+#include "foam_case.hpp"
 
 namespace opad::sim {
 
@@ -55,6 +57,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
+using namespace foam;
 using V = Vec3;
 constexpr double kPi = 3.14159265358979323846;
 V sub(const V& a, const V& b) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; }
@@ -68,161 +71,6 @@ V unit(const V& a) {
   return n > 1e-12 ? mul(a, 1 / n) : V{0, 0, 0};
 }
 
-std::string num(double v) {
-  std::ostringstream s;
-  s.precision(10);
-  s << v;
-  return s.str();
-}
-std::string vec(const V& v) { return "(" + num(v[0]) + " " + num(v[1]) + " " + num(v[2]) + ")"; }
-
-// ---------------------------------------------------------------- OpenFOAM's files
-std::string header(const std::string& cls, const std::string& object, const std::string& location = {}) {
-  return "FoamFile\n{\n    version 2.0;\n    format ascii;\n    class " + cls + ";\n" + (location.empty() ? "" : "    location \"" + location + "\";\n") +
-         "    object " + object + ";\n}\n";
-}
-void put(const fs::path& file, const std::string& cls, const std::string& object, const std::string& body) {
-  fs::create_directories(file.parent_path());
-  write_text_file(file, header(cls, object) + body);
-}
-
-// The list after "N\n(" in an OpenFOAM file (points, faces, labels, a field), as text from its opening bracket.
-std::string_view list_after(std::string_view t, size_t from = 0) {
-  for (size_t i = from; i < t.size(); ++i) {
-    if (!std::isdigit(static_cast<unsigned char>(t[i]))) continue;
-    size_t j = i;
-    while (j < t.size() && std::isdigit(static_cast<unsigned char>(t[j]))) ++j;
-    size_t k = j;
-    while (k < t.size() && std::isspace(static_cast<unsigned char>(t[k]))) ++k;
-    if (k < t.size() && t[k] == '(' && (i == 0 || std::isspace(static_cast<unsigned char>(t[i - 1])))) return t.substr(k);
-    i = j;
-  }
-  throw Error("cfd: an OpenFOAM list is missing");
-}
-size_t count_before(std::string_view list_from_bracket, std::string_view whole) {
-  // the number written before the list's bracket
-  const size_t at = size_t(list_from_bracket.data() - whole.data());
-  size_t e = at;
-  while (e > 0 && std::isspace(static_cast<unsigned char>(whole[e - 1]))) --e;
-  size_t b = e;
-  while (b > 0 && std::isdigit(static_cast<unsigned char>(whole[b - 1]))) --b;
-  return size_t(std::stoull(std::string(whole.substr(b, e - b))));
-}
-std::vector<V> read_points(const std::string& t) {
-  const auto l = list_after(t, t.find("FoamFile") == std::string::npos ? 0 : t.find('}'));
-  const size_t n = count_before(l, t);
-  std::vector<V> out;
-  out.reserve(n);
-  const char* p = l.data() + 1;
-  const char* end = t.data() + t.size();
-  while (out.size() < n && p < end) {
-    while (p < end && *p != '(') ++p;
-    ++p;
-    char* q;
-    V v;
-    v[0] = std::strtod(p, &q), v[1] = std::strtod(q, &q), v[2] = std::strtod(q, &q);
-    out.push_back(v);
-    p = q;
-  }
-  return out;
-}
-std::vector<std::vector<int>> read_faces(const std::string& t) {
-  const auto l = list_after(t, t.find('}'));
-  const size_t n = count_before(l, t);
-  std::vector<std::vector<int>> out;
-  out.reserve(n);
-  const char* p = l.data() + 1;
-  const char* end = t.data() + t.size();
-  while (out.size() < n && p < end) {
-    char* q;
-    const long m = std::strtol(p, &q, 10);
-    p = q;
-    while (p < end && *p != '(') ++p;
-    ++p;
-    std::vector<int> f(size_t(std::max(0L, m)));
-    for (auto& x : f) x = int(std::strtol(p, &q, 10)), p = q;
-    while (p < end && *p != ')') ++p;
-    ++p;
-    out.push_back(std::move(f));
-  }
-  return out;
-}
-std::vector<double> read_numbers(std::string_view whole, std::string_view l) {
-  const size_t n = count_before(l, whole);
-  std::vector<double> out;
-  out.reserve(n);
-  const char* p = l.data() + 1;
-  const char* end = whole.data() + whole.size();
-  while (out.size() < n && p < end) {
-    while (p < end && (std::isspace(static_cast<unsigned char>(*p)) || *p == '(' || *p == ')')) ++p;
-    char* q;
-    out.push_back(std::strtod(p, &q));
-    if (q == p) break;
-    p = q;
-  }
-  return out;
-}
-std::vector<int> read_labels(const std::string& t) {
-  const auto v = read_numbers(t, list_after(t, t.find('}')));
-  return std::vector<int>(v.begin(), v.end());
-}
-// A field's internal values: scalars, or vectors flattened (3 per cell); a uniform field gives its one value n times.
-std::vector<double> read_internal(const std::string& t, size_t cells, int width) {
-  const size_t at = t.find("internalField");
-  if (at == std::string::npos) throw Error("cfd: a field without internalField");
-  const size_t semi = t.find(';', at);
-  const std::string head = t.substr(at, std::min(semi, t.find('(', at)) - at);
-  if (head.find("nonuniform") == std::string::npos) {
-    std::istringstream s(t.substr(at + 13, semi - at - 13));
-    std::string word;
-    s >> word;
-    std::vector<double> one(size_t(width), 0.0);
-    if (width == 1) s >> one[0];
-    else {
-      char c;
-      s >> c >> one[0] >> one[1] >> one[2];
-    }
-    std::vector<double> out;
-    for (size_t i = 0; i < cells; ++i) out.insert(out.end(), one.begin(), one.end());
-    return out;
-  }
-  const auto l = list_after(t, at);
-  if (width == 1) return read_numbers(t, l);
-  const size_t n = count_before(l, t);
-  std::vector<double> out;
-  out.reserve(n * 3);
-  const char* p = l.data() + 1;
-  const char* end = t.data() + t.size();
-  for (size_t i = 0; i < n && p < end; ++i) {
-    while (p < end && *p != '(') ++p;
-    ++p;
-    char* q;
-    for (int k = 0; k < 3; ++k) out.push_back(std::strtod(p, &q)), p = q;
-  }
-  return out;
-}
-// A patch's values in a field file's boundaryField (scalar), empty when the patch has none written.
-std::vector<double> read_patch(const std::string& t, const std::string& patch) {
-  const size_t bf = t.find("boundaryField");
-  if (bf == std::string::npos) return {};
-  size_t at = bf;
-  for (;;) {
-    at = t.find(patch, at + 1);
-    if (at == std::string::npos) return {};
-    const char before = t[at - 1], after = at + patch.size() < t.size() ? t[at + patch.size()] : ' ';
-    if (std::isspace(static_cast<unsigned char>(before)) && std::isspace(static_cast<unsigned char>(after))) break;
-  }
-  const size_t open = t.find('{', at), close = t.find('}', open);
-  const std::string blk = t.substr(open, close - open);
-  const size_t v = blk.find("value");
-  if (v == std::string::npos) return {};
-  if (blk.find("nonuniform", v) != std::string::npos) return read_numbers(blk, list_after(blk, v));
-  std::istringstream s(blk.substr(v + 5));
-  std::string word;
-  double x = 0;
-  s >> word >> x;
-  return {x};
-}
 
 // A blower opening's flow in a velocity file: the volumetricFlowRate of its patch's entry (m3/s).
 std::string set_flow_rate(std::string U, const std::string& patch, double Q) {
@@ -244,166 +92,100 @@ std::string set_flow_rate(std::string U, const std::string& patch, double Q) {
   return U.replace(key, end - key, v.str());
 }
 
-// A region's mesh: its cells' centres and volumes (from its faces), mm.
-struct Cells {
-  std::vector<V> centre;
-  std::vector<double> volume;
-};
-Cells read_cells(const fs::path& poly) {
-  const auto P = read_points(read_text_file(poly / "points"));
-  const auto F = read_faces(read_text_file(poly / "faces"));
-  const auto own = read_labels(read_text_file(poly / "owner"));
-  const auto nei = read_labels(read_text_file(poly / "neighbour"));
-  // A cell may own no face (the last, when all its faces are inner ones with lower neighbours): count both lists.
-  int nc = 0;
-  for (int o : own) nc = std::max(nc, o + 1);
-  for (int n : nei) nc = std::max(nc, n + 1);
-  // Face centres and area vectors from a fan of triangles about the points' mean; a cell's volume by the divergence
-  // theorem, its centre as the volume-weighted centre of the pyramids on its faces.
-  std::vector<V> fc(F.size()), fa(F.size());
-  for (size_t f = 0; f < F.size(); ++f) {
-    V m{0, 0, 0};
-    for (int k : F[f]) m = add(m, P[size_t(k)]);
-    m = mul(m, 1.0 / double(F[f].size()));
-    V area{0, 0, 0}, c{0, 0, 0};
-    double total = 0;
-    for (size_t k = 0; k < F[f].size(); ++k) {
-      const V& a = P[size_t(F[f][k])];
-      const V& b = P[size_t(F[f][(k + 1) % F[f].size()])];
-      const V s = mul(cross(sub(a, m), sub(b, m)), 0.5);
-      const double w = norm(s);
-      area = add(area, s);
-      c = add(c, mul(add(add(a, b), m), w / 3));
-      total += w;
-    }
-    fc[f] = total > 0 ? mul(c, 1 / total) : m;
-    fa[f] = area;
-  }
-  // Mean of each cell's face centres: a point inside it for the pyramids.
-  std::vector<V> guess(size_t(nc), V{0, 0, 0});
-  std::vector<int> nf(size_t(nc), 0);
-  for (size_t f = 0; f < F.size(); ++f) {
-    guess[size_t(own[f])] = add(guess[size_t(own[f])], fc[f]), ++nf[size_t(own[f])];
-    if (f < nei.size()) guess[size_t(nei[f])] = add(guess[size_t(nei[f])], fc[f]), ++nf[size_t(nei[f])];
-  }
-  for (int c = 0; c < nc; ++c) guess[size_t(c)] = mul(guess[size_t(c)], 1.0 / std::max(1, nf[size_t(c)]));
-  Cells out;
-  out.centre.assign(size_t(nc), V{0, 0, 0});
-  out.volume.assign(size_t(nc), 0.0);
-  std::vector<V> moment(size_t(nc), V{0, 0, 0});
-  auto pyramid = [&](int c, size_t f, double sign) {
-    const double v = sign * dot(fa[f], sub(fc[f], guess[size_t(c)])) / 3;
-    out.volume[size_t(c)] += v;
-    moment[size_t(c)] = add(moment[size_t(c)], mul(add(mul(fc[f], 0.75), mul(guess[size_t(c)], 0.25)), v));
-  };
-  for (size_t f = 0; f < F.size(); ++f) {
-    pyramid(own[f], f, 1);
-    if (f < nei.size()) pyramid(nei[f], f, -1);
-  }
-  for (int c = 0; c < nc; ++c)
-    out.centre[size_t(c)] = out.volume[size_t(c)] > 0 ? mul(moment[size_t(c)], 1 / out.volume[size_t(c)]) : guess[size_t(c)];
-  return out;
-}
-
-// Nearest of a set of points: a uniform grid of buckets.
-class Nearest {
- public:
-  Nearest(const std::vector<V>& pts, double cell) : m_pts(pts), m_cell(std::max(cell, 1e-6)) {
-    for (size_t i = 0; i < pts.size(); ++i) m_grid[key(pts[i])].push_back(i);
-  }
-  size_t operator()(const V& p) const { return (*this)(p, nullptr); }
-  // The nearest that `ok` accepts (npos when none is within 64 buckets).
-  static constexpr size_t npos = size_t(-1);
-  size_t operator()(const V& p, const std::function<bool(size_t)>& ok) const {
-    size_t best = ok ? npos : 0;
-    double bd = 1e300;
-    for (int r = 0; r < 64 && (bd == 1e300 || double(r - 1) * m_cell < std::sqrt(bd)); ++r) {
-      const auto k = key(p);
-      for (int i = -r; i <= r; ++i)
-        for (int j = -r; j <= r; ++j)
-          for (int l = -r; l <= r; ++l) {
-            if (std::max({std::abs(i), std::abs(j), std::abs(l)}) != r) continue;
-            const auto it = m_grid.find({k[0] + i, k[1] + j, k[2] + l});
-            if (it == m_grid.end()) continue;
-            for (size_t n : it->second)
-              if (const double d = dot(sub(m_pts[n], p), sub(m_pts[n], p)); d < bd && (!ok || ok(n))) bd = d, best = n;
-          }
-    }
-    return best;
-  }
-
- private:
-  std::array<long, 3> key(const V& p) const { return {long(std::floor(p[0] / m_cell)), long(std::floor(p[1] / m_cell)), long(std::floor(p[2] / m_cell))}; }
-  const std::vector<V>& m_pts;
-  double m_cell;
-  std::map<std::array<long, 3>, std::vector<size_t>> m_grid;
-};
-
-std::string latest_time(const fs::path& dir) {
-  double best = -1;
-  std::string name;
-  std::error_code ec;
-  for (const auto& e : fs::directory_iterator(dir, ec)) {
-    if (!e.is_directory()) continue;
-    const std::string s = e.path().filename().string();
-    char* end = nullptr;
-    const double t = std::strtod(s.c_str(), &end);
-    if (end && *end == 0 && !s.empty() && t > best) best = t, name = s;
-  }
-  return name;
-}
-
-// A mesh's patches (constant/polyMesh/boundary): name, type, faces.
-struct Patch {
-  std::string name, type;
-  size_t faces = 0, start = 0;
-};
-std::vector<Patch> read_boundary(const std::string& t) {
-  std::vector<Patch> out;
-  const std::string_view body = list_after(t);
-  size_t at = 0;
-  while (at < body.size()) {
-    const size_t open = body.find('{', at);
-    if (open == std::string_view::npos) break;
-    const size_t close = body.find('}', open);
-    size_t n0 = body.find_last_not_of(" \t\r\n", open - 1);
-    size_t n1 = body.find_last_of(" \t\r\n(", n0);
-    Patch p;
-    p.name = std::string(body.substr(n1 + 1, n0 - n1));
-    const std::string_view e = body.substr(open, close - open);
-    auto value = [&](const char* key) {
-      const size_t k = e.find(key);
-      if (k == std::string_view::npos) return std::string();
-      size_t v = k + std::strlen(key);
-      while (v < e.size() && std::isspace(static_cast<unsigned char>(e[v]))) ++v;
-      const size_t w = e.find(';', v);
-      return std::string(e.substr(v, w - v));
-    };
-    p.type = value("type");
-    p.faces = size_t(std::strtoull(value("nFaces").c_str(), nullptr, 10));
-    p.start = size_t(std::strtoull(value("startFace").c_str(), nullptr, 10));
-    out.push_back(p);
-    at = close + 1;
-  }
-  return out;
-}
 
 }  // namespace
 
 // ---------------------------------------------------------------- where OpenFOAM is
+namespace {
+bool has_solver(const fs::path& dir) {
+  std::error_code ec;
+  return fs::is_regular_file(dir / "simpleFoam", ec) || fs::is_regular_file(dir / "simpleFoam.exe", ec);
+}
+
+// A project directory's programs: bin/ (blueCFD, a folder of its own), else platforms/<build>/bin (OpenCFD's MinGW build
+// keeps its programs and DLLs there; bin/ holds only its shell scripts).
+fs::path project_bin(const fs::path& project) {
+  if (has_solver(project / "bin")) return project / "bin";
+  std::error_code ec;
+  std::vector<fs::path> found;
+  for (const auto& e : fs::directory_iterator(project / "platforms", ec))
+    if (has_solver(e.path() / "bin")) found.push_back(e.path() / "bin");
+  std::sort(found.begin(), found.end());
+  return found.empty() ? fs::path() : found.back();
+}
+
+// OpenCFD's Windows installer: <root>/msys64/home/ofuser/OpenFOAM/OpenFOAM-v<N> holds the project.
+fs::path installer_project(const fs::path& root) {
+  std::error_code ec;
+  std::vector<fs::path> found;
+  for (const auto& e : fs::directory_iterator(root / "msys64" / "home" / "ofuser" / "OpenFOAM", ec))
+    if (e.path().filename().string().rfind("OpenFOAM-", 0) == 0 && !project_bin(e.path()).empty()) found.push_back(e.path());
+  std::sort(found.begin(), found.end());
+  return found.empty() ? fs::path() : found.back();
+}
+
+#ifdef _WIN32
+// OpenCFD's MinGW build links its Pstream against MS-MPI, which its installer leaves to a separate (administrator) setup:
+// without msmpi.dll every program stops before it starts (0xC0000135). Seen in the DLL's import names.
+std::string mpi_problem(const fs::path& bin, const fs::path& project) {
+  std::string data;
+  try {
+    data = read_text_file(bin / "libPstream.dll");
+  } catch (...) {
+    return {};
+  }
+  std::transform(data.begin(), data.end(), data.begin(), [](char c) { return char(std::tolower(static_cast<unsigned char>(c))); });
+  if (data.find("msmpi.dll") == std::string::npos) return {};
+  std::vector<fs::path> dirs = {bin};
+  if (const char* root = std::getenv("SystemRoot")) dirs.push_back(fs::path(path_from_utf8(root)) / "System32");
+  if (const char* mpi = std::getenv("MSMPI_BIN")) dirs.push_back(path_from_utf8(mpi));
+  if (const char* path = std::getenv("PATH"))
+    for (std::string s = path; !s.empty();) {
+      const size_t b = std::min(s.find(';'), s.size());
+      if (b > 0) dirs.push_back(path_from_utf8(s.substr(0, b)));
+      s.erase(0, std::min(b + 1, s.size()));
+    }
+  for (const auto& d : dirs)
+    if (std::error_code ec; fs::is_regular_file(d / "msmpi.dll", ec)) return {};
+  std::string setup;
+  for (fs::path at = project; !at.empty() && at != at.parent_path(); at = at.parent_path())
+    if (std::error_code ec; fs::is_regular_file(at / "thirdParty" / "msmpisetup.exe", ec)) {
+      setup = path_to_utf8(at / "thirdParty" / "msmpisetup.exe");
+      break;
+    }
+  return "OpenFOAM is installed (" + path_to_utf8(bin) + ") but cannot start: it needs Microsoft MPI (msmpi.dll), which is not installed. " +
+         (setup.empty() ? std::string("Install MS-MPI 10 from Microsoft") : "Run " + setup + " (MS-MPI 10, as administrator)") +
+         ", then try again";
+}
+#endif
+
+OpenFoam checked(OpenFoam f) {
+#ifdef _WIN32
+  if (!f.bin.empty() && f.wrapper.empty()) f.problem = mpi_problem(f.bin, f.project);
+#endif
+  return f;
+}
+}  // namespace
+
 OpenFoam openfoam() {
   OpenFoam f;
-  auto has_bin = [](const fs::path& dir) {
-    std::error_code ec;
-    return fs::is_regular_file(dir / "simpleFoam", ec) || fs::is_regular_file(dir / "simpleFoam.exe", ec);
-  };
+  auto has_bin = [](const fs::path& dir) { return has_solver(dir); };
   if (const char* env = std::getenv("OPAD_OPENFOAM"); env && *env) {
-    const fs::path p = path_from_utf8(env);
+    fs::path p = path_from_utf8(env);
     std::error_code ec;
+#ifndef _WIN32
+    // etc/openfoam is a shell script: it sets the environment where a shell runs it, never from a Windows program.
     if (fs::is_regular_file(p / "etc" / "openfoam", ec) && fs::is_regular_file(p / "bin" / "foamEtcFile", ec)) f.wrapper = p / "etc" / "openfoam";
-    if (has_bin(p / "bin")) f.bin = p / "bin";
+#endif
+    if (const fs::path inner = installer_project(p); !inner.empty() && project_bin(p).empty()) p = inner;
+    f.bin = project_bin(p);
     f.project = p;
-    return f;
+    return checked(f);
+  }
+  // OPAD's own pack (sim/engine_packs.hpp), installed from the app: its programs and DLLs in bin/, etc/ beside it, no MPI.
+  if (const fs::path pack = installed_pack("openfoam"); !pack.empty() && has_bin(pack / "bin")) {
+    f.project = pack, f.bin = pack / "bin";
+    return checked(f);
   }
   // On the PATH, with the project directory from the environment or where packages put it.
   if (const char* path = std::getenv("PATH")) {
@@ -423,6 +205,24 @@ OpenFoam openfoam() {
       a = b + 1;
     }
   }
+#ifdef _WIN32
+  if (f.bin.empty()) {
+    // OpenCFD's installer: per user (its default) or for everyone, the newest version first.
+    std::vector<fs::path> roots;
+    for (const char* var : {"APPDATA", "ProgramFiles", "ProgramW6432"})
+      if (const char* base = std::getenv(var); base && *base) {
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(fs::path(path_from_utf8(base)) / "ESI-OpenCFD" / "OpenFOAM", ec)) roots.push_back(e.path());
+      }
+    std::sort(roots.begin(), roots.end(), [](const fs::path& a, const fs::path& b) { return a.filename() > b.filename(); });
+    for (const auto& root : roots)
+      if (const fs::path project = installer_project(root); !project.empty()) {
+        f.project = project, f.bin = project_bin(project);
+        return checked(f);
+      }
+    return f;
+  }
+#endif
   if (f.bin.empty()) {
     // An OpenCFD package's own wrapper (openfoam2306, ...), which sets everything up.
     std::error_code ec;
@@ -436,10 +236,13 @@ OpenFoam openfoam() {
     return f;
   }
   if (const char* wm = std::getenv("WM_PROJECT_DIR"); wm && *wm) f.project = path_from_utf8(wm);
+  else if (std::error_code ec; f.bin.parent_path().parent_path().filename() == "platforms" &&
+                               fs::is_regular_file(f.bin.parent_path().parent_path().parent_path() / "etc" / "controlDict", ec))
+    f.project = f.bin.parent_path().parent_path().parent_path();  // platforms/<build>/bin on the PATH
   else
     for (const char* guess : {"/usr/share/openfoam", "/usr/lib/openfoam"})
       if (std::error_code ec; fs::is_regular_file(fs::path(guess) / "etc" / "controlDict", ec)) f.project = guess;
-  return f;
+  return checked(f);
 }
 
 BodyBoxes body_boxes(const Document& doc, const Scene& scene) {
@@ -1347,6 +1150,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
     if (progress && !progress(f, phase)) throw Error("cancelled");
   };
   const OpenFoam foam = openfoam();
+  if (!foam.problem.empty()) throw Error(foam.problem);
   if (!foam.found())
     throw Error("the CFD air needs OpenFOAM: install it (Ubuntu: apt install openfoam; or OpenCFD's packages) or set OPAD_OPENFOAM to its directory");
   // The parts' heat is solved in CalculiX on a Netgen mesh: said now, not after the air has taken its minutes.
@@ -1921,81 +1725,7 @@ StudyRun run_cfd(const Document& doc, const Scene& scene, const json& st, const 
   // `at`: where the run is when the program starts; `to`: where it is once it is done (its share of the bar, followed through
   // its log: the mesher's phases, a solver's iterations); a program of seconds keeps `at`.
   auto foam_run = [&](const std::string& app, const std::vector<std::string>& args, const fs::path& where, double at, double to = -1) {
-    report(at, "OpenFOAM: " + app);
-    if (!foam.project.empty()) {
-#ifdef _WIN32
-      _putenv_s("WM_PROJECT_DIR", path_to_utf8(foam.project).c_str());
-#else
-      const std::string project = path_to_utf8(foam.project);  // only when it changes: sweep points run at once
-      if (const char* now = std::getenv("WM_PROJECT_DIR"); !now || project != now) setenv("WM_PROJECT_DIR", project.c_str(), 1);
-#endif
-    }
-    detail::RunOptions ro;
-    ro.output = where / ("log." + app);
-    ro.timeout_ms = timeout;
-    // The program's log read as it grows (once a second): a run of minutes is seen to move. The mesher says its phase and the
-    // iteration in it; a solver its time, against the end time of its controlDict.
-    double end_time = 0;
-    try {
-      const std::string control = read_text_file(where / "system" / "controlDict");
-      if (const size_t e = control.find("endTime "); e != std::string::npos) end_time = std::atof(control.c_str() + e + 8);
-    } catch (...) {
-    }
-    double shown = at;
-    std::string phase = "OpenFOAM: " + app;
-    auto read_at = std::chrono::steady_clock::now();
-    double first_time = -1;
-    ro.cancelled = [&] {
-      const auto now = std::chrono::steady_clock::now();
-      if (to > at && now - read_at > std::chrono::seconds(1)) {
-        read_at = now;
-        std::string tail;
-        if (std::ifstream in(ro.output, std::ios::binary | std::ios::ate); in) {
-          const std::streamoff size = in.tellg(), take = std::min<std::streamoff>(size, 65536);
-          in.seekg(size - take);
-          tail.resize(size_t(take));
-          in.read(tail.data(), take);
-        }
-        auto last = [&](const char* word) {
-          const size_t i = tail.rfind(word);
-          return i == std::string::npos ? -1.0 : std::atof(tail.c_str() + i + std::strlen(word));
-        };
-        if (app == "snappyHexMesh") {
-          // three phases: castellating (refinement), snapping to the parts (morph iterations), adding layers
-          const size_t refine = tail.rfind("Refinement phase"), snap = tail.rfind("Morphing phase"), layer = tail.rfind("layer addition phase");
-          const double morph = last("Morph iteration "), layers = last("Layer addition iteration ");
-          double sub = 0.05;
-          if (layer != std::string::npos || layers >= 0) sub = 0.7 + 0.25 * std::min(1.0, (layers + 1) / 10.0), phase = "Meshing the air: adding layers along the parts";
-          else if (snap != std::string::npos || morph >= 0) sub = 0.3 + 0.4 * std::min(1.0, (morph + 1) / 10.0), phase = "Meshing the air: fitting it to the parts";
-          else if (refine != std::string::npos) sub = 0.15, phase = "Meshing the air: refining around the parts";
-          shown = std::max(shown, at + (to - at) * sub);
-        } else if (const double t = last("\nTime = "); t > 0 && end_time > 0) {
-          if (first_time < 0) first_time = t - 1;
-          const double sub = std::clamp((t - first_time) / std::max(1.0, end_time - first_time), 0.0, 1.0);
-          shown = std::max(shown, at + (to - at) * sub);
-          phase = "OpenFOAM: " + app + ", iteration " + std::to_string(int(t)) + " of " + std::to_string(int(end_time));
-        }
-      }
-      return progress && !progress(shown, phase);
-    };
-    std::vector<fs::path> a;
-    fs::path program;
-    if (!foam.wrapper.empty()) program = foam.wrapper, a.push_back(app);
-    else program = foam.bin / app;
-    for (const auto& s : args) a.push_back(s);
-    a.push_back("-case");
-    a.push_back(where);
-    const int status = detail::run_program(program, a, where, ro);
-    std::string log;
-    try {
-      log = read_text_file(ro.output);
-    } catch (...) {
-    }
-    if (status != 0 || log.find("FOAM FATAL") != std::string::npos) {
-      const size_t at_err = log.find("FOAM FATAL");
-      throw Error("OpenFOAM's " + app + " failed: " + (at_err == std::string::npos ? "status " + std::to_string(status) : log.substr(at_err, 500)));
-    }
-    return log;
+    return foam::run(foam, app, args, where, at, to, timeout, progress);
   };
 
   // Each part: an STL in metres (snappyHexMesh), its triangles kept for showing the results.

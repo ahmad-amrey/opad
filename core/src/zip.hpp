@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "opad/util.hpp"
 
@@ -37,6 +39,7 @@ class Zip {
       e.usize = u32(at + 24);
       const size_t nameLen = u16(at + 28), extraLen = u16(at + 30), commentLen = u16(at + 32);
       e.local = u32(at + 42);
+      if (u16(at + 4) >> 8 == 3) e.mode = u32(at + 38) >> 16;  // made on Unix: the file's mode bits
       if (at + 46 + nameLen + extraLen > n) throw Error("damaged 3MF zip directory");
       std::string name = m_data.substr(at + 46, nameLen);
       for (size_t x = at + 46 + nameLen, xe = x + extraLen; x + 4 <= xe;) {  // zip64 sizes and offset
@@ -49,6 +52,7 @@ class Zip {
         }
         x += 4 + len;
       }
+      m_order.emplace_back(name, e);  // as written (case kept): what an unpacking reads
       if (!name.empty() && name.front() == '/') name.erase(0, 1);
       std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
       m_entries[name] = e;
@@ -59,7 +63,19 @@ class Zip {
   std::string read(std::string name) const {
     auto it = m_entries.find(normal(name));
     if (it == m_entries.end()) throw Error("3MF part missing: " + name);
-    const Entry& e = it->second;
+    return inflated(it->second, name);
+  }
+  // Every member in the directory's order, its name as written (case kept; a folder's ends in '/'): for unpacking a whole
+  // archive (sim/engine_packs.cpp). `mode`: the Unix mode bits when the archive was made on Unix, else 0.
+  size_t count() const { return m_order.size(); }
+  const std::string& name(size_t i) const { return m_order.at(i).first; }
+  uint32_t mode(size_t i) const { return m_order.at(i).second.mode; }
+  uint64_t size(size_t i) const { return m_order.at(i).second.usize; }
+  std::string read(size_t i) const { return inflated(m_order.at(i).second, m_order.at(i).first); }
+
+ private:
+  struct Entry { uint64_t csize = 0, usize = 0, local = 0; int method = 0; uint32_t mode = 0; };
+  std::string inflated(const Entry& e, const std::string& name) const {
     const size_t at = static_cast<size_t>(e.local);
     if (at + 30 > m_data.size() || u32(at) != 0x04034b50) throw Error("damaged 3MF part: " + name);
     const size_t start = at + 30 + u16(at + 26) + u16(at + 28);
@@ -80,8 +96,6 @@ class Zip {
     return out;
   }
 
- private:
-  struct Entry { uint64_t csize = 0, usize = 0, local = 0; int method = 0; };
   static std::string normal(std::string name) {
     if (!name.empty() && name.front() == '/') name.erase(0, 1);
     std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -92,6 +106,7 @@ class Zip {
   uint64_t u64(size_t at) const { return u32(at) | uint64_t(u32(at + 4)) << 32; }
   std::string m_data;
   std::map<std::string, Entry> m_entries;
+  std::vector<std::pair<std::string, Entry>> m_order;
 };
 
 }  // namespace opad::detail

@@ -123,11 +123,52 @@ struct Install {
   QString difftool() const;  // empty without the app
 };
 QString attributesText(const QString& existing, bool lfs);  // .gitattributes with OPAD's lines (idempotent)
-QString ignoreText(const QString& existing);                // .gitignore with OPAD's entries (idempotent)
-extern const char* const kIgnored[];                        // those entries, null-terminated
+
+// .gitignore: OPAD writes two marked blocks into it and never touches a line outside them (the user's own).
+//   # >>> OPAD: files OPAD writes ...        the rules: one comment line per group (its label), then its patterns, leaving
+//   # Exported models (...)                  out those the user's own lines have already; kept where it was first written,
+//   *.step                                   so the user's lines after it (a "!keep.pdf") still win over it
+//   # <<< OPAD
+//   # >>> OPAD: linked files ...             always last (in .gitignore the last match wins): per document ("# linked by
+//   # linked by model.opad                   <its path>"), "!/<path>" for each file it links that the lines above ignore,
+//   !/parts/bracket.step                     so an asset stays tracked whatever its type (keepTracked)
+//   # <<< OPAD
+// Older set ups wrote kIgnored under a plain "# OPAD: ..." note: that becomes the rules block.
+struct IgnoreGroup {
+  QString id;          // "models", "drawings", "images", "opad", "system", "simulation" (the agents' git_init names them)
+  const char* label;   // English: the header line in the file; translated (context "Git") in the dialog
+  QStringList patterns;
+  bool byDefault;
+};
+const std::vector<IgnoreGroup>& ignoreGroups();
+QStringList defaultIgnoreGroups();
+// The groups the file's rules block has (by their header lines; the old note: "opad"); `found` false without a block.
+QStringList ignoreGroupsIn(const QString& existing, bool* found = nullptr);
+// The file with its rules block for `groups` (replaced in place, else after the user's lines; no block when nothing is
+// left to add); the user's lines and the linked block as they were. Unchanged text (CRLF kept) when nothing changes.
+QString ignoreText(const QString& existing, const QStringList& groups = defaultIgnoreGroups());
+struct IgnoreChange {
+  QStringList added, removed;  // lines (comments left out) ignoreText adds / takes away
+};
+IgnoreChange ignoreChange(const QString& existing, const QStringList& groups);
+extern const char* const kIgnored[];  // the "opad" group's patterns, null-terminated
+// Whether git would ignore the file `rel` (relative to the top, '/' separated) by the rules of `text` (a .gitignore at
+// the top): patterns in order, the last match wins, a file under an ignored folder stays ignored ('*', '?', '[...]',
+// '**', a leading or inner '/', a trailing '/', '!', '\' escapes; case-insensitive where the file system is).
+bool ignoredBy(const QString& text, const QString& rel);
+// The file with document `docRel`'s section of the linked block made `linkedRels` (relative to the top): those the rest of
+// the file ignores get "!/<path>", the others nothing; an empty section goes, an empty block too.
+QString keepTracked(const QString& existing, const QString& docRel, const QStringList& linkedRels);
+QStringList trackedDocuments(const QString& existing);
+bool opadRuleAt(const QString& text, int line);  // whether line `line` (1-based) of the file is in OPAD's rules block  // the documents with a section in the linked block
+// <top>/.gitignore with keepTracked(docRel, the linked files inside top), and the sections of documents no longer there
+// gone; written only when it changes (never made when there is none and nothing needs it). Whether it was written; throws
+// when it cannot be. Reads and writes the file: workers only.
+bool updateTracked(const QString& top, const QString& docRel, const QStringList& linkedFiles);
 
 struct SetupOptions {
   bool init = true, attributes = true, ignore = true, lfs = true, driver = true;
+  QStringList ignoreGroups = defaultIgnoreGroups();  // with ignore: the groups of OPAD's .gitignore block
   QString branch = QStringLiteral("main");  // a new repository's initial branch (the setting git/initialBranch)
 };
 // Init (-b main) when the folder is not in a repository, .gitattributes, .gitignore, git lfs install --local, the

@@ -4,6 +4,7 @@
 #include <QDate>
 #include <QDir>
 #include <QFileDialog>
+#include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -22,6 +23,7 @@
 #include <filesystem>
 
 #include "AppDocument.hpp"
+#include "Git.hpp"
 #include "DocsArea.hpp"
 #include "I18n.hpp"
 #include "Jobs.hpp"
@@ -363,15 +365,29 @@ void DocsArea::commitAndTag(const QString& rev, const QString& tag, const QStrin
         const QFileInfo info(path);
         const QDir dir = info.absoluteDir();
         const QString message = QString("%1 rev %2").arg(drawing, rev), beside = pdf.isEmpty() ? QString() : dir.relativeFilePath(pdf);
-        const auto commit = [self, dir, info, message, tag, finish](const QString& with) {
+        const auto commit = [self, dir, info, message, tag, finish](const QString& with, bool force) {
           QStringList files{info.fileName()};
           if (!with.isEmpty()) files << with;
-          git::run(dir.absolutePath(), {QStringList{"add", "--"} + files, QStringList{"commit", "-m", message, "--"} + files, {"tag", "-a", tag, "-m", message}}, self,
-                   [finish](bool ok, const QString& text) { finish(ok ? QString() : text); });
+          git::run(dir.absolutePath(), {QStringList{"add"} + (force ? QStringList{"-f"} : QStringList()) + QStringList{"--"} + files, QStringList{"commit", "-m", message, "--"} + files,
+                                        {"tag", "-a", tag, "-m", message}},
+                   self, [finish](bool ok, const QString& text) { finish(ok ? QString() : text); });
         };
-        if (beside.isEmpty() || beside.startsWith("..")) return commit({});
-        // A PDF the repository ignores (*.pdf in .gitignore) is left out: adding it would stop the commit and the tag.
-        git::run(dir.absolutePath(), {{"check-ignore", "-q", "--", beside}}, self, [commit, beside](bool ignored, const QString&) { commit(ignored ? QString() : beside); });
+        if (beside.isEmpty() || beside.startsWith("..")) return commit({}, false);
+        // A PDF the user's own .gitignore lines ignore is left out: adding it would stop the commit and the tag. One only OPAD's
+        // block ignores (its default *.pdf keeps exports out) is the issued revision itself: added with -f, tracked from then on.
+        const QString at = dir.absolutePath();
+        git::run(at, {{"check-ignore", "-q", "--", beside}}, self, [self, at, commit, beside](bool ignored, const QString&) {
+          if (!ignored) return commit(beside, false);
+          git::run(at, {{"rev-parse", "--show-toplevel"}}, self, [self, at, commit, beside](bool found, const QString& top) {
+            if (!found) return commit({}, false);
+            git::run(at, {{"check-ignore", "-v", "--", beside}}, self, [commit, beside, top](bool matched, const QString& rule) {
+              QFile file(QDir(top).filePath(".gitignore"));  // "<source>:<line>:<pattern>	<path>", the source relative to the top
+              const bool ours = matched && rule.section(':', 0, 0) == ".gitignore" && file.open(QIODevice::ReadOnly) &&
+                                ::git::opadRuleAt(QString::fromUtf8(file.readAll()), rule.section(':', 1, 1).toInt());
+              commit(ours ? beside : QString(), ours);
+            });
+          });
+        });
       });
     });
   });

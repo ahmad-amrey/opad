@@ -44,6 +44,7 @@
 #include "opad/sim/joints.hpp"
 #include "opad/sim/airflow.hpp"
 #include "opad/sim/cfd.hpp"
+#include "opad/sim/engine_packs.hpp"
 #include "opad/sim/printing.hpp"
 
 namespace opad::sim {
@@ -420,6 +421,15 @@ class PrintSurface {
 
 std::filesystem::path ccx_program() {
   if (const char* e = std::getenv("OPAD_CCX"); e && *e) return path_from_utf8(e);
+  // OPAD's own pack (sim/engine_packs.hpp), installed from the app.
+  if (const auto pack = installed_pack("calculix"); !pack.empty()) {
+#ifdef _WIN32
+    const auto exe = pack / "bin" / "ccx.exe";
+#else
+    const auto exe = pack / "bin" / "ccx";
+#endif
+    if (std::error_code ec; std::filesystem::is_regular_file(exe, ec)) return exe;
+  }
   std::error_code err;
   for (const char* name : {"ccx", "ccx_2.22", "ccx_2.21", "ccx_2.20", "ccx_2.19"}) {
 #ifdef _WIN32
@@ -519,6 +529,7 @@ json engines() {
   json out = {{"motion", true}, {"dynamic", chrono}, {"static", fea}, {"modal", fea}, {"thermal", fea}, {"netgen", netgen_available()}};
   const OpenFoam foam = openfoam();
   out["cfd"] = foam.found();  // thermal studies with the air solved (settings.air = "cfd")
+  out["flow"] = foam.found();  // flow studies (sim/flow.hpp)
   if (foam.found()) out["openfoam"] = path_to_utf8(foam.wrapper.empty() ? foam.bin : foam.wrapper);
   out["ccx"] = ccx.empty() ? json(nullptr) : json(path_to_utf8(ccx));
   if (!fea)
@@ -531,7 +542,37 @@ json engines() {
                      "joint_set and mechanism still work, and a build with Chrono runs the study as defined";
   if (!fea)
     for (const char* k : {"static", "modal", "thermal"}) why[k] = out["note"];
+  if (!foam.problem.empty()) {
+    out["openfoam_problem"] = foam.problem;
+    why["flow"] = foam.problem;
+  } else if (!foam.found())
+    why["flow"] = "flow studies need OpenFOAM, which is not on this machine: install it (Windows: OpenCFD's MinGW build from openfoam.com or "
+                  "blueCFD-Core; Ubuntu: apt install openfoam; macOS: a Docker or OpenCFD build) and put its bin folder on the PATH, or set "
+                  "OPAD_OPENFOAM to its directory";
+  // Where OPAD has its own pack of the missing solver, it says so first: one button, no administrator rights.
+  auto offer = [&](const char* id, std::initializer_list<const char*> kinds) {
+    try {
+      if (const auto p = engine_pack(id); p && installed_pack(*p).empty())
+        for (const char* k : kinds)
+          if (why.contains(k))
+            why[k] = "OPAD can install " + p->name + " itself (Simulate: a check's Install button, about " + std::to_string((p->size + 524288) / 1048576) +
+                     " MB, no administrator rights). Otherwise: " + why[k].get<std::string>();
+    } catch (const std::exception&) {
+    }
+  };
+  if (ccx.empty()) offer("calculix", {"static", "modal", "thermal"});
+  if (!foam.found()) offer("openfoam", {"flow"});
   if (!why.empty()) out["unavailable"] = why;
+  // The solver packs OPAD can install here (sim/engine_packs.hpp): Simulate's Install button, or the agent telling the user.
+  json packs = json::object();
+  try {
+    for (const auto& p : engine_packs()) {
+      const auto dir = installed_pack(p);
+      packs[p.id] = {{"name", p.name}, {"version", p.version}, {"size", p.size}, {"installed", dir.empty() ? json(nullptr) : json(path_to_utf8(dir))}};
+    }
+  } catch (const std::exception&) {  // an unreadable OPAD_ENGINE_PACKS: no packs, the rest stands
+  }
+  if (!packs.empty()) out["packs"] = packs;
   return out;
 }
 

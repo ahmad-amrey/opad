@@ -562,6 +562,66 @@ TEST(init_tag_diff) {
   std::printf("init as Set up repository (refused inside a work tree, first commit on a protected branch refused), tags never moved, diffs PASS\n");
 }
 
+// git_init's .gitignore (ignore: groups or false) and a document's linked files kept tracked whatever their type: an
+// exported STEP stays out, the same kind of file linked into the document goes in with the commit and its .gitignore line.
+TEST(init_ignore_and_linked_files) {
+  defaults();
+  setPref("git/initialBranch", "work");  // not protected: the first commits are the agent's
+  auto read = [](const QString& path) {
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+  };
+  const QString some = root() + "/ignore/some";
+  QDir().mkpath(some);
+  const json made = mcp().call("git_init", {{"repo", s(some)}, {"ignore", {"opad", "system"}}});
+  CHECK(made["ignore"] == true && made["ignore_groups"] == json({"opad", "system"}));
+  CHECK(read(some + "/.gitignore").contains("*.opad.tmp\n") && !read(some + "/.gitignore").contains("*.step"));
+  const QString none = root() + "/ignore/none";
+  QDir().mkpath(none);
+  CHECK(mcp().call("git_init", {{"repo", s(none)}, {"ignore", false}})["ignore"] == false && !QFileInfo::exists(none + "/.gitignore"));
+  const QString bad = root() + "/ignore/bad";
+  QDir().mkpath(bad);
+  const json refused = mcp().refused("git_init", {{"repo", s(bad)}, {"ignore", {"models", "nope"}}}, "invalid_arguments");
+  CHECK(refused["message"].get<std::string>().find("simulation") != std::string::npos && !QFileInfo::exists(bad + "/.git"));
+
+  // The default groups; a box exported to STEP twice: one copy linked into a second document, the other left an export.
+  const QString dir = root() + "/ignore/linked", doc = dir + "/model.opad", user = dir + "/user.opad";
+  QDir().mkpath(dir);
+  mcp().call("new", {{"doc", s(doc)}});
+  box(doc, 0);
+  mcp().call("export", {{"doc", s(doc)}, {"format", "step"}, {"out", s(dir + "/part.step")}});
+  mcp().call("export", {{"doc", s(doc)}, {"format", "step"}, {"out", s(dir + "/export.step")}});
+  mcp().call("new", {{"doc", s(user)}});
+  mcp().call("import", {{"doc", s(user)}, {"file", s(dir + "/part.step")}, {"link", true}});
+  const json first = mcp().call("git_init", {{"repo", s(dir)}, {"paths", {"model.opad", "user.opad", "part.step"}}});
+  CHECK(first["ignore_groups"] == json({"models", "drawings", "images", "opad", "system"}));
+  const QString ignore = read(dir + "/.gitignore");
+  CHECK(ignore.contains("# linked by user.opad\n!/part.step\n"));
+  const QString tracked = QString::fromUtf8(gitIn(dir, {"ls-files"}));
+  CHECK(tracked.contains("part.step") && tracked.contains(".gitignore") && !tracked.contains("export.step"));
+  const json status = mcp().call("git_status", {{"repo", s(dir)}});
+  CHECK(status.dump().find("export.step") == std::string::npos);  // the export: not even untracked
+  // The export linked later (a third document): git_commit keeps it tracked and commits the .gitignore line with it.
+  const QString later = dir + "/later.opad";
+  mcp().call("new", {{"doc", s(later)}});
+  mcp().call("import", {{"doc", s(later)}, {"file", s(dir + "/export.step")}, {"link", true}});
+  const json committed = mcp().call("git_commit", {{"repo", s(dir)}, {"message", "Link the export"}, {"paths", {"later.opad", "export.step"}}});
+  std::set<std::string> files;
+  for (const auto& f : committed["files"]) files.insert(f["path"].get<std::string>());
+  CHECK(files == std::set<std::string>({".gitignore", "export.step", "later.opad"}));
+  CHECK(read(dir + "/.gitignore").contains("# linked by later.opad\n!/export.step\n"));
+  // A document removed: its section goes at the next commit that touches the block.
+  QFile::remove(later);
+  gitIn(dir, {"rm", "-q", "--cached", "later.opad"});
+  mcp().call("git_commit", {{"repo", s(dir)}, {"message", "Drop later"}, {"all", true}});
+  mcp().call("import", {{"doc", s(user)}, {"file", s(dir + "/export.step")}, {"link", true}});
+  mcp().call("git_commit", {{"repo", s(dir)}, {"message", "user links the export too"}, {"all", true}});
+  const QString after = read(dir + "/.gitignore");
+  CHECK(!after.contains("later.opad") && after.contains("# linked by user.opad\n!/export.step\n!/part.step\n"));
+  setPref("git/initialBranch", "main");
+  std::printf("git_init's .gitignore groups, linked files kept tracked by git_commit, exports left out PASS\n");
+}
+
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
   QTemporaryDir dir;

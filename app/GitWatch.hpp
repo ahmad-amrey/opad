@@ -65,6 +65,12 @@ class GitWatch : public QObject {
     m_unsaved = std::move(unsaved);
     m_linked = std::move(linked);
   }
+  // The files the open document links (absolute): those inside the repository that its .gitignore ignores get "!/<path>"
+  // in OPAD's linked block (git::updateTracked), so a linked STEP or drawing stays tracked; the document's section follows
+  // what it links now (renamed, moved, packed, removed), and sections of documents gone go. A quiet job, only when the
+  // files or the .gitignore changed since the last one (VcsArea: after every refresh and every look at the linked files).
+  void keepTracked(const QStringList& files);
+  int trackedRuns() const { return m_trackRuns; }  // benches
   void setUpDriver();  // this clone's merge and diff driver (and LFS hooks when the attributes use LFS)
   void cloneRepository();  // the Clone repository dialog: an address and a folder, then clone, set up, openRequested
   void locateGit();    // a file dialog, then useProgram
@@ -120,4 +126,8 @@ class GitWatch : public QObject {
   Mover m_mover;
   std::function<bool()> m_unsaved;
   std::function<int()> m_linked;
+  QString m_trackedKey, m_trackedStamp;  // keepTracked's last input and the .gitignore it left
+  QStringList m_trackNext;               // asked while one ran
+  bool m_trackJob = false, m_trackAgain = false;
+  int m_trackRuns = 0;
 };
