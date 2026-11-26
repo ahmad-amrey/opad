@@ -4,3 +4,6 @@
 *.opad text eol=lf merge=opad
 *.step text
 *.stp  text
+# The solver pack recipes run in bash and patch upstream sources: LF on every checkout (a Windows runner's autocrlf
+# would make the scripts fail and the patches miss).
+engines/** text eol=lf

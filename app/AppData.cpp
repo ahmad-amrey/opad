@@ -21,6 +21,8 @@ void use(const QString& programDir) {
   QSettings::setDefaultFormat(QSettings::IniFormat);
   QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir);
   if (qEnvironmentVariableIsEmpty("OPAD_CACHE_DIR")) qputenv("OPAD_CACHE_DIR", QDir::toNativeSeparators(dir + "/cache").toLocal8Bit());
+  // Solver packs installed from Simulate (opad/sim/engine_packs.hpp, which reads it as UTF-8) travel with the folder too.
+  if (qEnvironmentVariableIsEmpty("OPAD_ENGINES_DIR")) qputenv("OPAD_ENGINES_DIR", QDir::toNativeSeparators(dir + "/engines").toUtf8());
 }
 
 namespace {

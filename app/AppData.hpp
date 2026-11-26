@@ -9,8 +9,8 @@
 // updating or uninstalling the program never touches them.
 //
 // Portable when a file named `opad.portable` sits beside the program (Windows: the exe's folder): everything in
-// <program dir>/data (INI settings, cache in data/cache), so the folder can move between machines. OPAD_BENCH_SETTINGS
-// (tests, benches) wins over both.
+// <program dir>/data (INI settings, cache in data/cache, solver packs in data/engines), so the folder can move between
+// machines. OPAD_BENCH_SETTINGS (tests, benches) wins over both.
 #include <QString>
 
 class QSettings;

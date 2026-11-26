@@ -47,6 +47,7 @@
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/sim/airflow.hpp"
+#include "opad/sim/engine_packs.hpp"
 #include "opad/sim/fea.hpp"
 #include "foam_case.hpp"
 
@@ -179,6 +180,11 @@ OpenFoam openfoam() {
     if (const fs::path inner = installer_project(p); !inner.empty() && project_bin(p).empty()) p = inner;
     f.bin = project_bin(p);
     f.project = p;
+    return checked(f);
+  }
+  // OPAD's own pack (sim/engine_packs.hpp), installed from the app: its programs and DLLs in bin/, etc/ beside it, no MPI.
+  if (const fs::path pack = installed_pack("openfoam"); !pack.empty() && has_bin(pack / "bin")) {
+    f.project = pack, f.bin = pack / "bin";
     return checked(f);
   }
   // On the PATH, with the project directory from the environment or where packages put it.

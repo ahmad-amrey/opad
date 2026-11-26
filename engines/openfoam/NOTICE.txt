@@ -1,0 +1,30 @@
+OpenFOAM @OF_VERSION@ for OPAD (pack revision @PACK_REV@, Windows x64)
+====================================================================
+
+This folder holds programs from OpenFOAM, which OPAD runs as separate programs for its airflow and air-cooling
+studies: blockMesh, snappyHexMesh, simpleFoam, splitMeshRegions, topoSet, createBaffles, createPatch,
+scalarTransportFoam, buoyantBoussinesqSimpleFoam and chtMultiRegionSimpleFoam, with the libraries they use.
+
+This offering is not approved or endorsed by OpenCFD Limited, producer and distributor of the OpenFOAM software via
+www.openfoam.com, and owner of the OPENFOAM(R) and OpenCFD(R) trade marks.
+
+License
+-------
+OpenFOAM is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+Its text is licenses/OpenFOAM-COPYING.txt. These programs come with no warranty.
+
+OPAD itself (MIT licensed) does not link to OpenFOAM: it writes a case's files and starts these programs.
+
+Other parts in this folder:
+- zlib @ZLIB_VERSION@ (zlib license, licenses/zlib-LICENSE.txt), linked into libOpenFOAM.
+- The GCC runtime (libstdc++, libgcc: GPL 3 with the GCC Runtime Library Exception) and mingw-w64's winpthreads
+  (MIT-style), licenses/gcc-runtime-copyright.txt and licenses/mingw-w64-copyright.txt.
+
+Source
+------
+Built without MPI (Pstream's dummy library) by OPAD's recipe, engines/openfoam/make-pack.sh in OPAD's repository,
+from the unmodified OpenCFD source tarball OpenFOAM-@OF_VERSION@.tgz (https://dl.openfoam.com/source/@OF_VERSION@/),
+with the patches in the recipe's patches/ folder (none when the folder is empty) and zlib-@ZLIB_VERSION@.tar.gz.
+The exact source archives and the recipe (opad-openfoam-recipe.tar.gz) are published next to this pack on the
+same release: https://github.com/ahmad-amrey/opad/releases (tags engines-openfoam-*).

@@ -28,6 +28,7 @@
 #include "AppDocument.hpp"
 #include "BrowserPanel.hpp"
 #include "Commands.hpp"
+#include "EngineInstall.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
@@ -341,7 +342,12 @@ Simulate::Simulate(AreaServices& services) : AreaController(services) {
   connect(&m_tick, &QTimer::timeout, this, &Simulate::tick);
 }
 
-Simulate::~Simulate() = default;
+Simulate::~Simulate() {
+  // Its panels belong to the window, which outlives this area: closed now, while what their hooks call (this, the document,
+  // the view) is still there. Left to the window, the check's hide wrote and lit through a deleted Simulate (a crash on quit
+  // with a check open).
+  for (QPointer<ToolPanel> p : {QPointer<ToolPanel>(m_checkPanel), QPointer<ToolPanel>(m_coolingPanel), QPointer<ToolPanel>(m_panel)}) delete p.data();
+}
 
 void Simulate::buildActions() {
   const QPointer<Simulate> self(this);
@@ -605,6 +611,19 @@ void Simulate::ready() {
 
   // The checks: the start page (in the view's place on the Start tab) and the guided panel each check opens.
   SolverWindow::applySaved();  // solvers found by hand before: set for this run before they are looked for
+  // A solver pack installed (or failing to): the solvers are looked for again, the checks' Run follows.
+  auto* installer = engineinstall::Installer::instance();
+  connect(installer, &engineinstall::Installer::started, this, [this](const QString&) {
+    if (m_check) m_check->enginesChanged();
+  });
+  connect(installer, &engineinstall::Installer::finished, this, [this](const QString& solver, bool ok, const QString& error) {
+    const simchecks::Solver* s = simchecks::solver(solver);
+    const QString name = s ? s->name : solver;
+    if (ok) services().toast(tr("%1 is installed: its checks can run now.").arg(name));
+    else if (error != "cancelled") services().toast(tr("%1 was not installed: %2").arg(name, error), {}, {}, 10000);
+    refreshEngines();
+    if (m_check) m_check->enginesChanged();
+  });
   m_start = new SimulateStart;
   connect(m_start, &SimulateStart::checkChosen, this, [this](const QString& id) { services().guarded([&] { openCheck(id); }); });
   connect(m_start, &SimulateStart::madeChosen, this, [this](const std::string& study, const QString& id) { services().guarded([&] { openCheck(id, study); }); });
@@ -632,6 +651,8 @@ void Simulate::ready() {
     if (QAction* a = services().action(id); a && a->isEnabled()) a->trigger();
   };
   hooks.solverNeeded = [this](const QString& solver) { askSolver(solver); };
+  hooks.installSolver = [this](const QString& solver) { installSolver(solver); };
+  hooks.installing = [](const QString& solver) { return engineinstall::Installer::instance()->running(solver); };
   hooks.engines = [this] { return m_engines; };
   hooks.filter = [this](const QString& id) {
     const Viewport::SelFilter f = services().viewport()->selectionFilter();
@@ -667,7 +688,10 @@ void Simulate::ready() {
 
 // ---------------------------------------------------------------- the checks
 void Simulate::refreshEngines() {
-  if (m_enginesJob) return;
+  if (m_enginesJob) {  // asked again meanwhile (a pack just installed): read once more when this one is done
+    m_enginesAgain = true;
+    return;
+  }
   // Which solvers are on this computer: a look along the PATH and in the usual places, on a worker.
   auto found = std::make_shared<json>();
   m_enginesJob = services().jobs()->quiet(tr("Looking for the solvers"), [found](Progress) { *found = opad::sim::engines(); },
@@ -678,13 +702,18 @@ void Simulate::refreshEngines() {
                                             if (m_start) m_start->setEngines(m_engines);
                                             if (m_check) m_check->enginesChanged();
                                             services().updateCommands();
+                                            if (std::exchange(m_enginesAgain, false)) refreshEngines();
                                           });
 }
 
 void Simulate::askSolver(const QString& solver) {
-  SolverWindow window(solver, [this] { refreshEngines(); }, services().window());
+  std::function<void()> install;
+  if (engineinstall::pack(solver)) install = [this, solver] { installSolver(solver); };
+  SolverWindow window(solver, [this] { refreshEngines(); }, services().window(), install);
   window.exec();
 }
+
+void Simulate::installSolver(const QString& solver) { engineinstall::Installer::instance()->install(solver, services().jobs()); }
 
 void Simulate::leaveStart() {
   if (!m_start || services().centralPage() != m_start) return;

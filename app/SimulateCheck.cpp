@@ -39,6 +39,7 @@
 #include "GuidedSteps.hpp"
 #include "I18n.hpp"
 #include "Jobs.hpp"
+#include "EngineInstall.hpp"
 #include "SimChecks.hpp"
 #include "SimulatePrint.hpp"
 #include "Theme.hpp"
@@ -1293,7 +1294,10 @@ void GuidedCheck::build() {
     connect(m_runButton, &QPushButton::clicked, this, &GuidedCheck::runNow);
     connect(m_solverButton, &QPushButton::clicked, this, [this] {
       const simchecks::Readiness r = simchecks::readiness(*m_check, m_hooks.engines ? m_hooks.engines() : json::object());
-      if (m_hooks.solverNeeded && !r.solver.isEmpty()) m_hooks.solverNeeded(r.solver);
+      if (r.solver.isEmpty()) return;
+      // OPAD's own pack of it: the button installs it (progress in the status bar); else the solver window says where to get it.
+      if (m_hooks.installSolver && engineinstall::pack(r.solver)) m_hooks.installSolver(r.solver);
+      else if (m_hooks.solverNeeded) m_hooks.solverNeeded(r.solver);
     });
   }
 
@@ -1863,7 +1867,13 @@ void GuidedCheck::showRunState() {
     const simchecks::Solver* sv = simchecks::solver(r.solver);
     note = tr("%1: OPAD runs this check with %2, which is not on this computer yet. Set the check up now; it runs once the solver is in place.")
                .arg(r.chip, sv ? sv->name : r.solver);
-    m_solverButton->setText(sv && sv->external ? tr("Get %1…").arg(sv->name) : tr("About %1…").arg(sv ? sv->name : r.solver));
+    const auto pack = sv && sv->external && m_hooks.installSolver ? engineinstall::pack(r.solver) : std::nullopt;
+    const bool installing = pack && m_hooks.installing && m_hooks.installing(r.solver);
+    m_solverButton->setText(installing ? tr("Installing %1…").arg(sv->name)
+                            : pack     ? tr("Install %1 (%2)").arg(sv->name, engineinstall::sizeText(pack->size))
+                            : sv && sv->external ? tr("Get %1…").arg(sv->name)
+                                                 : tr("About %1…").arg(sv ? sv->name : r.solver));
+    m_solverButton->setEnabled(!installing);
     m_solverButton->show();
   } else if (!missing.isEmpty()) {
     note = missing;
