@@ -169,9 +169,12 @@ the local bulk way) in face-connected groups touching a wall. Shared OpenFOAM re
 
 ## Solver packs (`engines/`, `core/src/sim/engine_packs.cpp`, `app/EngineInstall.*`)
 
-OpenFOAM v2512 and CalculiX 2.22 for Windows, built from pinned upstream sources by `engines/<id>/make-pack.sh` (CI:
-`.github/workflows/engines.yml`, artifacts only; publishing is by hand, docs/releasing.md "Solver packs"), released as
-`engines-<id>-<ver>-<rev>` (not latest), their size + SHA-256 pinned in `engine_packs.cpp` (no hash = not offered).
+OpenFOAM v2606 (zlib 1.4) and CalculiX 2.24 for windows-x64, linux-x64 and macos-arm64, built from pinned upstream sources by
+`engines/<id>/make-pack.sh` and checked on their own system by `engines/<id>/smoke.sh` (CI: `.github/workflows/engines.yml`,
+planned by `engines/ci/plan.sh`: pull requests build and check; on dev every pack whose tag is missing is published with
+GITHUB_TOKEN, from the pull request's artifact of the same git tree when there is one; docs/releasing.md "Solver packs"),
+one release per system, `engines-<id>-<ver>-<rev>-<platform>` (not latest, never replaced: a change bumps `PACK_REV`),
+their size + SHA-256 pinned per system in `engine_packs.cpp`'s `kPins` the commit after (no hash = not offered).
 Install (check's Run step "Install OpenFOAM (42 MB)", `SolverWindow`'s Install): `engineinstall::Installer` downloads in a
 `Downloading` job (only `engine_pack_url_allowed` URLs: github.com/ahmad-amrey/opad/releases/download/, or 127.0.0.1 when
 `OPAD_ENGINE_PACKS=<json>` replaces the table), then `install_pack` on a worker: size, hash, every member inside the
@@ -182,11 +185,19 @@ OPAD runs + their DLLs (objdump closure) + `etc/`, cross-built on Ubuntu with mi
 (no MS-MPI), zlib static, only the libraries the programs link (`LIBRARIES`, src/Allwmake's order; some only named on
 link lines: dummy decomposers, fvOptions, regionModels...), wmake's `+ccache` when ccache is there; discovery takes any
 complete `<id>-*` folder (`installed_pack(id)`), so a pack works before its pin; traps: wmake `-q` links before compiling, a cross gcc ignores LIBRARY_PATH (`-L` through
-FOAM_EXTRA_CXXFLAGS), GCC 13 jump tables of COMDAT functions break `ld -r` ("relocation truncated": `-fno-jump-tables`).
+FOAM_EXTRA_CXXFLAGS), GCC 13 jump tables of COMDAT functions break `ld -r` ("relocation truncated": `-fno-jump-tables`),
+`wmakeLnIncludeAll -j` does not wait for its jobs (a pipeline's subshell: v2606 compiled against half-made lnInclude
+folders, run it serially), bashrc's arguments are split at spaces (`WM_COMPILE_CONTROL=+ccache~openmp`, no space). A new
+OpenFOAM pack is checked with `ctest --preset windows-slow -R "flow-solve|cfd-solve"` (OPAD_OPENFOAM=<unzipped pack>):
+v2512's MinGW createBaffles corrupted the heap on the fan-cooled enclosure (OpenCFD's GCC 9 build did not); v2606 passes.
 ccx pack: one static exe (SPOOLES serial, ARPACK-NG, OpenBLAS from MSYS2 MINGW64), built by `engines/calculix/CMakeLists.txt`
-from the upstream makefiles' lists (no make in MSYS2 here; `mafillmm.c` is listed but only the .f exists); patch 0001 drops
-a file-scope `_set_output_format` and `__USE_MINGW_ANSI_STDIO` keeps two-digit exponents (the .frd columns). MSYS2's
-`usr/bin` on PATH under Git Bash breaks gcc's TEMP: call pacman by path. Notices: Help > Third-party licences appends
+from the upstream makefiles' lists (no make in MSYS2 here; `mafillmm.c` is listed but only the .f exists; 2.24 adds
+`buildinfo.c` outside the lists, OpenMP in C and Fortran, `-cpp`); `__USE_MINGW_ANSI_STDIO` keeps two-digit exponents (the
+.frd columns; 2.22 needed patch 0001 for a file-scope `_set_output_format`, gone in 2.24). MSYS2's
+`usr/bin` on PATH under Git Bash breaks gcc's TEMP: call pacman by path. Linux/macOS: OpenFOAM native (Gcc / Clang, `~openmp`), `bin/` + `lib/` + `lib/dummy/`,
+run paths `$ORIGIN` (patchelf) / wmake's own `@loader_path`, macOS built on a case-sensitive APFS image with Homebrew's
+bash/make/flex/bison and `-ffp-contract=off`; ccx fully static on Linux (built on 22.04), on macOS Homebrew's libraries
+carried beside it with `@loader_path`, ad-hoc signed. Unix zips keep mode bits (`install_pack` restores them). Notices: Help > Third-party licences appends
 `engine_pack_notices()` (OpenCFD's trade mark statement, sources), About names both. `ctest -R engine-packs`, gui case
 `engine-install` (a fake release on a local socket: a tampered zip refused, the right one installed through the button).
 

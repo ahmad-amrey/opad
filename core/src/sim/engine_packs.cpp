@@ -13,27 +13,34 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Pinned: built by engines/<id>/make-pack.sh in .github/workflows/engines.yml, published by hand on the release named in
-// the URL; the size and SHA-256 are that run's (its SHA256SUMS). A new pack revision = a new release, a new line here.
+// Built by engines/<id>/make-pack.sh in .github/workflows/engines.yml and published by it on dev, one release per pack
+// revision and system (tag engines-<id>-<version>-<platform>, never replaced: a change is a new revision). The size and
+// SHA-256 are the release's (its SHA256SUMS), pinned here in the commit after it was published; until then they are
+// empty and the pack is not offered, so no Install button points at a missing file.
 constexpr const char* kReleases = "https://github.com/ahmad-amrey/opad/releases/download/";
-// The release assets' sizes and SHA-256s: the SHA256SUMS of the engines.yml run whose artifacts were published. Empty until
-// that release exists (a pack without a hash is not offered, so no Install button points at a missing file).
-constexpr std::uint64_t kOpenfoamSize = 0;
-constexpr const char* kOpenfoamSha256 = "";
-constexpr std::uint64_t kCalculixSize = 0;
-constexpr const char* kCalculixSha256 = "";
+
+struct Pin {
+  const char* id;
+  const char* name;
+  const char* version;
+  const char* platform;
+  std::uint64_t size;
+  const char* sha256;
+};
+constexpr Pin kPins[] = {
+    {"openfoam", "OpenFOAM v2606", "v2606-1", "windows-x64", 0, ""},
+    {"openfoam", "OpenFOAM v2606", "v2606-1", "linux-x64", 0, ""},
+    {"openfoam", "OpenFOAM v2606", "v2606-1", "macos-arm64", 0, ""},
+    {"calculix", "CalculiX 2.24", "2.24-1", "windows-x64", 0, ""},
+    {"calculix", "CalculiX 2.24", "2.24-1", "linux-x64", 0, ""},
+    {"calculix", "CalculiX 2.24", "2.24-1", "macos-arm64", 0, ""},
+};
 
 std::vector<EnginePack> pinned() {
   std::vector<EnginePack> out;
-#if defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64))
-  out.push_back({"openfoam", "OpenFOAM v2512", "v2512-1", "windows-x64",
-                 std::string(kReleases) + "engines-openfoam-v2512-1/opad-openfoam-v2512-1-windows-x64.zip", kOpenfoamSize,
-                 kOpenfoamSha256});
-  out.push_back({"calculix", "CalculiX 2.22", "2.22-1", "windows-x64",
-                 std::string(kReleases) + "engines-calculix-2.22-1/opad-calculix-2.22-1-windows-x64.zip", kCalculixSize,
-                 kCalculixSha256});
-#endif
-  std::erase_if(out, [](const EnginePack& p) { return p.sha256.empty(); });  // not published yet
+  const std::string here = engine_pack_platform();
+  for (auto& p : engine_pack_table())
+    if (!here.empty() && p.platform == here && !p.sha256.empty()) out.push_back(std::move(p));  // published for this system
   return out;
 }
 
@@ -89,6 +96,27 @@ std::string notice_of(const std::string& id) {
 }
 
 }  // namespace
+
+std::string engine_pack_platform() {
+#if defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64))
+  return "windows-x64";
+#elif defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
+  return "macos-arm64";
+#elif defined(__linux__) && defined(__x86_64__)
+  return "linux-x64";
+#else
+  return {};
+#endif
+}
+
+std::vector<EnginePack> engine_pack_table() {
+  std::vector<EnginePack> out;
+  for (const Pin& p : kPins) {
+    const std::string stem = std::string(p.id) + "-" + p.version + "-" + p.platform;
+    out.push_back({p.id, p.name, p.version, p.platform, std::string(kReleases) + "engines-" + stem + "/opad-" + stem + ".zip", p.size, p.sha256});
+  }
+  return out;
+}
 
 std::vector<EnginePack> engine_packs() {
   if (!from_environment()) return pinned();

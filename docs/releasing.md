@@ -210,28 +210,45 @@ settings yet) and leaves the old folder as it was.
 
 ## Solver packs (OpenFOAM, CalculiX)
 
-Simulate installs OpenFOAM and CalculiX from inside OPAD (`Install OpenFOAM (42 MB)` on a check, `opad/sim/engine_packs.hpp`).
-The packs are separate programs, built from their unmodified upstream sources by the recipes in `engines/<id>/`
-(`make-pack.sh`, our patches in `patches/`) and published on this repository's releases, never fetched from anywhere else.
+Simulate installs OpenFOAM and CalculiX from inside OPAD (`Install OpenFOAM (42 MB)` on a check, `opad/sim/engine_packs.hpp`)
+on Windows x64, Linux x64 and macOS on Apple silicon. The packs are separate programs, built from their unmodified upstream
+sources by the recipes in `engines/<id>/` (`make-pack.sh`, our patches in `patches/`, `smoke.sh` to check a built pack)
+and published on this repository's releases, never fetched from anywhere else. The `engines` workflow
+(`.github/workflows/engines.yml`, planned by `engines/ci/plan.sh`) does everything but the pin:
 
-1. **Build**: run the `engines` workflow (Actions > engines > Run workflow; it also runs on pull requests that change
-   `engines/`). Each pack's job uploads an artifact with the pack's zip, the exact source archives it was built from, the
-   recipe (`opad-<id>-recipe.tar.gz`) and `SHA256SUMS`. Nothing is published by the workflow.
-2. **Publish** (by hand, from that run's artifact): a release whose tag is `engines-<id>-<version>-<rev>` (the folder
-   name in the pack's URL, for example `engines-openfoam-v2512-1`), with every file of the artifact attached and
-   **not marked latest** (`gh release create engines-openfoam-v2512-1 --latest=false --title "OpenFOAM v2512 for OPAD
-   (pack 1)" --notes-file engines/openfoam/NOTICE.txt out/*`). The update check reads `releases/latest`, and its list of
-   releases skips tags that are not versions, so these never look like an OPAD update; `ci.yml` starts on `v*` tags only.
-   GPL: the pack's source archives, recipe and patches stay on the same release as long as the pack does.
-3. **Pin**: the pack's size and SHA-256 from that run's `SHA256SUMS` into `core/src/sim/engine_packs.cpp` (an entry
-   without a hash is not offered). A new pack revision is a new release and a new pin; OPAD removes the older version of
-   a pack when it installs the newer one.
+1. **Build and check** (a pull request that changes `engines/` or the workflow): every pack for every system, each run on
+   its own system by `smoke.sh` (OpenFOAM: every program starts with nothing set but `WM_PROJECT_DIR`, then the
+   pitzDaily tutorial for 20 iterations; ccx: a cantilever). Each pack's artifact `engine-<id>-<platform>` holds the
+   zip, the exact source archives it was built from, the recipe (`opad-<id>-recipe.tar.gz`) and `SHA256SUMS`, kept 30
+   days. Nothing is published. Runners: the Windows OpenFOAM is cross-built on Ubuntu 24.04 with mingw-w64 and run on
+   Windows by a job of its own; the Linux packs on Ubuntu 22.04 (glibc 2.35: OpenFOAM's libraries need it, ccx is fully
+   static; OPAD itself is built on 24.04, so the packs never ask more of a system than OPAD does); macOS on macos-15.
+   A cold OpenFOAM build is 1 to 2 hours per system; each run saves its compiler cache (about 0.2 GB per system, keyed
+   by the recipe's hash), so the next run of an unchanged recipe compiles little.
+2. **Publish** (automatic: the merge into `dev`, or Run workflow on `dev` with *publish*): every pack whose release
+   does not exist yet becomes a release of its own, tag `engines-<id>-<version>-<rev>-<platform>` (for example
+   `engines-openfoam-v2606-1-linux-x64`) on the commit that was built, every artifact file attached, the pack's
+   `NOTICE.txt` as notes, **not marked latest**. Build once: when the pull request's run built exactly this code (the
+   same git tree, which an up-to-date pull request has), its packs are published, not built again; otherwise this run
+   builds them. A published tag is never replaced: a change to a pack is a new revision (`PACK_REV` in its
+   `make-pack.sh`), so a new tag. One release per system, not one per revision: each system's pack is built, checked
+   and published on its own (a failing macOS build holds back only macOS), and each release carries the very sources
+   its binaries were built from. GitHub's own token publishes (the job alone has `contents: write`).
+3. **Pin** (by hand, the commit after the publishing run): each published pack's size and SHA-256 into the table in
+   `core/src/sim/engine_packs.cpp` (the run's summary lists them; they are also the release's `SHA256SUMS`). A pack
+   without a pin is not offered: that system keeps the official download page. OPAD removes the older version of a pack
+   when it installs the newer one.
+
+These releases never look like an OPAD update: the update check reads `releases/latest` (they are never latest) and both
+its lists skip tags that are not versions (`tests/test_update_check.cpp`); `ci.yml` starts on `v*` tags only, and its
+pruning of development builds deletes only `vX.Y.Z-dev.N` / `-rc.N` releases. GPL: a pack's source archives, recipe and
+patches stay on the same release as long as the pack does.
 
 The packs unpack into the user's engines folder (`%LOCALAPPDATA%\opad\OPAD\engines`, `~/.local/share/opad/OPAD/engines`,
 `~/Library/Application Support/opad/OPAD/engines`; `data/engines` beside a portable copy), where OPAD looks right after
-`OPAD_OPENFOAM` / `OPAD_CCX`. Linux and macOS packs: the same recipes would build there (OpenFOAM natively with
-`WM_MPLIB=dummy` and an `$ORIGIN` / `@loader_path` run path; ccx with Homebrew's or the distribution's gfortran), but
-none is published yet, so those systems keep the official download pages.
+`OPAD_OPENFOAM` / `OPAD_CCX`. Layouts: Windows keeps programs and DLLs together in `bin/`; Linux and macOS have `bin/` and
+`lib/` (Pstream's dummy in `lib/dummy/`) with run paths relative to each file (`$ORIGIN`, `@executable_path` /
+`@loader_path`), so nothing but `WM_PROJECT_DIR` (set by OPAD) is needed; macOS binaries are ad-hoc signed.
 
 ## Dependency updates
 
@@ -247,8 +264,9 @@ table without touching the issue: `python3 tools/deps_watch.py`. Acting on an en
 
 - **An engine pack's source** (OpenFOAM, zlib, CalculiX, SPOOLES): change the version and SHA-256 in
   `engines/<id>/make-pack.sh` (`PACK_REV` back to 1 for a new upstream version, one up for a rebuild of the same one,
-  such as a zlib fix), run the `engines` workflow, publish its release and pin the pack's SHA-256 and size in
-  `core/src/sim/engine_packs.cpp` (the steps above), then ship that in an OPAD release. Packs never update themselves:
+  such as a zlib fix), merge it into `dev` by a pull request (the `engines` workflow builds the packs on the pull
+  request and publishes them on the dev push), then pin their SHA-256s and sizes in `core/src/sim/engine_packs.cpp` (the
+  steps above) and ship that in an OPAD release. Packs never update themselves:
   an installed pack is kept until the user installs the one their OPAD pins, which replaces it.
 - **Built from source at configure** (OCCT, Eigen, Chrono, Netgen): the version with its SHA-256 or commit in
   `cmake/occt_source.cmake` / `cmake/sim_engines.cmake`; the CI caches are keyed on those files, so the next run
