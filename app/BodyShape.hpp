@@ -5,6 +5,8 @@
 #include <AIS_Shape.hxx>
 #include "opad/util.hpp"
 #include "opad/mesh.hpp"
+#include "opad/point_cloud.hpp"
+#include <atomic>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_ArrayOfSegments.hxx>
 #include <Graphic3d_ArrayOfTriangles.hxx>
@@ -76,7 +78,7 @@ struct BodyPrs {
   // Where a big body's build went, and a mesh box selection cut short: set by the app while tracing (thread-safe), null
   // otherwise (the headless tests build bodies without Qt).
   static void (*log)(const std::string& line);
-  bool meshPicked() const { return !meshGroups[0].IsNull(); }
+  bool meshPicked() const { return !meshGroups[0].IsNull() || !meshGroups[2].IsNull(); }  // a cloud has points only
   void buildEdgeGroups(const TopTools_IndexedMapOfShape& edges, const Bnd_Box& box);        // worker: edgeGroups and edgeShapes
   void buildVertexGroups(const TopTools_IndexedMapOfShape& vertices, const Bnd_Box& box);  // worker: vertexGroups and vertexShapes
   bool closed = false;                           // closed solid: back faces can be culled
@@ -117,6 +119,25 @@ struct BodyPrs {
   // base mesh, whose own triangulation is the shape's.
   std::vector<std::pair<int, int>> faceTriangles;
   std::vector<std::shared_ptr<const std::vector<gp_Pnt>>> edgeLines;
+  // A point cloud (opad/point_cloud.hpp; build() makes these for a cloud shape, nothing else): its points in the body's own
+  // frame (positions and attributes, every one: picking, regions and slices read them), the drawn array (every point, or a
+  // uniform sample of `cloudBudget` of a bigger cloud: a cloud of tens of millions is drawn whole only zoomed in, where the
+  // view's refinement draws the visible part at full density), and the typical spacing (the drawn point size follows it).
+  // Picking is one BVH over runs of nearby points (CloudPickSet in BodyShape.cpp): the whole body (mode 0) and its points
+  // as vertices (meshGroups[2], ordinal = point index), never an owner per point.
+  std::shared_ptr<const opad::cloud::Points> cloudData;
+  Handle(Graphic3d_ArrayOfPoints) cloudPoints;
+  size_t cloudDrawn = 0;
+  double cloudSpacing = 0;
+  bool isCloud() const { return cloudData != nullptr; }
+  // How clouds are coloured (view/cloudColor): 0 automatic (the scan's colours, else shaded by the normals, else the body's
+  // colour), 1 colours, 2 normals, 3 the scalar (intensity, deviation) on a ramp, 4 the body's colour.
+  static std::atomic<int> cloudColorMode;
+  static size_t cloudBudget;  // points drawn of a whole cloud (8 million)
+  // Worker: the drawn array of a cloud: `only` (null: all) in the given colour mode, at most `budget` of them sampled evenly.
+  static std::shared_ptr<BodyPrs> buildCloud(const TopoDS_Shape& cloud, const Bnd_Box& box, bool drawingOnly);  // worker
+  static Handle(Graphic3d_ArrayOfPoints) cloudArray(const opad::cloud::Points& points, const std::vector<uint32_t>* only, int mode, size_t budget,
+                                                    size_t* drawn = nullptr);
   void indexSubShapes(const TopoDS_Shape& meshed);  // worker, after build() from the same meshed shape
   bool indexed() const { return !faceTriangles.empty(); }
   void faceTrianglesOf(int ordinal, std::vector<gp_Pnt>& out) const;  // its triangles' corners, three a triangle
@@ -183,6 +204,8 @@ class BodyShape : public AIS_Shape {
   // (OCCT's silhouette), under the edges. True when that changes the shaded presentation (the caller has it computed again).
   bool setHiddenLine(bool on, const Quantity_Color& face, const Quantity_Color& edge);
   bool hiddenLine() const { return m_hiddenLine; }
+  // A point cloud's points drawn this many pixels wide (Viewport: from its spacing and the zoom); true when it changed.
+  bool setPointSize(float pixels);
   static int stockWireframes();  // wireframes OCCT computed from the shape on the UI thread so far (benches: none for meshed bodies)
   // The face colours of a body drawn without worker arrays (placed through a non-rigid transform: OCCT's own shaded path).
   void setFaceColors(std::shared_ptr<const opad::FaceColors> colors) { m_faceColors = std::move(colors); SetToUpdate(); }

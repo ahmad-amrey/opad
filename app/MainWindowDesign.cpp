@@ -42,7 +42,9 @@ void MainWindow::buildDesignActions() {
     QAction* a = addAction("design." + kind, i18n::t(QString::fromStdString(spec.label)), QString::fromStdString(spec.icon), key == kKeys.end() ? QKeySequence() : QKeySequence(key->second),
                            [this, kind] {
                              if (kind == "mesh_solid") meshToSolid();  // its own panel: the preview measured against the mesh
-                             else m_design->startFeature(kind);
+                             else if (kind == "cloud_crop") {  // its region is picked with Select points (CloudArea.cpp)
+                               if (QAction* region = action("cloud.region")) region->trigger();
+                             } else m_design->startFeature(kind);
                            });
     a->setProperty("shortcutHint",i18n::t(QString::fromStdString(spec.hint)));
     shortcuts::updateTooltip(a);

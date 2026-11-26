@@ -197,18 +197,34 @@ void Grid::within(const float* q, double radius, std::vector<uint32_t>& out) con
 double spacing(const Points& p) {
   const size_t n = p.size();
   if (n < 2) return 0;
-  const Grid grid(p);
-  const size_t samples = std::min<size_t>(n, 2000);
+  // A big cloud is measured on a uniform sample of it; scanned points lie on surfaces, so the spacing grows as the square
+  // root of the thinning (a guess off for a cloud filling a volume, which scans do not).
+  constexpr size_t kSample = 400000;
+  Points sample;
+  double scale = 1;
+  const Points* q = &p;
+  if (n > kSample) {
+    sample.xyz.resize(kSample * 3);
+    for (size_t k = 0; k < kSample; ++k) {
+      const size_t i = size_t((uint64_t(k) * 2654435761ull + 12345) % n);
+      for (size_t d = 0; d < 3; ++d) sample.xyz[3 * k + d] = p.xyz[3 * i + d];
+    }
+    scale = std::sqrt(double(kSample) / double(n));
+    q = &sample;
+  }
+  const size_t m = q->size();
+  const Grid grid(*q);
+  const size_t samples = std::min<size_t>(m, 2000);
   std::vector<double> d(samples, 0);
   OSD_Parallel::For(0, int(samples), [&](int s) {
-    const size_t i = size_t(s) * n / samples;
+    const size_t i = size_t(s) * m / samples;
     std::vector<uint32_t> nb;
     std::vector<float> d2;
-    grid.nearest(&p.xyz[3 * i], 1, nb, &d2, int64_t(i));
+    grid.nearest(&q->xyz[3 * i], 1, nb, &d2, int64_t(i));
     d[size_t(s)] = d2.empty() ? 0 : std::sqrt(double(d2[0]));
   });
   std::nth_element(d.begin(), d.begin() + std::ptrdiff_t(samples / 2), d.end());
-  return d[samples / 2];
+  return d[samples / 2] * scale;
 }
 
 // ---------------------------------------------------------------- slices

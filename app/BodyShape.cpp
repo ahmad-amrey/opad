@@ -1,6 +1,7 @@
 #include "CurveSamples.hpp"
 #include <Prs3d_PointAspect.hxx>
 #include "BodyShape.hpp"
+#include <OSD_Parallel.hxx>
 #include <chrono>
 #include <string>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -522,6 +523,7 @@ void BodyPrs::buildSegmentRuns() {
 }
 
 opad::MeshingReport BodyPrs::meshForDisplay(const TopoDS_Shape& shape, double deflection) {
+  if (opad::cloud::is_cloud(shape)) return {};  // points: nothing to mesh
   const auto report = opad::mesh_shape(shape, deflection);
   opad::straighten_ruled_faces(shape);  // extruded walls stay upright seen along the extrusion (TODO 10 A1)
   return report;
@@ -580,6 +582,7 @@ size_t BodyPrs::triangleCount() const {
 
 std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly, bool drawing,
                                         std::shared_ptr<const opad::FaceColors> faceColors) {
+  if (opad::cloud::is_cloud(meshedProto)) return buildCloud(meshedProto, box, drawingOnly);
   auto p = std::make_shared<BodyPrs>();
   p->box = box;
   auto clock = std::chrono::steady_clock::now();
@@ -832,6 +835,19 @@ void BodyShape::syncPainted(bool uniform) {
 void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) {
   // The zoom refinement's arrays when there are some; everything else below only reads `shown`.
   const auto& shown = m_display && !m_display->triangles.IsNull() ? m_display : m_prs;
+  if (m_prs && m_prs->isCloud()) {  // a point cloud: its points in every display mode (the refinement's visible part when zoomed in)
+    const auto& drawn = m_display && m_display->isCloud() ? m_display : m_prs;
+    if (drawn->cloudPoints.IsNull()) return;
+    Handle(Graphic3d_Group) g = prs->NewGroup();
+    g->SetGroupPrimitivesAspect(myDrawer->PointAspect()->Aspect());
+    g->AddPrimitiveArray(drawn->cloudPoints, Standard_False);
+    if (!m_prs->box.IsVoid()) {
+      double x0, y0, z0, x1, y1, z1;
+      m_prs->box.Get(x0, y0, z0, x1, y1, z1);
+      g->SetMinMaxValues(x0, y0, z0, x1, y1, z1);
+    }
+    return;
+  }
   if(m_prs && m_prs->triangles.IsNull() && (!m_prs->boundaries.IsNull() || !m_prs->loosePoints.IsNull())) {
     if(!m_prs->boundaries.IsNull()) {auto g=prs->NewGroup();g->SetGroupPrimitivesAspect(myDrawer->WireAspect()->Aspect());g->AddPrimitiveArray(m_prs->boundaries);}
     if(!m_prs->loosePoints.IsNull()) {auto g=prs->NewGroup();g->SetGroupPrimitivesAspect(myDrawer->PointAspect()->Aspect());g->AddPrimitiveArray(m_prs->loosePoints);}
@@ -993,6 +1009,7 @@ template<class Sensitive> using MeshSensitive=Sensitive;
 
 void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) {
   computeSubShapes(selection, mode);
+  if (m_prs && m_prs->isCloud()) return;  // no faces stand in front of a cloud's points
   if (!m_prs || m_prs->navigation.IsNull() || (mode != AIS_Shape::SelectionMode(TopAbs_EDGE) && mode != AIS_Shape::SelectionMode(TopAbs_VERTEX))) return;
   // One pixel: the faces block only what lies behind them; an edge on a face keeps its own depth tolerance, so it wins.
   Handle(OccluderSensitive) faces = new OccluderSensitive(new OccluderOwner(this), m_prs->navigation);
@@ -1001,6 +1018,14 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
 }
 
 void BodyShape::computeSubShapes(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) {
+  if (m_prs && m_prs->isCloud()) {  // points: the body and its points (as vertices) through the worker's set, nothing else
+    if (mode == AIS_Shape::SelectionMode(TopAbs_VERTEX) && !m_prs->meshGroups[2].IsNull()) selection->Add(new GroupSensitive(this, TopAbs_VERTEX, m_prs->meshGroups[2]));
+    else if (mode == 0 && !m_prs->whole.empty()) {
+      Handle(SelectMgr_EntityOwner) owner = new BodySelectionOwner(myshape, this, 5);
+      for (const auto& sensitive : m_prs->whole) selection->Add(new SharedSensitive(owner, sensitive));
+    }
+    return;
+  }
   if(mode!=0 && opad::is_mesh_shape(myshape)) {
     const auto type=AIS_Shape::SelectionType(mode);
     const auto kind=type==TopAbs_FACE?opad::Ref::Kind::Face:type==TopAbs_EDGE?opad::Ref::Kind::Edge:opad::Ref::Kind::Vertex;
@@ -1453,4 +1478,250 @@ Handle(SubShapeOwner) BodyShape::groupOwner(TopAbs_ShapeEnum type, int index) {
 
 void NavigationShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, Standard_Integer) {
   if (!m_prototype.IsNull()) selection->Add(new SharedSensitive(new SelectMgr_EntityOwner(this), m_prototype));
+}
+
+// ---------------------------------------------------------------- point clouds
+std::atomic<int> BodyPrs::cloudColorMode{0};
+size_t BodyPrs::cloudBudget = 8'000'000;
+
+namespace {
+// A cloud's points for picking (BodyPrs::meshGroups[2] and the whole body): runs of kRun points lying near each other (the
+// Morton order of their places in the cloud's box) are the BVH's elements, each with its box, built on the mesh worker. A
+// point pick takes the nearest point in reach; a box or polygon every point it holds (at most kTakeLimit).
+class CloudPickSet : public Select3D_SensitiveSet {
+  DEFINE_STANDARD_RTTI_INLINE(CloudPickSet, Select3D_SensitiveSet)
+ public:
+  static constexpr size_t kRun = 32;
+  CloudPickSet(std::shared_ptr<const opad::cloud::Points> points, const Bnd_Box& box) : Select3D_SensitiveSet(nullptr), m_points(std::move(points)) {
+    const auto& p = *m_points;
+    const size_t n = p.size();
+    double x0 = 0, y0 = 0, z0 = 0, x1 = 1, y1 = 1, z1 = 1;
+    if (!box.IsVoid()) box.Get(x0, y0, z0, x1, y1, z1);
+    const double sx = 2097151.0 / std::max(x1 - x0, 1e-9), sy = 2097151.0 / std::max(y1 - y0, 1e-9), sz = 2097151.0 / std::max(z1 - z0, 1e-9);
+    auto spread = [](uint64_t v) {  // 21 bits, two zeros between each
+      v &= 0x1FFFFF;
+      v = (v | v << 32) & 0x1F00000000FFFFull;
+      v = (v | v << 16) & 0x1F0000FF0000FFull;
+      v = (v | v << 8) & 0x100F00F00F00F00Full;
+      v = (v | v << 4) & 0x10C30C30C30C30C3ull;
+      v = (v | v << 2) & 0x1249249249249249ull;
+      return v;
+    };
+    std::vector<std::pair<uint64_t, uint32_t>> codes(n);
+    OSD_Parallel::For(0, int((n + 65535) / 65536), [&](int b) {
+      for (size_t i = size_t(b) * 65536; i < std::min(n, size_t(b + 1) * 65536); ++i) {
+        auto q = [&](double v, double lo, double s) { return uint64_t(std::clamp((v - lo) * s, 0.0, 2097151.0)); };
+        codes[i] = {spread(q(p.xyz[3 * i], x0, sx)) | spread(q(p.xyz[3 * i + 1], y0, sy)) << 1 | spread(q(p.xyz[3 * i + 2], z0, sz)) << 2, uint32_t(i)};
+      }
+    });
+    std::sort(codes.begin(), codes.end());
+    m_order.resize(n);
+    for (size_t i = 0; i < n; ++i) m_order[i] = codes[i].second;
+    codes = {};
+    const size_t runs = (n + kRun - 1) / kRun;
+    m_runs.resize(runs);
+    m_boxes.resize(runs);
+    for (size_t r = 0; r < runs; ++r) m_runs[r] = int(r);
+    OSD_Parallel::For(0, int((runs + 4095) / 4096), [&](int b) {
+      for (size_t r = size_t(b) * 4096; r < std::min(runs, size_t(b + 1) * 4096); ++r) {
+        std::array<float, 6> bb = {1e30f, 1e30f, 1e30f, -1e30f, -1e30f, -1e30f};
+        for (size_t k = r * kRun; k < std::min(n, (r + 1) * kRun); ++k)
+          for (size_t d = 0; d < 3; ++d) {
+            const float v = p.xyz[3 * size_t(m_order[k]) + d];
+            bb[d] = std::min(bb[d], v), bb[d + 3] = std::max(bb[d + 3], v);
+          }
+        m_boxes[r] = bb;
+      }
+    });
+    m_box = Select3D_BndBox3d(SelectMgr_Vec3(x0, y0, z0), SelectMgr_Vec3(x1, y1, z1));
+    m_center = gp_Pnt((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  }
+  Standard_Integer Size() const override { return int(m_runs.size()); }
+  Select3D_BndBox3d Box(const Standard_Integer i) const override {
+    const auto& b = m_boxes[size_t(m_runs[size_t(i)])];
+    return Select3D_BndBox3d(SelectMgr_Vec3(b[0], b[1], b[2]), SelectMgr_Vec3(b[3], b[4], b[5]));
+  }
+  Standard_Real Center(const Standard_Integer i, const Standard_Integer axis) const override {
+    const auto& b = m_boxes[size_t(m_runs[size_t(i)])];
+    return 0.5 * (double(b[size_t(axis)]) + b[size_t(axis) + 3]);
+  }
+  void Swap(const Standard_Integer i, const Standard_Integer j) override { std::swap(m_runs[size_t(i)], m_runs[size_t(j)]); }
+  Select3D_BndBox3d BoundingBox() override { return m_box; }
+  gp_Pnt CenterOfGeometry() const override { return m_center; }
+  Standard_Integer NbSubElements() const override { return int(m_order.size()); }
+
+  // A point pick (UI thread): the nearest point in reach, -1 for none.
+  int pick(SelectBasics_SelectingVolumeManager& volume, SelectBasics_PickResult& result) {
+    if (volume.GetActiveSelectionType() != SelectMgr_SelectionType_Point) return -1;
+    m_best = -1;
+    m_bestDepth = RealLast();
+    SelectBasics_PickResult unused;
+    Select3D_SensitiveSet::Matches(volume, unused);
+    if (m_best < 0) return -1;
+    result = SelectBasics_PickResult(m_bestDepth, volume.DistToGeometryCenter(m_center), m_bestPoint);
+    return m_best;
+  }
+  // A box or polygon (UI thread): the points it holds.
+  void take(SelectBasics_SelectingVolumeManager& volume, std::vector<int>& out) const {
+    if (Size() == 0) return;
+    const auto& tree = const_cast<CloudPickSet*>(this)->myContent.GetBVH();  // built by the mesh worker: only read here
+    std::vector<int> pending{0};
+    while (!pending.empty() && out.size() < kTakeLimit) {
+      const int at = pending.back();
+      pending.pop_back();
+      bool inside = false;
+      if (!volume.OverlapsBox(tree->MinPoint(at), tree->MaxPoint(at), &inside)) continue;
+      const auto& data = tree->NodeInfoBuffer()[size_t(at)];
+      if (data.x() == 0) {
+        pending.push_back(data.y());
+        pending.push_back(data.z());
+        continue;
+      }
+      for (int element = data.y(); element <= data.z() && out.size() < kTakeLimit; ++element) {
+        const size_t r = size_t(m_runs[size_t(element)]);
+        for (size_t k = r * kRun; k < std::min(m_order.size(), (r + 1) * kRun); ++k)
+          if (inside || volume.OverlapsPoint(point(m_order[k]))) out.push_back(int(m_order[k]));
+      }
+    }
+    std::sort(out.begin(), out.end());
+    if (out.size() >= kTakeLimit && BodyPrs::log) BodyPrs::log("cloud pick: a box took more than " + std::to_string(kTakeLimit) + " points, the rest left out");
+  }
+
+ protected:
+  Standard_Boolean overlapsElement(SelectBasics_PickResult& result, SelectBasics_SelectingVolumeManager& volume, Standard_Integer i, Standard_Boolean) override {
+    const size_t r = size_t(m_runs[size_t(i)]);
+    bool any = false;
+    for (size_t k = r * kRun; k < std::min(m_order.size(), (r + 1) * kRun); ++k) {
+      SelectBasics_PickResult h;
+      const gp_Pnt q = point(m_order[k]);
+      if (!volume.OverlapsPoint(q, h)) continue;
+      if (!any || h.Depth() < result.Depth()) result = h;
+      any = true;
+      if (h.Depth() < m_bestDepth) m_bestDepth = h.Depth(), m_best = int(m_order[k]), m_bestPoint = q;
+    }
+    return any;
+  }
+  Standard_Boolean elementIsInside(SelectBasics_SelectingVolumeManager& volume, Standard_Integer i, Standard_Boolean) override {
+    const size_t r = size_t(m_runs[size_t(i)]);
+    for (size_t k = r * kRun; k < std::min(m_order.size(), (r + 1) * kRun); ++k)
+      if (!volume.OverlapsPoint(point(m_order[k]))) return false;
+    return true;
+  }
+  Standard_Real distanceToCOG(SelectBasics_SelectingVolumeManager& volume) override { return volume.DistToGeometryCenter(m_center); }
+
+ private:
+  static constexpr size_t kTakeLimit = 250000;
+  gp_Pnt point(uint32_t i) const { return gp_Pnt(m_points->xyz[3 * size_t(i)], m_points->xyz[3 * size_t(i) + 1], m_points->xyz[3 * size_t(i) + 2]); }
+  std::shared_ptr<const opad::cloud::Points> m_points;
+  std::vector<uint32_t> m_order;               // point ordinals in Morton order
+  std::vector<int> m_runs;                     // the BVH's order of the runs
+  std::vector<std::array<float, 6>> m_boxes;   // per run
+  Select3D_BndBox3d m_box;
+  gp_Pnt m_center;
+  int m_best = -1;  // the point pick under way (UI thread only)
+  double m_bestDepth = 0;
+  gp_Pnt m_bestPoint;
+};
+
+class CloudModeGroup : public Select3D_SensitiveEntity, public PickGroup {
+  DEFINE_STANDARD_RTTI_INLINE(CloudModeGroup, Select3D_SensitiveEntity)
+ public:
+  explicit CloudModeGroup(const Handle(CloudPickSet)& set) : Select3D_SensitiveEntity(nullptr), m_set(set) { SetSensitivityFactor(8); }
+  Standard_Boolean Matches(SelectBasics_SelectingVolumeManager&, SelectBasics_PickResult&) override { return false; }  // through pick and take
+  Standard_Integer NbSubElements() const override { return m_set->NbSubElements(); }
+  Select3D_BndBox3d BoundingBox() override { return m_set->BoundingBox(); }
+  gp_Pnt CenterOfGeometry() const override { return m_set->CenterOfGeometry(); }
+  Standard_Boolean ToBuildBVH() const override { return false; }
+  int firstOrdinal() const override { return 0; }
+  int pick(SelectBasics_SelectingVolumeManager& volume, SelectBasics_PickResult& result) override { return m_set->pick(volume, result); }
+  void take(SelectBasics_SelectingVolumeManager& volume, std::vector<int>& out) const override { m_set->take(volume, out); }
+
+ private:
+  Handle(CloudPickSet) m_set;
+};
+
+// A colour for a scalar between lo and hi: blue, cyan, green, yellow, red.
+Graphic3d_Vec4ub ramp(float v, float lo, float hi) {
+  const float t = hi > lo ? std::clamp((v - lo) / (hi - lo), 0.f, 1.f) : 0.5f;
+  const float r = std::clamp(1.5f - std::abs(4 * t - 3), 0.f, 1.f), g = std::clamp(1.5f - std::abs(4 * t - 2), 0.f, 1.f), b = std::clamp(1.5f - std::abs(4 * t - 1), 0.f, 1.f);
+  return Graphic3d_Vec4ub(uint8_t(r * 255), uint8_t(g * 255), uint8_t(b * 255), 255);
+}
+}  // namespace
+
+Handle(Graphic3d_ArrayOfPoints) BodyPrs::cloudArray(const opad::cloud::Points& p, const std::vector<uint32_t>* only, int mode, size_t budget, size_t* drawn) {
+  const size_t n = only ? only->size() : p.size();
+  if (n == 0) return nullptr;
+  // Which colour: the scan's own, shaded by the normals (grey), the scalar's ramp, or none (the body's colour).
+  if (mode == 0) mode = p.colored() ? 1 : p.has_normals() ? 2 : 4;
+  if (mode == 1 && !p.colored()) mode = 4;
+  if (mode == 2 && !p.has_normals()) mode = 4;
+  if (mode == 3 && !p.has_scalar()) mode = 4;
+  const bool colours = mode != 4;
+  const size_t m = std::min(n, std::max<size_t>(budget, 1));
+  // An even sample of a bigger cloud: a stride through a pseudo-random order, so scan lines do not beat with it.
+  auto pick = [&](size_t k) -> size_t {
+    const size_t j = m == n ? k : size_t((uint64_t(k) * 2654435761ull) % n);
+    return only ? (*only)[j] : j;
+  };
+  float lo = 0, hi = 1;
+  if (mode == 3) {
+    std::vector<float> s;
+    for (size_t k = 0; k < std::min<size_t>(m, 20000); ++k) s.push_back(p.scalar[pick(k * std::max<size_t>(1, m / 20000))]);
+    std::sort(s.begin(), s.end());
+    if (!s.empty()) lo = s[s.size() / 50], hi = s[s.size() - 1 - s.size() / 50];
+  }
+  Handle(Graphic3d_ArrayOfPoints) a = new Graphic3d_ArrayOfPoints(int(m), colours ? Graphic3d_ArrayFlags_VertexColor : Graphic3d_ArrayFlags_None);
+  const double light[3] = {0.32, 0.45, 0.83};
+  for (size_t k = 0; k < m; ++k) {
+    const size_t i = pick(k);
+    const int v = a->AddVertex(p.xyz[3 * i], p.xyz[3 * i + 1], p.xyz[3 * i + 2]);
+    if (!colours) continue;
+    Graphic3d_Vec4ub c;
+    if (mode == 1) c = Graphic3d_Vec4ub(p.rgb[3 * i], p.rgb[3 * i + 1], p.rgb[3 * i + 2], 255);
+    else if (mode == 2) {
+      const float* nn = &p.normals[3 * i];
+      const double d = std::abs(nn[0] * light[0] + nn[1] * light[1] + nn[2] * light[2]);
+      const uint8_t g = uint8_t(std::clamp(70.0 + 175.0 * d, 0.0, 255.0));
+      c = Graphic3d_Vec4ub(g, g, uint8_t(std::min(255, g + 10)), 255);
+    } else {
+      c = ramp(p.scalar[i], lo, hi);
+    }
+    a->SetVertexColor(v, c);
+  }
+  if (drawn) *drawn = m;
+  return a;
+}
+
+std::shared_ptr<BodyPrs> BodyPrs::buildCloud(const TopoDS_Shape& shape, const Bnd_Box& box, bool drawingOnly) {
+  auto p = std::make_shared<BodyPrs>();
+  p->box = box;
+  const auto start = std::chrono::steady_clock::now();
+  auto points = std::make_shared<const opad::cloud::Points>(opad::cloud::from_shape(shape));
+  p->cloudData = points;
+  p->cloudPoints = cloudArray(*points, nullptr, cloudColorMode.load(), cloudBudget, &p->cloudDrawn);
+  p->cloudSpacing = opad::cloud::spacing(*points);
+  if (!drawingOnly && points->size()) {
+    Handle(CloudPickSet) set = new CloudPickSet(points, box);
+    set->BVH();
+    p->meshGroups[2] = new CloudModeGroup(set);
+    p->meshCounts[2] = int(points->size());
+    set->SetSensitivityFactor(6);
+    p->whole.push_back(set);
+    p->navigation = set;  // the orbit's pivot and the hovered point land on the points
+  }
+  if (log && points->size() > 1000000)
+    log("cloud prs: " + std::to_string(points->size()) + " points, " + std::to_string(p->cloudDrawn) + " drawn, " +
+        std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count()) + " ms");
+  return p;
+}
+
+bool BodyShape::setPointSize(float pixels) {
+  pixels = std::clamp(std::round(pixels * 2) / 2, 1.f, 12.f);
+  if (myDrawer->HasOwnPointAspect() && myDrawer->PointAspect()->Aspect()->Type() == Aspect_TOM_POINT && myDrawer->PointAspect()->Aspect()->Scale() == pixels) return false;
+  Quantity_Color colour = myDrawer->HasOwnPointAspect() ? myDrawer->PointAspect()->Aspect()->Color() : myDrawer->ShadingAspect()->Color();
+  if (!myDrawer->HasOwnPointAspect()) myDrawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_POINT, colour, pixels));
+  myDrawer->PointAspect()->SetTypeOfMarker(Aspect_TOM_POINT);
+  myDrawer->PointAspect()->SetScale(pixels);
+  SynchronizeAspects();
+  return true;
 }

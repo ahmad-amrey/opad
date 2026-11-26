@@ -2156,7 +2156,7 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
         prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape), false, j.drawing, j.colors);  // so Display() on the UI thread is cheap
         // Its faces and edges as drawn: a highlight from these stays on the face drawn even when the shape is meshed again
         // later in place (not a drawing layer's lines: tens of thousands of edges, no faces).
-        if (!j.drawing) prs->indexSubShapes(j.shape);
+        if (!j.drawing && !prs->isCloud()) prs->indexSubShapes(j.shape);
         prs->deflection = deflectionForBox(box);
       } catch (...) {
       }
