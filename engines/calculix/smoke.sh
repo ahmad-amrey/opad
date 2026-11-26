@@ -5,6 +5,7 @@
 #
 #   engines/calculix/smoke.sh <out dir of make-pack.sh> <work dir>
 set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
 
 out=$(cd "$1" && pwd)
 work=$(mkdir -p "$2" && cd "$2" && pwd)
@@ -21,6 +22,10 @@ printf '%s\n' '*NODE,NSET=N' '1,0,0,0' '2,1,0,0' '3,1,1,0' '4,0,1,0' '5,0,0,1' '
   '*BOUNDARY' '1,1,3' '4,1,3' '5,1,3' '8,1,3' '*STEP' '*STATIC' '*CLOAD' '2,3,1.' '3,3,1.' '6,3,1.' '7,3,1.' '*NODE PRINT,NSET=N' 'U' \
   '*NODE FILE' 'U' '*END STEP' >job.inp
 unset LD_LIBRARY_PATH DYLD_LIBRARY_PATH || true
+# shellcheck source=../ci/loads.sh
+. "$here/../ci/loads.sh"
+check_links "$work/pack"  # nothing named outside the pack and the system (Homebrew, the build tree, /usr/local)
+check_loaded "$work/pack" "$ccx" -i job  # and what the loader really took
 "$ccx" -i job >log.ccx 2>&1 || { tail -20 log.ccx >&2; echo "error: ccx failed" >&2; exit 1; }
 tail -3 log.ccx
 grep -q "displacements" job.dat || { echo "error: no displacements in job.dat" >&2; exit 1; }

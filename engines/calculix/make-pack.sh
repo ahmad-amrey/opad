@@ -95,18 +95,26 @@ case "$target" in
     gcc_prefix=$(brew --prefix gcc)
     fc=$(ls "$gcc_prefix"/bin/gfortran-[0-9]* | sort -V | tail -1)
     cc=$(ls "$gcc_prefix"/bin/gcc-[0-9]* | grep -E '/gcc-[0-9]+$' | sort -V | tail -1)
-    arpack="$(brew --prefix arpack)/lib/libarpack.a"
-    [ -f "$arpack" ] || arpack="$(brew --prefix arpack)/lib/libarpack.dylib"
-    blas="$(brew --prefix openblas)/lib/libopenblas.a"
-    [ -f "$blas" ] || blas="$(brew --prefix openblas)/lib/libopenblas.dylib"
-    link="-static-libgfortran;-static-libgcc;-fopenmp"  # -fopenmp: Homebrew's OpenBLAS may be built with OpenMP
-    for f in arpack:COPYING:ARPACK-NG-COPYING.txt openblas:LICENSE:OpenBLAS-LICENSE.txt gcc:COPYING.RUNTIME:gcc-runtime-COPYING.RUNTIME.txt gcc:COPYING3:gcc-runtime-COPYING3.txt; do
-      IFS=: read -r formula file name <<<"$f"
-      p="$(brew --prefix "$formula")/$file"
-      [ -f "$p" ] && licenses+=("$p:$name")
+    # Homebrew's own libraries, carried beside ccx (below), not their static archives: its OpenBLAS uses LLVM's OpenMP
+    # (libomp), which a static link with GCC's -fopenmp (libgomp, ccx's own OpenMP) would leave unresolved.
+    arpack="$(brew --prefix arpack)/lib/libarpack.dylib"
+    blas="$(brew --prefix openblas)/lib/libopenblas.dylib"
+    link="-static-libgfortran;-static-libgcc;-fopenmp"
+    # The licences of what is carried: each formula's own files at the top of its keg (ARPACK-NG's and OpenBLAS's under
+    # the names the notice gives on every system).
+    for l in arpack/COPYING:ARPACK-NG-COPYING.txt openblas/LICENSE:OpenBLAS-LICENSE.txt; do
+      p="$(brew --prefix "${l%%/*}")/${l#*/}"
+      p=${p%:*}
+      [ -f "$p" ] && licenses+=("$p:${l##*:}")
     done
-    packages="Homebrew formulae used for ARPACK-NG, OpenBLAS and the compilers: $(brew list --versions arpack openblas gcc | tr '\n' ';' | sed 's/;$//; s/;/; /g')."
-    runtime="- The GCC runtime (libgfortran, libgcc, and libgomp where OpenBLAS uses it: GPL 3 with the GCC Runtime Library"$'\n'"  Exception), linked in or carried in bin/: licenses/gcc-runtime-*."
+    for formula in libomp gcc; do
+      for p in "$(brew --prefix "$formula")"/{LICENSE,LICENSE.txt,LICENSE.TXT,COPYING,COPYING.RUNTIME,COPYING3,COPYING.LIB}; do
+        b=$(basename "$p")
+        [ -f "$p" ] && licenses+=("$p:$formula-${b%.[tT][xX][tT]}.txt")
+      done
+    done
+    packages="Homebrew formulae used for ARPACK-NG, OpenBLAS, its OpenMP and the compilers: $(brew list --versions arpack openblas libomp gcc | tr '\n' ';' | sed 's/;$//; s/;/; /g')."
+    runtime="- LLVM's OpenMP runtime libomp (OpenBLAS's; Apache 2.0 with LLVM exceptions) and the GCC runtime (libgfortran,"$'\n'"  libgcc, libgomp: GPL 3 with the GCC Runtime Library Exception), as Homebrew builds them: licenses/libomp-*, gcc-*."
     ;;
 esac
 for f in "$arpack" "$blas"; do
@@ -144,53 +152,66 @@ case "$target" in
     fi
     ;;
   macos-arm64)
-    # Every library outside macOS's own goes beside ccx, named @loader_path/<name>; their run paths into Homebrew are
-    # dropped, so a Mac with Homebrew loads the pack's copies, not its own.
+    # Every library outside macOS's own goes into lib/ (ccx names them @loader_path/../lib/<name>, they name each other
+    # @loader_path/<name>), so a Mac without Homebrew runs it; their run paths into Homebrew are dropped, so a Mac with
+    # Homebrew still loads the pack's copies. A library's own @rpath / @loader_path names are resolved where it came from.
+    mkdir -p "$stage/lib"
+    declare -A orig=()
+    orig["$stage/bin/ccx"]=$built
     queue=("$stage/bin/ccx")
     while [ ${#queue[@]} -gt 0 ]; do
       f=${queue[0]}
       queue=("${queue[@]:1}")
+      odir=$(dirname "${orig[$f]}")
+      here=@loader_path
+      [ "$(dirname "$f")" = "$stage/bin" ] && here=@loader_path/../lib
       rpaths=$(otool -l "$f" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }')
+      own=$(otool -D "$f" | tail -n +2)
       for dep in $(otool -L "$f" | tail -n +2 | awk '{print $1}'); do
-        case "$dep" in /usr/lib/* | /System/* | @loader_path/*) continue ;; esac
+        [ "$dep" = "$own" ] && continue  # a library's own id
+        case "$dep" in /usr/lib/* | /System/*) continue ;; esac
         name=${dep##*/}
-        [ "$name" = "$(basename "$f")" ] && continue  # a library's own id
         from=
         case "$dep" in
           @rpath/*)
             for r in $rpaths "$gcc_prefix/lib/gcc/current" "$(brew --prefix)/lib"; do
-              r=${r//@loader_path/$(dirname "$f")}
+              r=${r//@loader_path/$odir}
+              r=${r//@executable_path/$odir}
               [ -f "$r/$name" ] && { from="$r/$name"; break; }
             done
             ;;
+          @loader_path/* | @executable_path/*) from="$odir/${dep#*/}" ;;
           *) from=$dep ;;
         esac
         [ -n "$from" ] && [ -f "$from" ] || { echo "error: $f needs $dep, which is not found" >&2; exit 1; }
-        if [ ! -f "$stage/bin/$name" ]; then
-          cp "$from" "$stage/bin/$name"
-          chmod u+w "$stage/bin/$name"
-          install_name_tool -id "@loader_path/$name" "$stage/bin/$name"
-          queue+=("$stage/bin/$name")
+        if [ ! -f "$stage/lib/$name" ]; then
+          cp "$from" "$stage/lib/$name"
+          chmod u+w "$stage/lib/$name"
+          install_name_tool -id "@loader_path/$name" "$stage/lib/$name"
+          orig["$stage/lib/$name"]=$(realpath "$from")
+          queue+=("$stage/lib/$name")
         fi
-        install_name_tool -change "$dep" "@loader_path/$name" "$f"
+        install_name_tool -change "$dep" "$here/$name" "$f"
       done
       for r in $rpaths; do install_name_tool -delete_rpath "$r" "$f"; done
     done
-    for f in "$stage"/bin/*; do
+    shopt -s nullglob
+    for f in "$stage"/bin/* "$stage"/lib/*; do
       strip -x "$f"
       codesign --force --sign - "$f"
     done
-    if otool -L "$stage"/bin/* | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/|@loader_path/)' | grep -v ':$' >&2; then
+    if otool -L "$stage"/bin/* "$stage"/lib/* | awk '!/:$/ {print $1}' | grep -vE '^(/usr/lib/|/System/|@loader_path/)' >&2; then
       echo "error: ccx or its libraries still name a library outside the pack (above)" >&2
       exit 1
     fi
+    shopt -u nullglob
     ;;
 esac
 
 cp "$src/CalculiX/ccx_${CCX_VERSION}/src/gpl-2.0.txt" "$stage/licenses/CalculiX-gpl-2.0.txt"
 for l in "${licenses[@]}"; do cp "${l%:*}" "$stage/licenses/${l##*:}"; done
-carried=$(cd "$stage/bin" && ls | grep -v "^ccx$exe\$" | tr '\n' ' ' | sed 's/ $//' || true)
-[ -n "$carried" ] && runtime+=$'\n'"- Carried beside ccx: $carried."
+carried=$(ls "$stage/lib" 2>/dev/null | tr '\n' ' ' | sed 's/ $//' || true)
+[ -n "$carried" ] && runtime+=$'\n'"- Carried in lib/: $carried."
 notice=$(<"$recipe/NOTICE.txt")
 notice=${notice//@CCX_VERSION@/$CCX_VERSION}
 notice=${notice//@PACK_REV@/$PACK_REV}

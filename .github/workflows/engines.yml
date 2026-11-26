@@ -93,7 +93,7 @@ jobs:
             calculix-linux-x64) apt gcc gfortran libopenblas-dev libarpack2-dev cmake ninja-build curl ;;
             # bash 5 (OpenFOAM's scripts; macOS has 3.2), GNU make, flex and bison newer than Xcode's
             openfoam-macos-arm64) brew install bash make flex bison ccache ;;
-            calculix-macos-arm64) brew install gcc arpack openblas ninja ;;
+            calculix-macos-arm64) brew install bash gcc arpack openblas ninja ;;
           esac
       - if: matrix.key == 'calculix-windows-x64'
         uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0

@@ -7,6 +7,7 @@
 #
 # Runs on the pack's own system: Linux, macOS, or Windows under Git Bash / MSYS2.
 set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
 
 out=$(cd "$1" && pwd)
 work=$(mkdir -p "$2" && cd "$2" && pwd)
@@ -23,6 +24,9 @@ case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) exe=.exe ;; esac
 project=$pack
 [ -n "$exe" ] && project=$(cygpath -m "$pack")
 unset LD_LIBRARY_PATH DYLD_LIBRARY_PATH FOAM_LIBBIN WM_PROJECT_DIR || true
+# shellcheck source=../ci/loads.sh
+. "$here/../ci/loads.sh"
+check_links "$pack"  # nothing named outside the pack and the system (Homebrew, the build tree, /usr/local)
 
 run() {  # program, args...: from the case folder, as OPAD starts them (no shell environment of OpenFOAM's)
   local p=$1
@@ -37,6 +41,7 @@ for p in $(sed -n 's/.*"programs": \[\(.*\)\].*/\1/p' "$pack/opad-pack.json" | t
     echo "error: $p does not start" >&2
     exit 1
   fi
+  WM_PROJECT_DIR=$project check_loaded "$pack" "$pack/bin/$p$exe" -help  # and what the loader really took
   echo "starts: $p"
 done
 
