@@ -56,6 +56,14 @@ including a new airflow check for ducts and fittings.
   how close the moving parts come at every frame: the first collision (when, which two parts, and whether they cross or
   only touch), the closest approach, the pairs closer than a gap you set, and a minimum-distance curve over time. Parts
   that already touch at the start, like a pin in its bore, are listed apart. No more posing the worst frames one by one.
+- **Deviation: how close is the scan to the CAD?** *Inspect > Deviation* compares a measured body (a 3D scan, a printed
+  part, an older revision) with a reference and colours it by how far each spot lies from it: green within your
+  tolerance, yellow to red where there is extra material, cyan to blue where material is missing. The panel gives the
+  mean, median, RMS, the largest deviations and the share within tolerance, with a histogram and the worst spots, which
+  are pinned on the model; rest the mouse on the map to read a spot, click to pin it. It can also measure both ways (to
+  see what a scan does not cover), ignore far-off noise, keep to faces you pick, and fit the scan onto the reference
+  first as a preview you accept or discard. Scans of millions of triangles are measured in a second or two without
+  freezing the window, and AI assistants get the same numbers from the `deviation` tool.
 
 ### Changed
 - **Connecting an AI app is one button.** *AI assistants* lists the AI apps found on this computer, each with one
