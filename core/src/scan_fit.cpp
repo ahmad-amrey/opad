@@ -164,7 +164,14 @@ std::shared_ptr<const FitMesh> fit_mesh(const TopoDS_Shape& shape, const std::fu
       m->tri.push_back({first + a - 1, first + b - 1, first + c - 1});
     }
   }
-  if (m->tri.empty()) throw Error("the body has no triangles to fit to");
+  if (m->tri.empty() && m->nodes.empty()) throw Error("the body has no triangles to fit to");
+  if (m->tri.empty()) {  // a point cloud (nodes, no triangles): its points only, fitted by "vertices" ranges
+    gp_XYZ sum(0, 0, 0);
+    for (const auto& p : m->nodes) sum += p.XYZ();
+    m->centroid = gp_Pnt(sum / double(m->nodes.size()));
+    m->diagonal = extent_of(m->nodes);
+    return m;
+  }
   check();
   const size_t n = m->tri.size();
   m->normal.resize(n);
@@ -274,7 +281,7 @@ std::shared_ptr<const FitMesh> cached_fit_mesh(const std::string& key, const Top
   if (!key.empty()) {
     std::lock_guard<std::mutex> hold(lock);
     kept.emplace_front(key, m);
-    while (kept.size() > 3) kept.pop_back();
+    while (kept.size() > 2) kept.pop_back();  // a 2M-triangle scan holds ~200 MB here
   }
   return m;
 }
@@ -872,10 +879,11 @@ ScanAxes scan_axes(const FitMesh& m, const std::function<bool()>& cancelled, dou
     for (auto& [s, b] : ranked) out.bases.push_back(b);
   }
   if (out.bases.empty()) {
-    // 3. No flats (an organic scan): the principal axes of the surface, the least spread one standing up first.
+    // 3. No flats (an organic scan): the principal axes of the surface, the least spread one standing up first (a point
+    // cloud, which has no facets: of its points).
     out.method = "pca";
     std::vector<double> w(m.area.begin(), m.area.end());
-    const Pca p = pca(m.centre, w, all_of(n));
+    const Pca p = n ? pca(m.centre, w, all_of(n)) : pca(m.nodes, {}, all_of(m.nodes.size()));
     for (int k : {0, 1, 2})
       for (int s : {-1, 1}) {
         ScanBase b;
@@ -940,20 +948,24 @@ std::vector<gp_Dir> scan_turns(const FitMesh& m, const ScanAxes& axes, int base)
     }
   }
   if (peaks.empty()) {
-    // No walls (a disc, a blob): the surface's longest direction in the plane.
+    // No walls (a disc, a blob): the surface's longest direction in the plane (a point cloud's: its points').
+    const bool cloud = count == 0;
+    const size_t items = cloud ? m.nodes.size() : count;
+    auto at = [&](size_t i) { return cloud ? m.nodes[i] : m.centre[i]; };
+    auto weight = [&](size_t i) { return cloud ? 1.0 : m.area[i]; };
     Eigen::Matrix2d c = Eigen::Matrix2d::Zero();
     Eigen::Vector2d mean = Eigen::Vector2d::Zero();
     double sw = 0;
-    for (size_t t = 0; t < count; ++t) {
-      const gp_Vec d(b.origin, m.centre[t]);
-      mean += m.area[t] * Eigen::Vector2d(d.Dot(gp_Vec(e1)), d.Dot(gp_Vec(e2)));
-      sw += m.area[t];
+    for (size_t t = 0; t < items; ++t) {
+      const gp_Vec d(b.origin, at(t));
+      mean += weight(t) * Eigen::Vector2d(d.Dot(gp_Vec(e1)), d.Dot(gp_Vec(e2)));
+      sw += weight(t);
     }
     if (sw > 0) mean /= sw;
-    for (size_t t = 0; t < count; ++t) {
-      const gp_Vec d(b.origin, m.centre[t]);
+    for (size_t t = 0; t < items; ++t) {
+      const gp_Vec d(b.origin, at(t));
       const Eigen::Vector2d q = Eigen::Vector2d(d.Dot(gp_Vec(e1)), d.Dot(gp_Vec(e2))) - mean;
-      c += m.area[t] * q * q.transpose();
+      c += weight(t) * q * q.transpose();
     }
     Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> es(c);
     const Eigen::Vector2d v = es.eigenvectors().col(1);

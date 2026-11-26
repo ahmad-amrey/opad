@@ -272,8 +272,9 @@ std::vector<FeatureSpec> build_specs() {
        in("plane2", "Second plane", "plane", nullptr, "mode=midplane"), pick("points", "Three or more points (best fit)", "points", 3, 0, "mode=three_points"),
        pick("point", "Through point", "points", 1, 1, "mode=point_normal"), in("normal", "Normal along", "axis", nullptr, "mode=point_normal")});
   add("axis", "Construction axis", "axis", "construct", "An axis to revolve or pattern about.",
-      {choice("mode", "Type", {"edge", "two_points", "normal"}), in("edge", "Edge or round face", "axis", nullptr, "mode=edge"), pick("points", "Two or more points (best fit)", "points", 2, 0, "mode=two_points"),
-       in("plane", "Plane", "plane", xy, "mode=normal"), pick("point", "Through point", "points", 1, 1, "mode=normal")});
+      {choice("mode", "Type", {"edge", "two_points", "normal", "two_planes"}), in("edge", "Edge or round face", "axis", nullptr, "mode=edge"), pick("points", "Two or more points (best fit)", "points", 2, 0, "mode=two_points"),
+       in("plane", "Plane", "plane", xy, "mode=normal|two_planes"), pick("point", "Through point", "points", 1, 1, "mode=normal"),
+       in("plane2", "Second plane", "plane", nullptr, "mode=two_planes")});
   // Gap log #10: a check kept in the timeline, run again whenever its bodies change.
   add("interference", "Interference check", "interference", "construct",
       "Bodies that overlap, or come closer than the clearance, stored with the design and checked again whenever they change. With Fail on, a finding is an error.",
@@ -2700,6 +2701,17 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
         a = gp_Ax1(fit.origin, fit.dir);
         out.extra["fit"] = fit.q.to_json();
       }
+    } else if (mode == "two_planes") {  // where two planes meet (fitted ones on a scan: its edge, which the scan blurs)
+      auto as_fit = [&](const char* key) {
+        const Frame f = ctx.plane(in.value(key, json()));
+        scanfit::Plane p;
+        p.origin = pnt(f.origin);
+        p.normal = gp_Dir(vec(f.normal()));
+        p.x = gp_Dir(vec(f.x));
+        return p;
+      };
+      const scanfit::Line l = scanfit::plane_intersection(as_fit("plane"), as_fit("plane2"));
+      a = gp_Ax1(l.origin, l.dir);
     } else {
       const Frame f = ctx.plane(in.value("plane", json()));
       const Points p = resolve_points(ctx, in.value("point", json()));

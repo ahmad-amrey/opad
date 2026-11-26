@@ -1194,5 +1194,8 @@
  "Using another AI app? Copy setup message": "تطبيق آخر؟ نسخ رسالة الإعداد",
  "What may it do? Nothing": "ماذا يجوز له؟ لا شيء",
  "Claude Desktop · Connected": "Claude Desktop · مربوط",
- "What may it do? Look and edit": "ماذا يجوز له؟ النظر والتحرير"
+ "What may it do? Look and edit": "ماذا يجوز له؟ النظر والتحرير",
+ "Select the scan and start Align scan to axes": "حدّد المسح وابدأ «محاذاة المسح مع المحاور»",
+ "It stands on its base flat, a wall along X, centred": "يقف على قاعدته المسطحة، وجدار على امتداد X، متمركزًا",
+ "Next base or Next X tries the others; {fixed:enter} keeps it": "«القاعدة التالية» أو «X التالي» يجرب الخيارات الأخرى؛ و{fixed:enter} يُبقيه"
 }

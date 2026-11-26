@@ -2329,9 +2329,17 @@
    "id": "design.align",
    "title": "Align",
    "summary": "Puts a point, edge or face of bodies or components onto another point, edge, face or plane, moving and turning them as one.",
-   "details": "Pick the bodies or components, then what to align them by and where it goes: a face onto a face or a plane (the two come to face each other; Flip lays them flush), an edge or axis along another, or a point onto a point, a line or a plane. Motion keeps it to a move or to a turn only, Offset leaves a gap from the plane, and Turn about it spins them about the line or the plane's normal. Nothing is rebuilt: the objects move by their placement, keep their geometry, and stay aligned when the face or edge they were put on changes.",
+   "details": "Pick the bodies or components, then what to align them by and where it goes: a face onto a face or a plane (the two come to face each other; Flip lays them flush), an edge or axis along another, or a point onto a point, a line or a plane. Motion keeps it to a move or to a turn only, Offset leaves a gap from the plane, and Turn about it spins them about the line or the plane's normal. Nothing is rebuilt: the objects move by their placement, keep their geometry, and stay aligned when the face or edge they were put on changes. On a mesh body (a scan or an STL), whose faces are triangles, a click fits a plane or an axis to the region around the triangle clicked and shows how well it fits.",
    "keywords": ["mate", "position", "place", "flush", "face to face", "snap to face"],
    "requires": "Open or create a document first; not available while a sketch is open."
+  },
+  {
+   "id": "design.alignScan",
+   "title": "Align scan to axes",
+   "summary": "Stands a mesh body, such as a 3D scan, on the XY plane: its base flat down, a wall along X, its box centred on the origin.",
+   "details": "Select the scan and start: OPAD finds its flats from the facets' normals, fits the largest one it stands on as the base and lines its walls up with X; a scan with no flats is aligned by its principal axes. Next base and Next X in the From row offer the other candidates, Flip stands it the other way up and Box centre puts the middle of its box on the origin. Press {fixed:enter} to keep it: it is an Align step, and the fit is kept with it.",
+   "keywords": ["scan", "3d scan", "stl", "mesh", "level", "square up", "orient", "register", "best fit plane", "align to axes"],
+   "requires": "Select a mesh body first (a scan, an STL or an OBJ)."
   },
   {
    "id": "design.remove",

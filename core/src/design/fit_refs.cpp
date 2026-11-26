@@ -187,6 +187,25 @@ json compute_fit(const Ctx& ctx, const json& fit, bool want_axis) {
     r["quality"] = quality_json(f.q);
     return r;
   }
+  if (fit.contains("vertices")) {  // nodes by ordinal ([first, last] ranges): a point cloud's points, or a mesh's
+    std::vector<gp_Pnt> pts;
+    const int count = int(b.mesh->nodes.size());
+    for (const auto& v : fit["vertices"]) {
+      int lo, hi;
+      if (v.is_array() && v.size() == 2) lo = v[0].get<int>(), hi = v[1].get<int>();
+      else lo = hi = v.get<int>();
+      if (lo < 0 || hi >= count || lo > hi) throw Error("a fitted region names points the body does not have (it has " + std::to_string(count) + ")");
+      for (int i = lo; i <= hi; ++i) pts.push_back(b.mesh->nodes[size_t(i)]);
+    }
+    if (of == "auto") of = "normal";
+    if (of == "line") line_result(scanfit::fit_line(pts), "line");
+    else if (of == "plane" || of == "normal") {
+      plane_result(scanfit::fit_plane(pts));
+      if (of == "normal") r["of"] = "normal";
+    } else throw Error("points given by \"vertices\" fit a plane, a normal or a line, not \"" + of + "\"");
+    return r;
+  }
+  if (b.mesh->tri.empty() && of != "scan_axes") throw Error("a point cloud has no triangles to grow a region on: name its points with \"vertices\"");
   if (of == "plane" || of == "normal") {
     plane_result(scanfit::fit_plane_region(*b.mesh, region_of(ctx, b, fit, false)));
     r["region"] = r["quality"]["total"];

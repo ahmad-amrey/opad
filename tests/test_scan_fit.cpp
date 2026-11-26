@@ -2,6 +2,8 @@
 // like a scan and with a corner broken off, or clean as CAD writes STL, or organic with no flat at all; the fitted planes,
 // axes and the automatic alignment checked against the answers the solids were made with.
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Face.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -367,6 +369,25 @@ TEST(scan_axes_of_an_organic_blob) {
   CHECK(f.origin.Distance(tilted(gp_Pnt(0, 0, 0))) < 0.5);  // the box centre
 }
 
+TEST(a_point_cloud_has_nodes_and_principal_axes) {
+  // A cloud body: one face whose triangulation holds points and no triangles. Its nodes are read, it stands by PCA.
+  Handle(Poly_Triangulation) t = new Poly_Triangulation(4000, 0, false);
+  for (int i = 0; i < 4000; ++i) {
+    const double u = (i % 80) * 1.0, v = (i / 80) * 0.6;  // a flat 80 x 30 sheet, 0.2 thick by noise
+    t->SetNode(i + 1, tilted(gp_Pnt(u, v, 0).Translated(noise_at(gp_Pnt(u, v, 1), 0.1))));
+  }
+  TopoDS_Face face;
+  BRep_Builder().MakeFace(face, t);
+  const auto m = scanfit::fit_mesh(face);
+  CHECK(m->triangles() == 0 && m->nodes.size() == 4000u);
+  const scanfit::Plane p = scanfit::fit_plane(m->nodes);
+  CHECK(angle_to(p.normal, tilted(gp_Dir(0, 0, 1))) < 0.5);
+  const scanfit::ScanAxes axes = scanfit::scan_axes(*m);
+  CHECK(axes.method == "pca");
+  CHECK(angle_to(axes.bases[0].normal, tilted(gp_Dir(0, 0, 1))) < 0.5);
+  CHECK(angle_to(scanfit::scan_turns(*m, axes, 0)[0], tilted(gp_Dir(1, 0, 0))) < 0.5);
+}
+
 // ---------------------------------------------------------------- as references (design)
 namespace {
 json body_ref(const std::string& node) { return {{"body", node}, {"kind", "body"}}; }
@@ -491,6 +512,16 @@ TEST(fitted_axes_and_points_as_references) {
   const json wall = {{"fit", {{"body", scan}, {"seed", seed_at(*m, gp_Pnt(50, 0, 5), gp_Dir(0, -1, 0))}}}};
   const json edge = design::fit_reference(doc, after, {{"fit", {{"of", "intersection"}, {"planes", {bottom, wall}}}}}, "axis");
   CHECK(angle_to(gp_Dir(edge["world"]["dir"][0], edge["world"]["dir"][1], edge["world"]["dir"][2]), tilted(gp_Dir(1, 0, 0))) < 0.3);
+  // A construction axis where the two fitted planes meet (mode two_planes).
+  const json meet = commands::run("feature", {{"kind", "axis"}, {"inputs", {{"mode", "two_planes"}, {"plane", bottom}, {"plane2", wall}}}}, &doc);
+  CHECK(!meet.contains("error"));
+  const Scene later = resolve(doc);
+  const json& made = later.features.back().result.at("axis");
+  CHECK(angle_to(gp_Dir(made["dir"][0], made["dir"][1], made["dir"][2]), tilted(gp_Dir(1, 0, 0))) < 0.3);
+  CHECK(line_distance(tilted(gp_Pnt(50, 0, 0)), gp_Pnt(made["origin"][0], made["origin"][1], made["origin"][2]), gp_Dir(made["dir"][0], made["dir"][1], made["dir"][2])) < 0.05);
+  // Both fits were kept in the op (fitted once, when it was made).
+  const json& kept = doc.ops.back().data.at("inputs");
+  CHECK(kept["plane"].contains("result") && kept["plane2"].contains("result"));
   // A fit on a solid body is refused with a reason.
   CHECK_THROWS(design::fit_reference(doc, after, {{"fit", {{"body", "nope"}, {"seed", 0}}}}, "plane"));
 }

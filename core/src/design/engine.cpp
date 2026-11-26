@@ -1636,6 +1636,7 @@ json hint_refs(const Document& doc, const Scene& scene, json inputs) {
     if (j.is_array()) {
       for (auto& v : j) walk(v);
     } else if (j.is_object()) {
+      if (j.contains("fit")) return;  // a fitted reference: its points are kept as given (fit_refs.cpp digests them)
       if (j.contains("body") && j.contains("kind") && j["kind"].is_string() && !j.contains("hint") && !j.contains("select")) {
         try {
           const Ref r = Ref::from_json(j);

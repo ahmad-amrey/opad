@@ -31,7 +31,7 @@ struct FitMesh {
   std::vector<double> area;
   std::vector<gp_Pnt> centre;
   std::vector<std::array<int, 3>> across; // the triangle across each side (welded), -1 none
-  double diagonal = 0, total_area = 0;
+  double diagonal = 0, total_area = 0;  // a point cloud (nodes, no triangles) has only nodes, centroid and diagonal
   gp_Pnt centroid;                        // of the surface (area weighted)
   int triangles() const { return int(tri.size()); }
 };

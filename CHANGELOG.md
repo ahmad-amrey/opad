@@ -17,6 +17,14 @@ Simulate is now for everyone: pick the question that matches your case, from a p
 including a new airflow check for ducts and fittings.
 
 ### Added
+- **Line up 3D scans and STL meshes.** A scan has no exact faces or edges, so OPAD now fits them: click a mesh where a
+  plane or an axis is asked for (Align, Move, a sketch's plane, construction planes and axes) and it fits the flat around
+  the click, or a hole's or boss's axis, and says how good the fit is (how far the mesh strays from it, and over how
+  many triangles), so a curved region taken for a plane shows up as a poor fit. A box over the mesh fits the plane
+  through the triangles it takes, *Fit to points* the plane through picked vertices, and a construction axis can be
+  where two planes meet. **Align scan to axes** stands a scan on XY in one step, its base flat down, a wall along X
+  and centred, with *Next base*, *Next X* and *Flip* for the other ways it could stand. AI assistants get the same fits
+  (`fit_reference`, `scan_axes`).
 - **Simulate asks what you want to find out.** The Simulate tabs are now goals (Air and fluids, Heat, Strength,
   Movement), and the start page shows each check as a plain question with a small picture of the case: "How much
   pressure does a fitting lose?", "Will my electronics box overheat?", "Will it bend or break under a load?", "Will my 3D

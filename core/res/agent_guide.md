@@ -179,6 +179,41 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   optional).
 - The construction `plane` feature's `mode: "point_normal"` goes through `point` square to `normal` (any axis form).
 
+## Fitted references (meshes and scans)
+
+- A mesh body (STL, OBJ, 3MF, a 3D scan) has no exact faces or edges: its "faces" are triangles. Planes and axes on it
+  are fitted: `{"fit": {...}}` wherever a plane or an axis is taken (Align's from/to plane and line, Move's axis, a
+  sketch's plane, construction planes and axes, mirror, split, patterns).
+- Region from a seed: `{"fit": {"body": id, "seed": n, "tolerance": "10 deg"}}`; `seed` is a triangle index (the `n`
+  of `<body>/face/<n>`, e.g. from the live selection). A flat grows while its facets face within the tolerance of the
+  region's mean normal (default 10 deg; noise is averaged out, a sharp edge stops it). Or name the triangles:
+  `"triangles": [n, [first, last], ...]`.
+- Points: `{"fit": {"points": [[x, y, z] | vertex refs (a mesh's `<body>/vertex/<n>` is its node), ...]}}`: 3 or more
+  for a plane (best fit, a stray point left out; its normal turns as the first three non-collinear points), 2 or more
+  for `"of": "line"`. With `"body"` the points move with that body.
+- Points by ordinal: `{"fit": {"body": id, "vertices": [n, [first, last], ...]}}` (node ordinals: a point cloud's points,
+  whose bodies have no triangles to grow a region on; a mesh's nodes too) fits a plane, a `normal` or a `line`.
+- Kinds (`"of"`): planes `plane` (default for a plane input) and `scan_axes`; axes `auto` (default for an axis input: a
+  round region's axis, else the flat's normal), `cylinder` (a hole or a boss: tolerance neighbour to neighbour, default
+  20 deg), `normal`, `wall` (a flat wall's long direction), `line` (points), `intersection` (`"planes": [plane, plane]`,
+  any plane forms, fitted ones too: where they meet).
+- `fit_reference` fits one now and returns it with its `result` plus `world` (origin, normal or dir, x, radius) and
+  `quality`: `rms_mm`, `max_mm`, `used` of `total`, `extent_mm` and `grade` good | fair | poor. Poor means the region is
+  not that shape (a curved region taken for a plane): pick elsewhere or lower the tolerance. Pass the returned ref on
+  as it is: a feature keeps `result` (with the body key it was fitted on) and never fits again while the mesh is the
+  same; a feature given a `fit` without one fits it and stores it.
+- Standing a scan on the axes: `scan_axes {body}` lists the candidates, never one guess: `bases` (flats found by mean
+  shift of the area-weighted normals, the ones the whole scan lies behind first, then by area; `method: "pca"` when it
+  has no flats: the principal directions, the least spread standing up) with quality and share, each with its X
+  `turns` (the walls' main direction and its quarter turns). `align_inputs` is a ready Align: `from_plane: {"fit":
+  {"body", "of": "scan_axes", "base": 0, "turn": 0, "origin": "auto"}}` onto `{"base": "xy"}` with `"frame": true`
+  (origin and X onto the plane's too). Choose another with `base` / `turn`, `"flip": true` stands it the other way up,
+  `origin` "base" (centred, on its base) or "centre" (the box centre; pca's default).
+- Live server: a `seed` or `triangles` names no entity and needs no reference token (a triangle the user selected is
+  the `n` of its `<body>/face/<n>`); vertex refs in `points` do, as any vertex input, so pass coordinates there.
+- Align's `frame` (to a plane): the From plane's frame onto the To plane's, origin, normal and x; `offset` and `angle`
+  then lift and turn it about the To normal.
+
 ## Feature conventions
 
 - Primitives (box, cylinder, sphere, cone, torus, coil) sit on their `plane` at (`x`, `y`) in its frame and grow along

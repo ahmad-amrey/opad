@@ -393,6 +393,28 @@ sides (chord sagitta limited by `mesh_sagitta`); arcs need their centre on the e
 not close. `OPAD_MESHSOLID_DEBUG=1` traces why a profile or attempt was refused. `ctest -R mesh_solid`; bench
 `mesh-to-solid` (OPAD_BENCH_MESHSOLID).
 
+## Fitted references on meshes (`core/src/scan_fit.cpp`, `core/src/design/fit_refs.cpp`, `app/FitPick.*`)
+
+A scan's "faces" are triangles, so planes and axes on a mesh body are fitted: `{"fit": {body, seed | triangles | points |
+planes, tolerance, of}, "result": {...}}` in any plane or axis input (`Ctx::plane` / `Ctx::axis` -> `fitted_plane` /
+`fitted_axis`). The result is stored in body coordinates with the body key and a digest of `fit`: while both match it is
+used as is (a moved body carries it), else fitted again; `complete_feature_fits` in the Walk writes results into new ops
+and edits, as automatic targets are (replay never fits). Fits are robust: least median of squares over sampled hypotheses,
+then least squares on the 3-sigma inliers; a region grows from its seed by normals (averaged over 6 rings on noisy meshes,
+raw on clean CAD ones) plus "on the region's plane" for facets the noise turned; round faces (`grow_round`) grow by the
+cylinder fitted so far (corner distances, normals square to the axis), so neither noise nor a rim stops or leaks them.
+`Quality.grade` (rms / extent, inlier share) tells a curved region taken for a plane. `scan_axes`: mean shift of the
+area-weighted (averaged) normals from a cube-map histogram, each direction's heaviest offset band fitted as a base, bases
+the scan lies behind first; walls by a doubled-angle histogram in the base plane, quarter turns offered; no flat over 4% =
+PCA. Align's `frame` input maps the From frame onto the To one. UI: a mesh triangle (face or edge pick) in the plane
+picker or an axis input becomes a fit (`fitpick::fromPick`), a box of triangles `fromTriangles`, the picker's Fit to
+points `fromPoints`; `DesignController::refitPick` fits on a worker and the panel's fit row (tolerance, kind, Next base /
+Next X / Box centre) asks again; the preview waits for the fit (`FeaturePanel::complete`). `design.alignScan` = Align with
+`scan_axes`. Point clouds (a face whose triangulation has nodes, no triangles): `fit_mesh` keeps the nodes only, a fit takes
+them by `"vertices"` ranges (plane, normal, line), `scan_axes` falls back to PCA of the points. Test meshes: faces split into cells (`BRepAlgoAPI_Splitter` on the skin, never the solid: cells get inner
+walls) and subdivided at side midpoints (shared sides split alike), noise hashed by position. `ctest -R scan-fit`; bench
+`fit-align` (OPAD_BENCH_FITALIGN, generated 1.1M-triangle plate). Commands `fit_reference`, `scan_axes`.
+
 ## One-shot tools (close after use, Shift keeps them)
 
 A tool normally used once ends after Apply / OK / Enter and closes its panel; Shift held (Shift+Enter, Shift+click on the
