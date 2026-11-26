@@ -49,6 +49,10 @@ struct ImportOptions {
   // <DWG_NO>) are returned here where they stand instead of drawn: {tag, sample, at [x, y] mm, height, halign 0-2, valign
   // 0 baseline-3 top, angle, w}.
   std::vector<json>* text_fields = nullptr;
+  // Point clouds (opad/point_cloud.hpp): mm per file unit (0: the format's own, E57 and LAS metres, the rest mm) and the
+  // file's up axis ("y" turns it to Z up; empty: Z).
+  double cloud_scale = 0;
+  std::string up_axis;
 };
 
 struct ImportResult {

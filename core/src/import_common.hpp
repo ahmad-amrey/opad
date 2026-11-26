@@ -95,5 +95,7 @@ ImportResult import_image(Document& doc, const std::filesystem::path& file, cons
 ImportResult import_stl(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
 ImportResult import_ply(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
 ImportResult import_3mf(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
+// Point clouds (opad/point_cloud.hpp): XYZ / PTS / CSV, E57, LAS, and a PLY without faces; one body of representation "points".
+ImportResult import_cloud(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
 
 }  // namespace opad::detail

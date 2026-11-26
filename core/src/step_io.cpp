@@ -67,6 +67,7 @@
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
 #include "import_common.hpp"
+#include "opad/point_cloud.hpp"
 
 namespace opad {
 
@@ -650,7 +651,9 @@ std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const Impor
     doc.add_live_body(key, meta);
   } else {
     std::string brep;
-    if (mesh) {
+    if (meta.value("representation", "") == "points") {
+      brep = cloud::to_brep(shape);  // a point cloud: its nodes, normals and colours are the geometry
+    } else if (mesh) {
       // A mesh has no surfaces: its triangulation is the geometry, so it goes into the text.
       std::ostringstream ss;
       ss.precision(17);
@@ -682,6 +685,7 @@ std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const Impor
 
 std::string persist_body(TopoDS_Shape& shape, json& meta, bool& healed) {
   const std::string representation = meta.value("representation", "solid");
+  if (representation == "points") return cloud::to_brep(shape);
   if (representation == "mesh") {  // the triangulation is the geometry
     std::ostringstream ss;
     ss.precision(17);
