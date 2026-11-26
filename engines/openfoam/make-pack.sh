@@ -35,21 +35,25 @@ PROGRAMS=(
   solvers/heatTransfer/buoyantBoussinesqSimpleFoam
   solvers/heatTransfer/chtMultiRegionFoam/chtMultiRegionSimpleFoam
 )
-# Only the libraries they link, in src/Allwmake's order: all of src/ is about three times as much to compile (an hour and
-# more on 16 cores, several on a CI runner). libOpenFOAM and libPstream come first (see the build below). Some are only
-# named on the programs' link lines (the dummy decomposers, fvOptions, regionModels, ...): the linker needs them to
-# exist, but no program imports them, so they stay out of the pack.
+# Only the libraries they link, and those link against, in the order src/Allwmake builds them (all of src/ is about twice
+# as much to compile: an hour and a half on 16 cores). The list is the closure of the programs' Make/options -l names
+# through each library's own Make/options; most are only named on link lines (the linker wants them, no program imports
+# them, so they stay out of the pack). libOpenFOAM and libPstream come first (see the build below).
 LIBRARIES=(
   fileFormats surfMesh meshTools finiteArea finiteVolume mesh/blockMesh mesh/extrudeModel dynamicMesh genericPatchFields
   parallel/decompose/decompositionMethods
   dummyThirdParty/scotchDecomp dummyThirdParty/ptscotchDecomp dummyThirdParty/metisDecomp dummyThirdParty/kahipDecomp
-  lagrangian/basic parallel/decompose/decompose parallel/reconstruct/reconstruct parallel/distributed dynamicFvMesh sampling
-  transportModels/twoPhaseMixture transportModels/incompressible transportModels/compressible
+  lagrangian/basic lagrangian/distributionModels parallel/decompose/decompose parallel/reconstruct/reconstruct
+  parallel/distributed dynamicFvMesh sampling
+  transportModels/twoPhaseMixture transportModels/interfaceProperties transportModels/twoPhaseProperties
+  transportModels/incompressible transportModels/compressible transportModels/geometricVoF ODE
   thermophysicalModels/specie thermophysicalModels/solidSpecie thermophysicalModels/thermophysicalProperties
-  thermophysicalModels/basic thermophysicalModels/reactionThermo thermophysicalModels/solidThermo thermophysicalModels/radiation
-  TurbulenceModels/turbulenceModels TurbulenceModels/incompressible TurbulenceModels/compressible
-  overset fvOptions fvMotionSolver mesh/snappyHexMesh thermoTools regionModels/regionModel faOptions regionFaModels
-  atmosphericModels
+  thermophysicalModels/basic thermophysicalModels/reactionThermo thermophysicalModels/chemistryModel
+  thermophysicalModels/SLGThermo thermophysicalModels/solidThermo thermophysicalModels/radiation
+  TurbulenceModels/turbulenceModels TurbulenceModels/incompressible TurbulenceModels/compressible combustionModels
+  overset fvOptions fvMotionSolver mesh/snappyHexMesh phaseSystemModels/reactingEuler/saturationModels
+  phaseSystemModels/multiphaseInter/phasesSystem functionObjects/forces thermoTools regionModels/regionModel faOptions
+  regionFaModels atmosphericModels
 )
 
 recipe=$(cd "$(dirname "$0")" && pwd)
@@ -106,25 +110,26 @@ set -u
 export CPATH="$zlib/include" FOAM_EXTRA_CXXFLAGS="-fno-jump-tables -L$zlib/lib" WM_NCOMPPROCS="$jobs"
 log="$work/build.log"
 echo "building OpenFOAM ${OF_VERSION} for $WM_OPTIONS in $src (log: $log)"
+# set -e is off in a subshell whose status is tested (the || after it): each step that can fail ends it itself.
 (
-  set -e
-  cd "$src"
-  wmake/src/Allmake
-  cd src
-  wmakeLnIncludeAll -j "$jobs"  # every library's headers, as src/Allwmake makes them first
+  fail() { echo "error: $*" >&2; exit 1; }
+  cd "$src" || fail "no $src"
+  wmake/src/Allmake || fail "wmake's own tools"
+  cd src || fail "no src/"
+  wmakeLnIncludeAll -j "$jobs" || fail "the libraries' headers"  # every library's headers, as src/Allwmake makes them first
   OpenFOAM/Alltouch -check 2>/dev/null || true
-  OSspecific/MSwindows/Allwmake
+  OSspecific/MSwindows/Allwmake || fail "OSspecific"
   # MinGW: libOpenFOAM and libPstream need each other. Pstream's dummy goes into libOpenFOAM as an object first, then is
   # built as its own DLL against it, then libOpenFOAM is linked again against that DLL (src/Allwmake's Mingw case).
-  WM_MPLIB=dummy Pstream/Allwmake libo
-  FOAM_LINK_DUMMY_PSTREAM=libo wmake -j "$jobs" OpenFOAM
-  Pstream/Allwmake
+  WM_MPLIB=dummy Pstream/Allwmake libo || fail "Pstream (object)"
+  FOAM_LINK_DUMMY_PSTREAM=libo wmake -j "$jobs" OpenFOAM || fail "OpenFOAM (first link)"
+  Pstream/Allwmake || fail "Pstream"
   OpenFOAM/Alltouch 2>/dev/null || true
-  wmake -j "$jobs" OpenFOAM
-  for d in "${LIBRARIES[@]}"; do wmake -j "$jobs" "$d"; done
+  wmake -j "$jobs" OpenFOAM || fail "OpenFOAM"
+  for d in "${LIBRARIES[@]}"; do wmake -j "$jobs" "$d" || fail "src/$d"; done
   cd ..
-  [ -f "platforms/$WM_OPTIONS/lib/libOpenFOAM.dll" ] || { echo "error: no libOpenFOAM.dll was built" >&2; exit 1; }
-  for p in "${PROGRAMS[@]}"; do wmake -j "$jobs" "applications/$p"; done
+  [ -f "platforms/$WM_OPTIONS/lib/libOpenFOAM.dll" ] || fail "no libOpenFOAM.dll was built"
+  for p in "${PROGRAMS[@]}"; do wmake -j "$jobs" "applications/$p" || fail "applications/$p"; done
 ) >"$log" 2>&1 || { tail -60 "$log" >&2; exit 1; }
 
 # The pack: the programs, every DLL they import that is not Windows' own (Pstream's dummy among them), etc/, licenses.
