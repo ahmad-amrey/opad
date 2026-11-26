@@ -1541,6 +1541,14 @@
    "requires": "Open or create a document first; not available while a sketch is open."
   },
   {
+   "id": "inspect.deviation",
+   "title": "Deviation",
+   "summary": "Shows how far a measured body, such as a 3D scan or a printed part, lies from a reference as a colour map with statistics.",
+   "details": "Pick the measured body, then the reference (or select both first). Each sampled point gets its signed distance to the reference: green within the tolerance, yellow to red where material was added, cyan to blue where it is missing. The panel lists the mean, median, RMS, the largest deviations and the share within tolerance, with a histogram and the worst spots, which are pinned on the model; rest the mouse on the map to read a spot and click to pin it. Best fit aligns the measured body onto the reference first as a preview you accept or discard.",
+   "keywords": ["scan", "compare surfaces", "colour map", "reverse engineering", "print accuracy", "best fit", "tolerance"],
+   "requires": "Open a document with two bodies first; not available while a sketch is open."
+  },
+  {
    "id": "inspect.pin",
    "title": "Pin",
    "summary": "Keeps the current measurement in the document as an annotation.",

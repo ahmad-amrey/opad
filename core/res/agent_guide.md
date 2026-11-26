@@ -487,6 +487,22 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
 - `clearance` (read-only) between two groups `a` and `b` (bodies or components): `min_distance_mm` and the closest
   pair, then the pairs across that intersect (overlap volume and box), touch, or come closer than `clearance_mm`,
   worst first and paged; `status` intersecting|touching|too_close|clear. An enclosure against a board assembly.
+- `deviation` (read-only) checks reverse-engineering and print accuracy without exporting: how far `from` (a mesh or a
+  solid, typically the scan) lies from `to` (the CAD rebuilt from it, or the design of a printed part; bodies or
+  components on either side), signed per sampled point of `from`: + it lies outside `to` (material added), - inside
+  (material missing). `tolerance` (mm, default 0.1) is the band counted in `stats.within_tolerance_pct`; `stats` also
+  holds mean, median, rms, std_dev, min, max, max_abs and p90/p95/p99 of |d|; `histogram` (`from`, `to`, `bin_mm`,
+  `counts`, `below`, `above`) and `worst` (the places beyond tolerance, worst first, clustered so they are apart:
+  `position`, `value`, `nearest` on `to`, `points` in the cluster) say where. A scan's vertices are the samples (thinned
+  evenly past `sample`, default 500000), a solid's faces are sampled by area; `sampling` says what was taken. Options:
+  `both_ways` adds `reverse` (`to` against `from`: what the scan does not cover, filled holes), `max_distance` ignores
+  points farther than that (noise, other parts; counted in `ignored`), `region` keeps faces of `from`
+  (`"<body>/face/<n>"`) or a world box `{"min", "max"}`, `align: true` fits `from` onto `to` first (ICP,
+  point-to-plane) and reports `alignment` (matrix, rms_before, rms_after, turned_deg) without moving anything: pass
+  its matrix to `transform` (composed with the body's own placement) to keep it. Where `to` is open (a scan as the
+  reference) the sign is undefined at its border: `sign_defined` false, `sign_note`, `sign_undefined` counts. A
+  reverse-engineering pass: aim for a median |d| near the scan's noise and a high `within_tolerance_pct`, then fix the
+  `worst` spots one by one.
 - The `interference` feature keeps such a check in the timeline: `bodies` (all solids so far if none), `clearance`,
   `fail_on` (`nothing`, `interference` or `clearance`). Its result's `check` holds the report (status, pairs, overlap
   volumes, distances) and is computed again whenever those bodies change; with `fail_on`, a finding is the

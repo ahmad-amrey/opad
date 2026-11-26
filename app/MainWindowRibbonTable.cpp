@@ -73,7 +73,7 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
     group(tab, "measure", tr("Measure"),
           {{"inspect.distance"}, {"inspect.angle"}, {"inspect.radius"}, {"inspect.bbox", S}, {"inspect.length", S}, {"inspect.area", S}, {"inspect.pin"}});
     group(tab, "section", tr("Section"), {{"inspect.section"}, {"inspect.flip", S}, {"panel.section", S}});
-    group(tab, "check", tr("Check"), {{"inspect.interference"}, {"inspect.printcheck"}, {"kicad.clearance", S}});
+    group(tab, "check", tr("Check"), {{"inspect.interference"}, {"inspect.printcheck"}, {"inspect.deviation"}, {"kicad.clearance", S}});
     group(tab, "properties", tr("Properties"), {{"inspect.properties"}, {"inspect.partProperties", S}, {"inspect.material", S}, {"select.similar", S}});
   };
 

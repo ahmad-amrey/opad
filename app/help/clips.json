@@ -1806,6 +1806,31 @@
    ]
   },
   {
+   "id": "inspect.deviation", "duration": 6.4, "view": "iso", "extent": [-42, -16, 42, 20],
+   "items": [
+    {"el": "camera", "center": [-17, 0]},
+    {"el": "plane", "plane": "xy", "center": [0, 0, 0], "size": [40, 30], "color": "fg3", "fillOpacity": 0.1},
+    {"el": "solid", "profile": {"rect": [0, 0, 28, 18]}, "height": 10, "opacity": 0.18, "from": 0.9, "fade": 0.3},
+    {"el": "solid", "profile": {"rect": [0, 0, 28, 18]}, "height": 10, "tone": "green", "toneAmount": 0, "keys": [[1.3, {"toneAmount": 0}], [1.8, {"toneAmount": 0.55}]]},
+    {"el": "solid", "at": [0, 0, 10], "profile": {"rect": [7, 3, 7, 5]}, "height": 1.2, "tone": "red", "toneAmount": 0.7, "from": 1.7, "fade": 0.3},
+    {"el": "solid", "at": [0, 0, 10], "profile": {"rect": [-7, -3, 8, 6]}, "height": 0.15, "tone": "blue", "toneAmount": 0.7, "from": 1.7, "fade": 0.3},
+    {"el": "label", "at": [7, 3, 11.2], "dy": -12, "value": "1  +1.05 mm", "box": "bg2", "color": "fg", "from": 2.2, "fade": 0.2},
+    {"el": "label", "at": [-7, -3, 10.2], "dy": -12, "value": "2  −0.62 mm", "box": "bg2", "color": "fg", "from": 2.4, "fade": 0.2},
+    {"el": "card", "screen": [0.03, 0.06], "w": 160, "title": "Deviation", "hl": -1, "from": 0.3,
+     "rows": [{"text": "Pick the reference", "dim": true}],
+     "keys": [[0.9, {"rows": [{"text": "Measuring…", "dim": true}]}],
+              [1.8, {"rows": [{"text": "94.2% within ±0.10 mm", "color": "green"}, {"text": "Max outside +1.05 mm", "color": "red"},
+                              {"text": "Max inside −0.62 mm", "color": "blue"}]}]]},
+    {"el": "label", "at": [3, -6, 5], "dx": 30, "dy": 6, "value": "+0.03 mm", "box": "bg2", "color": "green", "from": 4.0, "fade": 0.2},
+    {"el": "cursor", "keys": [[0, {"screen": [0.62, 0.75]}], [0.6, {"screen": [0.5, 0.7]}], [0.8, {"screen": [0.5, 0.7], "click": 1}], [3.4, {"screen": [0.56, 0.62]}], [3.9, {"screen": [0.56, 0.62], "click": 1}], [5.0, {"screen": [0.62, 0.72]}]]}
+   ],
+   "steps": [
+    {"to": 1.3, "caption": "Pick the scan, then the reference"},
+    {"to": 3.2, "caption": "Green is within tolerance; red added, blue missing"},
+    {"to": 6.4, "caption": "Rest on the map to read a spot, click to pin it"}
+   ]
+  },
+  {
    "id": "inspect.flip", "duration": 4.4, "view": "iso",
    "items": [
     {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},

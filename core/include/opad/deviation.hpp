@@ -159,10 +159,14 @@ struct Study {
   Values values;
   gp_Trsf alignment;  // applied to A before measuring (identity without align)
   std::vector<std::string> from_bodies, to_bodies;
+  double size = 0;  // the from side's box diagonal (the worst spots are apart by 6% of it, at least ten tolerances)
+  size_t limit = 0;
 };
 using ProgressFn = std::function<void(const std::string& phase, int percent)>;
 Study run(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled = {}, const ProgressFn& progress = {});
 json command(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled = {});
+// The from side's stats, histogram and worst spots again for another tolerance or range (the values stay): cheap, no BVH.
+json summary(const Study& study, double tolerance, int bins = 40, double range = 0, int worst = 8);
 
 // The deflection a solid is meshed at for a tolerance and a size (its box's diagonal).
 double deflection_for(double tolerance, double diagonal);

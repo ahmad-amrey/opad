@@ -275,7 +275,14 @@ std::shared_ptr<const opad::FaceColors> paintedOver(const std::shared_ptr<const 
 }
 }  // namespace
 
-void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints) {
+void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints) { applyTints(std::move(tints), {}, false); }
+
+void Viewport::setVertexPaints(std::map<std::string, std::shared_ptr<const VertexPaint>> paints) { applyTints({}, std::move(paints), true); }
+
+// Compare's face colours and Deviation's vertex paints share the tinted arrays (m_faceTints); each call manages its own kind
+// and leaves the other's entries alone (a body has one of them at a time: the first one asked for).
+void Viewport::applyTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints, std::map<std::string, std::shared_ptr<const VertexPaint>> paints,
+                          bool painting) {
   if (!m_initialised) return;
   bool redraw = false, glowsStale = false;
   // An object's drawn arrays changed: its glow was made from the old ones.
@@ -288,16 +295,35 @@ void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::Fa
       glowsStale = true;
     }
   };
-  // Tints no longer wanted (or wanted otherwise, or on a body drawn again since): the body's own arrays again.
+  // Tints no longer wanted (or wanted otherwise, or on a body drawn again since): the body's own arrays again. A paint
+  // replaced by another keeps the old colours drawn until the new ones are ready (no flash of the plain body).
   for (auto it = m_faceTints.begin(); it != m_faceTints.end();) {
-    const auto want = tints.find(it->first);
-    const auto item = m_items.find(it->first);
-    const bool drawnSince = item == m_items.end() || item->second.key != it->second.key || (it->second.ais && item->second.ais.get() != it->second.ais);
-    if (want != tints.end() && want->second && !drawnSince && sameColors(*want->second, *it->second.colors)) {
+    if ((it->second.paint != nullptr) != painting) {
       ++it;
       continue;
     }
-    if (item != m_items.end() && it->second.ais && item->second.ais.get() == it->second.ais)
+    const auto item = m_items.find(it->first);
+    const bool drawnSince = item == m_items.end() || item->second.key != it->second.key || (it->second.drawnOn && item->second.ais.get() != it->second.drawnOn);
+    if (painting) {
+      const auto want = paints.find(it->first);
+      if (want != paints.end() && want->second && !drawnSince) {
+        if (want->second != it->second.paint) {
+          it->second.paint = want->second;
+          it->second.ais = nullptr;  // made again below; drawnOn keeps the old colours meanwhile
+          it->second.arrays.reset();
+          m_refined.erase(refineTintKey(it->first));
+        }
+        ++it;
+        continue;
+      }
+    } else {
+      const auto want = tints.find(it->first);
+      if (want != tints.end() && want->second && !drawnSince && sameColors(*want->second, *it->second.colors)) {
+        ++it;
+        continue;
+      }
+    }
+    if (item != m_items.end() && it->second.drawnOn && item->second.ais.get() == it->second.drawnOn)
       if (const auto body = Handle(BodyShape)::DownCast(item->second.ais); !body.IsNull()) {
         const auto refined = m_refined.find(item->second.key);
         if (body->setDisplayPrs(refined != m_refined.end() ? refined->second.prs : nullptr)) recompute(body);
@@ -312,23 +338,42 @@ void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::Fa
     Bnd_Box box;
     double deflection = 0;
     std::shared_ptr<const opad::FaceColors> colors;
+    std::shared_ptr<const VertexPaint> paint;
+    std::shared_ptr<const BodyPrs> base;
+    gp_Trsf placed;
     std::shared_ptr<BodyPrs> out;
   };
   auto builds = std::make_shared<std::vector<Build>>();
-  for (const auto& [id, colors] : tints) {
-    if (!colors || colors->empty() || m_faceTints.count(id)) continue;
+  auto admit = [&](const std::string& id, std::shared_ptr<const opad::FaceColors> colors, std::shared_ptr<const VertexPaint> paint) {
+    if (m_faceTints.count(id)) return;
     const auto item = m_items.find(id);
-    if (item == m_items.end() || !item->second.rigid || item->second.stretch != 1) continue;
+    if (item == m_items.end() || !item->second.rigid || item->second.stretch != 1) return;
     const auto body = Handle(BodyShape)::DownCast(item->second.ais);
-    if (body.IsNull() || body->curveOnly() || !body->prs() || body->prs()->triangles.IsNull()) continue;
-    m_faceTints[id] = {colors, nullptr, item->second.key};
+    if (body.IsNull() || body->curveOnly() || !body->prs() || body->prs()->triangles.IsNull()) return;
+    FaceTint tint;
+    tint.colors = colors ? std::move(colors) : std::make_shared<const opad::FaceColors>();
+    tint.paint = std::move(paint);
+    tint.key = item->second.key;
+    m_faceTints[id] = std::move(tint);
+  };
+  if (painting) {
+    for (const auto& [id, paint] : paints)
+      if (paint) admit(id, nullptr, paint);
+  } else {
+    for (const auto& [id, colors] : tints)
+      if (colors && !colors->empty()) admit(id, colors, nullptr);
   }
   for (const auto& [id, tint] : m_faceTints) {
-    if (tint.ais) continue;  // drawn already
+    if (tint.ais || (tint.paint != nullptr) != painting) continue;  // drawn already, or the other kind's
     const Item& item = m_items.at(id);
     const auto& base = Handle(BodyShape)::DownCast(item.ais)->prs();
     try {
-      builds->push_back({id, item.key, opad::body_shape(m_doc->doc, item.key), base->box, base->deflection, paintedOver(base->faceColors, *tint.colors), nullptr});
+      Build b{id, item.key, {}, base->box, base->deflection, nullptr, tint.paint, base, opad::trsf_from_mat(item.world), nullptr};
+      if (!tint.paint) {
+        b.shape = opad::body_shape(m_doc->doc, item.key);
+        b.colors = paintedOver(base->faceColors, *tint.colors);
+      }
+      builds->push_back(std::move(b));
     } catch (const std::exception&) {
     }
   }
@@ -338,23 +383,28 @@ void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::Fa
     redrawScene();
   }
   if (builds->empty() || !m_jobs) return;
-  const unsigned serial = ++m_faceTintSerial;  // the bodies still waiting are in this job too
-  m_jobs->async(tr("Colouring the changed faces"), [builds](Progress p) {
+  unsigned& counter = painting ? m_paintSerial : m_faceTintSerial;
+  const unsigned serial = ++counter;  // the bodies still waiting are in this job too
+  m_jobs->async(painting ? tr("Colouring the deviation map") : tr("Colouring the changed faces"), [builds](Progress p) {
     for (auto& b : *builds) {
       if (p.cancelled()) return;
+      if (b.paint) {
+        b.out = b.paint->paint(*b.base, b.placed, [p] { return p.cancelled(); });  // the base mesh's arrays, coloured
+        continue;
+      }
       b.out = BodyPrs::build(b.shape, b.box, true, b.colors);  // the base mesh's own triangles: drawn as the body is picked
       b.out->deflection = b.deflection;
     }
-  }, [this, builds, serial](bool ok, const QString&) {
-    if (!ok || serial != m_faceTintSerial) return;
+  }, [this, builds, serial, painting](bool ok, const QString&) {
+    if (!ok || serial != (painting ? m_paintSerial : m_faceTintSerial)) return;
     bool redraw = false, glowsStale = false;
     for (const auto& b : *builds) {
       const auto tint = m_faceTints.find(b.id);
       const auto item = m_items.find(b.id);
-      if (!b.out || tint == m_faceTints.end() || tint->second.ais || item == m_items.end() || item->second.key != b.key) continue;
+      if (!b.out || tint == m_faceTints.end() || tint->second.ais || tint->second.paint != b.paint || item == m_items.end() || item->second.key != b.key) continue;
       const auto body = Handle(BodyShape)::DownCast(item->second.ais);
       if (body.IsNull()) continue;
-      tint->second.ais = body.get();
+      tint->second.ais = tint->second.drawnOn = body.get();
       tint->second.arrays = b.out;  // refined like the body's own once the camera rests close (refineVisible)
       if (!body->setDisplayPrs(b.out)) continue;
       m_ctx->RecomputePrsOnly(body, Standard_False);
@@ -366,6 +416,7 @@ void Viewport::setFaceTints(std::map<std::string, std::shared_ptr<const opad::Fa
       }
     }
     if (glowsStale) applySelectionLayers();
+    if (painting) emit vertexPaintsDrawn();
     if (!redraw) return;
     if (m_style == Style::HiddenEdges) scheduleEdgeOverlay();
     redrawScene();

@@ -842,6 +842,8 @@ Study run(const Document& doc, const Scene& scene, const json& args, const std::
   say("Measuring", 45);
   study.values = measure(study.samples, *study.to, max_distance, exact, cancelled);
   stopped();
+  study.size = diagA;
+  study.limit = limit;
   const double radius = std::max(10 * tolerance, diagA * 0.06);
   json forward = side_report(study.samples, study.values, tolerance, bins, range, worst, radius, limit);
   report["from"] = {{"bodies", study.from_bodies}, {"kind", meshA ? "mesh" : "solid"}, {"triangles", trisA.triangle_count()}};
@@ -880,6 +882,10 @@ Study run(const Document& doc, const Scene& scene, const json& args, const std::
   say("Done", 100);
   study.report = std::move(report);
   return study;
+}
+
+json summary(const Study& study, double tolerance, int bins, double range, int worst) {
+  return side_report(study.samples, study.values, tolerance, bins, range, worst, std::max(10 * tolerance, study.size * 0.06), study.limit);
 }
 
 json command(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled) {

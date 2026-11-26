@@ -39,6 +39,7 @@
 #include "AppDocument.hpp"
 #include "BodyLook.hpp"
 #include "BodyShape.hpp"
+#include "VertexPaint.hpp"
 #include "ScrollInput.hpp"
 #include "Theme.hpp"
 #include "Tracking.hpp"
@@ -416,6 +417,21 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // faces), over the faces the file coloured. The arrays are built on a worker from the base mesh and drawn in place of
   // the zoom refinement's while the tint lasts. Node id -> colours; empty: none.
   void setFaceTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints);
+  // Bodies drawn with a colour per vertex (Deviation's map, VertexPaint.hpp): like the face tints, the coloured arrays are
+  // made on a worker from the base mesh (vertexPaintsDrawn once drawn) and refined with the body; a paint replaced by
+  // another stays drawn until the new one is ready. Node id -> paint; empty: none. A body with Compare's tint keeps that.
+  void setVertexPaints(std::map<std::string, std::shared_ptr<const VertexPaint>> paints);
+  bool vertexPaintDrawn(const std::string& id) const;  // its current paint is drawn (benches)
+  // Labels pinned to points of the model (Deviation's worst spots and probes): text on a coloured plate with a dot at the
+  // point, drawn over everything (Topmost), never picked or fitted. Replaces the earlier ones; empty: none.
+  struct Pin {
+    opad::Vec3 at{0, 0, 0};
+    QString text;
+    QColor color;
+  };
+  void setDeviationPins(const std::vector<Pin>& pins);
+  size_t deviationPinCount() const { return m_deviationPins.size() / 2; }
+  opad::json benchVertexPaint(const std::string& id, size_t samples) const;  // OPAD_BENCH_DEVIATION: drawn or not, sampled vertices (world) and colours
   bool faceTintsPending() const {
     return std::any_of(m_faceTints.begin(), m_faceTints.end(), [](const auto& t) { return t.second.ais == nullptr; });
   }
@@ -735,6 +751,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void filterApplied();     // a setSelectionFilter() call has reached every displayed body
   void hoverChanged(const QString& text);
   void hoverPoint(bool valid, const opad::Vec3& point);  // with hoverChanged: where the mouse met the hovered entity
+  void vertexPaintsDrawn();  // setVertexPaints: the coloured arrays asked for are on screen
   // The drawing entity under the mouse in the 2D vocabulary: drawing2d::entityInfo plus body and index; null when none.
   void hoverInfo(const opad::json& info);
   void contextMenuRequested(const QPoint& globalPos);
@@ -1268,9 +1285,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
     const AIS_InteractiveObject* ais = nullptr;  // drawn on this object (null: its arrays are being built)
     std::string key;
     std::shared_ptr<const BodyPrs> arrays;  // its coloured base mesh: what the body goes back to when its refinement is dropped
+    std::shared_ptr<const VertexPaint> paint;     // setVertexPaints: coloured per vertex instead of per face (colors empty)
+    const AIS_InteractiveObject* drawnOn = nullptr;  // showing some arrays of this entry (a paint's older ones while ais is null)
   };
-  std::map<std::string, FaceTint> m_faceTints;  // setFaceTints
-  unsigned m_faceTintSerial = 0;
+  std::map<std::string, FaceTint> m_faceTints;  // setFaceTints, setVertexPaints
+  unsigned m_faceTintSerial = 0, m_paintSerial = 0;
+  void applyTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints, std::map<std::string, std::shared_ptr<const VertexPaint>> paints, bool painting);
+  std::vector<Handle(AIS_InteractiveObject)> m_deviationPins;  // setDeviationPins (ViewportDeviation.cpp)
   bool faceTinted(const std::string& id) const { return m_faceTints.count(id) > 0; }
   void styleComparePart(const Handle(AIS_Shape)& ais, const ComparePart& part);
   class SideView;  // side by side (ViewportCompare.cpp)

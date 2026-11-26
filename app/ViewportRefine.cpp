@@ -90,11 +90,14 @@ void Viewport::refineVisible() {
     Bnd_Box box;
     std::shared_ptr<const opad::FaceColors> colors;
     std::shared_ptr<const BodyPrs> base;  // what it was drawn from: the result lands only while that is still so
+    std::shared_ptr<const VertexPaint> paint;  // Deviation's map: the finer arrays coloured per vertex too
+    gp_Trsf placed;
   };
   std::map<std::string, Want> wants;
   // One drawn object: `base` the arrays it was drawn from before any refinement, `placed` where it stands, `shape` the
   // geometry to mesh again (read only when it is wanted).
-  auto consider = [&](const std::string& key, const std::shared_ptr<const BodyPrs>& base, const gp_Trsf& placed, const std::function<TopoDS_Shape()>& shape) {
+  auto consider = [&](const std::string& key, const std::shared_ptr<const BodyPrs>& base, const gp_Trsf& placed, const std::function<TopoDS_Shape()>& shape,
+                      const std::shared_ptr<const VertexPaint>& paint = nullptr) {
     if (!base || base->triangles.IsNull() || !(base->deflection > 0) || base->box.IsVoid()) return;
     auto refined = m_refined.find(key);
     if (refined != m_refined.end()) refined->second.used = m_refineClock;
@@ -125,7 +128,7 @@ void Viewport::refineVisible() {
       } catch (const std::exception&) {
       }
       if (geometry.IsNull()) return (void)wants.erase(key);
-      want = {key, deflection, 0, triangles * base->deflection / deflection, geometry, base->box, base->faceColors, base};
+      want = {key, deflection, 0, triangles * base->deflection / deflection, geometry, base->box, base->faceColors, base, paint, placed};
     }
     want.area += area;
   };
@@ -137,7 +140,7 @@ void Viewport::refineVisible() {
     if (const auto painted = m_faceTints.find(id); painted != m_faceTints.end()) {
       // Compare's coloured faces: their own arrays refined, with the same colours.
       if (painted->second.ais == item.ais.get() && painted->second.arrays)
-        consider(refineTintKey(id), painted->second.arrays, placed, [this, key = item.key] { return opad::body_shape(m_doc->doc, key); });
+        consider(refineTintKey(id), painted->second.arrays, placed, [this, key = item.key] { return opad::body_shape(m_doc->doc, key); }, painted->second.paint);
       continue;
     }
     std::shared_ptr<const BodyPrs> base;
@@ -180,6 +183,11 @@ void Viewport::refineVisible() {
       auto prs = BodyPrs::build(copy, want.box, true, want.colors);
       prs->indexSubShapes(copy);  // a selected or hovered face or edge drawn from these triangles too
       prs->deflection = want.deflection;
+      if (want.paint) {  // the map on the finer triangles
+        auto painted = want.paint->paint(*prs, want.placed, [p] { return p.cancelled(); });
+        if (!painted) continue;
+        prs = std::move(painted);
+      }
       (*results)[i] = std::move(prs);
     }
   }, [this, pass, results, cache, started](bool ok, const QString&) {
