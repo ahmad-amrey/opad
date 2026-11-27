@@ -240,6 +240,20 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::refreshValues);
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::inputsSettled);
   connect(m_form, &FeaturePanel::pairsEdited, this, [this] { syncSelectionToInput(); });  // a pair removed in the list
+  m_creaseTimer.setSingleShot(true);
+  m_creaseTimer.setInterval(120);  // the pointer resting on a side, not passing over it
+  connect(&m_creaseTimer, &QTimer::timeout, this, &DesignController::creaseHover);
+  connect(m_viewport, &Viewport::hoverPoint, this, [this](bool, const opad::Vec3&) {
+    const InputSpec* in = m_featureOn ? m_form->input(m_form->activeInput()) : nullptr;
+    if (!in || in->type != "axis") return clearCrease();
+    std::string body;
+    int side = -1;
+    if (!m_viewport->hoveredMeshSide(body, side) || !fitpick::onMesh(m_doc->scene, opad::Ref::parse(body + "/edge/" + std::to_string(side)))) return clearCrease();
+    if (body == m_creaseBody && side == m_creaseSide) return;
+    m_creaseBody = body;
+    m_creaseSide = side;
+    m_creaseTimer.start();
+  });
   connect(viewport, &Viewport::notesMoved, this, [this] { if (m_triad && m_triad->shown()) placeMoveTriad(); });  // every camera move
   connect(m_form, &FeaturePanel::activeInputChanged, this, &DesignController::activateInput);
   connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
@@ -685,6 +699,7 @@ void DesignController::endFeature() {
   m_planScene.reset();
   m_viewport->clearPreviewBodies();
   m_viewport->clearCandidates();
+  clearCrease();
   ++m_pairSerial;
   if (Job* j = std::exchange(m_pairJob, nullptr)) j->cancel();
   m_pairPoints = opad::json();
@@ -933,6 +948,7 @@ void DesignController::offerRules(const QString& input, QWidget* anchor) {
 
 void DesignController::activateInput(const QString& name) {
   if (!m_featureOn) return;
+  clearCrease();  // offered for the input that had the clicks
   const InputSpec* in = m_form->input(name);
   if (in && in->type == "plane" && m_placer->active()) m_placer->stop();  // the Plane box clicked: the plane picker, then the panel
   if (!in) {
@@ -1315,6 +1331,11 @@ void DesignController::viewportSelectionChanged() {
       continue;
     }
     if (in->type == "axis" && fitpick::onMesh(m_doc->scene, r)) {  // a scan's triangle or side: the axis fitted around it
+      // The crease offered while this side was hovered (fitted already, drawn as the guide line): taken as it is.
+      if (r.kind == opad::Ref::Kind::Edge && fitpick::fitted(m_crease) && r.body == m_creaseBody && r.index == m_creaseSide) {
+        picks.push_back(m_crease);
+        continue;
+      }
       if (const opad::json fit = fitpick::fromPick(m_doc->scene, r, true); !fit.is_null()) picks.push_back(fit);
       continue;
     }
@@ -1325,6 +1346,23 @@ void DesignController::viewportSelectionChanged() {
   for (const auto& c : m_viewport->selectedCandidates())
     if (!m_routeIds.count(c)) picks.push_back(opad::json::parse(c));
   const bool single = in->type == "plane" || in->type == "axis" || in->type == "path" || in->max_count == 1;
+  // A box or brush over a run of a scan's sides in an axis input (several taken at once, nothing picked before): the line
+  // through them, the fallback where no crease is found (a click on a side picks a fit, never a side: only a box selects several).
+  if (in->type == "axis" && picks.size() > 1) {
+    const auto refs = m_viewport->selection();
+    opad::json sides = opad::json::array();
+    std::string body;
+    for (const auto& r : refs)
+      if (r.kind == opad::Ref::Kind::Edge && fitpick::onMesh(m_doc->scene, r) && (body.empty() || r.body == body)) body = r.body, sides.push_back(r.index);
+    if (sides.size() >= 2 && sides.size() == refs.size()) {
+      const opad::json fit = {{"fit", {{"body", body}, {"of", "line"}, {"sides", sides}}}};
+      m_form->setPicks(name, fit);
+      refitPick(name, fit, true);
+      syncSelectionToInput();
+      m_form->activateNextPick();
+      return;
+    }
+  }
   if (single && picks.size() > 1) {
     m_activating = true;
     m_viewport->keepLastSelected();  // a new pick replaces the old one
@@ -2305,4 +2343,52 @@ void DesignController::drawPairMarkers() {
     }
   }
   m_viewport->setPairMarkers(markers);
+}
+
+// ---------------------------------------------------------------- creases (a scan's edges in an axis input)
+// Mesh sides on a scan are ragged: the two flats either side of the hovered side are grown, fitted and met
+// (scanfit::crease_line, fit "of": "crease"), on a worker; the line is drawn along its whole length while the side stays
+// hovered, and a click on that side takes it as the axis, its result included (replay never fits it again).
+void DesignController::clearCrease() {
+  m_creaseTimer.stop();
+  ++m_creaseSerial;
+  if (Job* j = std::exchange(m_creaseJob, nullptr)) j->cancel();
+  m_creaseBody.clear();
+  m_creaseSide = -1;
+  m_crease = opad::json();
+  m_viewport->setGuideLine(std::nullopt);
+}
+
+void DesignController::creaseHover() {
+  if (!m_featureOn || m_creaseBody.empty() || m_creaseSide < 0) return;
+  const int serial = ++m_creaseSerial;
+  if (Job* j = std::exchange(m_creaseJob, nullptr)) j->cancel();
+  m_crease = opad::json();
+  m_viewport->setGuideLine(std::nullopt);
+  refreshPlanCopies();
+  auto doc = m_planDoc;
+  auto scene = m_planScene;
+  auto out = std::make_shared<opad::json>(opad::json{{"fit", {{"body", m_creaseBody}, {"of", "crease"}, {"seed", m_creaseSide / 3}, {"side", m_creaseSide % 3}, {"tolerance", "10 deg"}}}});
+  m_creaseJob = m_jobs->async(tr("Finding the crease"), [doc, scene, out](Progress p) {
+    Reading reading;
+    *out = fit_reference(*doc, *scene, *out, "axis", [p] { return p.cancelled(); });
+  }, [this, serial, out](bool ok, const QString& error) {
+    if (serial != m_creaseSerial || !m_featureOn) return;
+    m_creaseJob = nullptr;
+    if (!ok) {
+      if (error != "cancelled") emit status(i18n::t(error));
+      return;
+    }
+    const opad::json world = out->value("world", opad::json::object());
+    out->erase("world");  // for showing; the input keeps the request and its result
+    m_crease = *out;
+    const double half = world.value("length", out->value("result", opad::json::object()).value("length", 0.0)) / 2;
+    if (world.contains("origin") && world.contains("dir")) {
+      const gp_Pnt o(world["origin"][0], world["origin"][1], world["origin"][2]);
+      const gp_Vec d = gp_Vec(world["dir"][0], world["dir"][1], world["dir"][2]).Normalized() * half;
+      const gp_Pnt a = o.Translated(-d), b = o.Translated(d);
+      m_viewport->setGuideLine(std::make_pair(opad::Vec3{a.X(), a.Y(), a.Z()}, opad::Vec3{b.X(), b.Y(), b.Z()}));
+    }
+    emit status(tr("Crease: %1 · click to take it").arg(fitpick::quality(m_crease)));
+  });
 }

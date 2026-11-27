@@ -287,6 +287,29 @@ TEST(lines_planes_and_their_intersection) {
   const auto along = scanfit::wall_direction(*m, scanfit::grow_region(*m, seed_at(*m, gp_Pnt(50, 0, 5), gp_Dir(0, -1, 0)), 10 * kPi / 180, false));
   CHECK(angle_to(along.dir, tilted(gp_Dir(1, 0, 0))) < 0.5);
   CHECK_THROWS(scanfit::plane_intersection(bottom, bottom));
+  // The same edge found from one picked side near it (a crease): both flats grown and fitted, the line along their rim.
+  const int near_edge = seed_at(*m, gp_Pnt(50, 0, 0.8), gp_Dir(0, -1, 0));
+  const scanfit::Line crease = scanfit::crease_line(*m, near_edge, 0, 10 * kPi / 180);
+  std::printf("    crease: off %.4f mm, %.3f deg, %.2f mm long\n", line_distance(tilted(gp_Pnt(50, 0, 0)), crease.origin, crease.dir),
+              angle_to(crease.dir, tilted(gp_Dir(1, 0, 0))), crease.length);
+  CHECK(angle_to(crease.dir, tilted(gp_Dir(1, 0, 0))) < 0.3);
+  CHECK(line_distance(tilted(gp_Pnt(50, 0, 0)), crease.origin, crease.dir) < 0.05);
+  CHECK(crease.length > 85 && crease.length < 102);  // the plate is 100 long: the rim the two flats share
+  // A side in the middle of a flat with nothing turning away near it but far off: still a crease (the nearest rim), but a
+  // side on a single flat with no other flat at all is refused, as is a seed off the mesh.
+  CHECK_THROWS(scanfit::crease_line(*m, -1, 0, 10 * kPi / 180));
+  // Sides along the edge (a box over them): the line through their nodes.
+  std::vector<int> run;
+  for (int t = 0; t < m->triangles(); ++t)
+    for (int k = 0; k < 3; ++k) {
+      const gp_Pnt p = m->nodes[size_t(m->tri[size_t(t)][size_t(k)])], q = m->nodes[size_t(m->tri[size_t(t)][size_t((k + 1) % 3)])];
+      if (line_distance(p, tilted(gp_Pnt(0, 0, 0)), tilted(gp_Dir(1, 0, 0))) < 0.15 && line_distance(q, tilted(gp_Pnt(0, 0, 0)), tilted(gp_Dir(1, 0, 0))) < 0.15)
+        run.push_back(3 * t + k);
+    }
+  CHECK(run.size() > 20);
+  const scanfit::Line through = scanfit::sides_line(*m, run);
+  CHECK(angle_to(through.dir, tilted(gp_Dir(1, 0, 0))) < 0.3);
+  CHECK(through.length > 80);
   // Points along a line, noisy, with two strays: the line through the rest.
   std::vector<gp_Pnt> pts;
   for (int i = 0; i <= 40; ++i) pts.push_back(gp_Pnt(i * 2.0, 5, 3).Translated(noise_at(gp_Pnt(i, 1, 2), 0.02)));

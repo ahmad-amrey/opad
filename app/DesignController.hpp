@@ -107,6 +107,9 @@ class DesignController : public QObject {
   // Align's point pairs (DesignPairs.cpp): the markers drawn now (benches) and whether their points are being resolved.
   opad::json benchPairMarkers() const { return m_viewport->benchPairMarkers(); }
   bool pairsResolving() const { return m_pairJob != nullptr; }
+  // A scan's crease offered while a mesh side is hovered in an axis input (benches: what is offered now, null: none).
+  opad::json creaseOffered() const { return m_crease; }
+  bool creaseFitting() const { return m_creaseJob != nullptr || m_creaseTimer.isActive(); }
   void bench();   // OPAD_BENCH_DESIGN
   void benchSketch(std::function<void()> run);  // Sketch1 on XY opened, then run (a bench)
   opad::json recoveryState() const;
@@ -240,6 +243,16 @@ class DesignController : public QObject {
   void drawPairMarkers();      // the resolved points, the preview's move and the stray pair
   void pairPreviewed(const opad::json& result);  // a preview's fit (after its motion is drawn); null: none
   bool pairsWaiting(opad::json& inputs);  // fewer than three whole pairs: true (and says so); else the uneven tail trimmed
+  // Creases (DesignPairs section "creases"): the hovered side's crease fitted on a worker, drawn as a guide line, taken by a
+  // click on that side; a box over sides gives the line through them.
+  void creaseHover();
+  void clearCrease();
+  QTimer m_creaseTimer;
+  Job* m_creaseJob = nullptr;
+  int m_creaseSerial = 0;
+  std::string m_creaseBody;
+  int m_creaseSide = -1;
+  opad::json m_crease;  // {"fit": ..., "result": ...} for (m_creaseBody, m_creaseSide); null: none
   Job* m_pairJob = nullptr;
   int m_pairSerial = 0;
   opad::json m_pairPoints;  // {"from": [[x,y,z] | null...], "to": [...]}, as picked

@@ -10,6 +10,7 @@
 #include <SelectMgr_Selection.hxx>
 #include <TCollection_ExtendedString.hxx>
 
+#include "BodyShape.hpp"
 #include "Theme.hpp"
 #include "Viewport.hpp"
 
@@ -98,6 +99,34 @@ void Viewport::setPairMarkers(const std::vector<PairMarker>& pairs) {
     m_ctx->Display(o, 0, -1, Standard_False);  // never picked: no selection mode
   }
   redrawScene();
+}
+
+void Viewport::setGuideLine(const std::optional<std::pair<opad::Vec3, opad::Vec3>>& line) {
+  if (!m_initialised || line == m_guideLineEnds) return;
+  if (!m_guideLine.IsNull()) m_ctx->Remove(m_guideLine, Standard_False);
+  m_guideLine.Nullify();
+  m_guideLineEnds = line;
+  if (line) {
+    const Tokens& t = theme::current();
+    const gp_Pnt a(line->first[0], line->first[1], line->first[2]), b(line->second[0], line->second[1], line->second[2]);
+    Handle(PairMarks) l = new PairMarks({{a, occColor(t.sel)}, {b, occColor(t.sel)}}, {{a, b}}, occColor(t.sel), displayScale() * 1.6);
+    l->SetInfiniteState(Standard_True);
+    l->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(l, 0, -1, Standard_False);
+    m_guideLine = l;
+  }
+  redrawScene();
+}
+
+bool Viewport::hoveredMeshSide(std::string& body, int& side) const {
+  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  const auto found = m_nodeOf.find(m_ctx->DetectedInteractive().get());
+  if (found == m_nodeOf.end()) return false;
+  const auto owner = Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner());
+  if (owner.IsNull() || owner->kind() != opad::Ref::Kind::Edge) return false;
+  body = found->second;
+  side = owner->index();
+  return true;
 }
 
 opad::json Viewport::benchPairMarkers() const {

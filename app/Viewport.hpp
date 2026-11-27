@@ -459,6 +459,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
     bool stray = false;                  // left out of the fit
   };
   void setPairMarkers(const std::vector<PairMarker>& pairs);
+  // A line offered for a pick (a scan's crease while it is hovered in an axis input): drawn over everything, never picked.
+  // nullopt: none.
+  void setGuideLine(const std::optional<std::pair<opad::Vec3, opad::Vec3>>& line);
+  std::optional<std::pair<opad::Vec3, opad::Vec3>> guideLine() const { return m_guideLineEnds; }
+  // The mesh side under the pointer (a group owner's ordinal, 3 t + k): no walk of the body. False: none hovered.
+  bool hoveredMeshSide(std::string& body, int& side) const;
   opad::json benchPairMarkers() const;  // what is drawn: each pair's points and its line's length
   opad::json benchVertexPaint(const std::string& id, size_t samples) const;  // OPAD_BENCH_DEVIATION: drawn or not, sampled vertices (world) and colours
   bool faceTintsPending() const {
@@ -1330,6 +1336,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<Handle(AIS_InteractiveObject)> m_deviationPins;  // setDeviationPins (ViewportDeviation.cpp)
   std::vector<Handle(AIS_InteractiveObject)> m_pairMarks;      // setPairMarkers (ViewportPairs.cpp)
   std::vector<PairMarker> m_pairMarkers;
+  Handle(AIS_InteractiveObject) m_guideLine;  // setGuideLine
+  std::optional<std::pair<opad::Vec3, opad::Vec3>> m_guideLineEnds;
   bool faceTinted(const std::string& id) const { return m_faceTints.count(id) > 0; }
   void styleComparePart(const Handle(AIS_Shape)& ais, const ComparePart& part);
   class SideView;  // side by side (ViewportCompare.cpp)

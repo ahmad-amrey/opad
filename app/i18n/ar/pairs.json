@@ -36,5 +36,14 @@
   "Click vertices of the mesh, three or more, spread over the flat you mean: the plane is fitted through them, a stray one left out. A click on a picked vertex takes it back.": "انقر رؤوس الشبكة، ثلاثة أو أكثر، موزعة على السطح المستوي المقصود: يُلاءَم المستوى عبرها ويُستبعد الشارد منها. والنقر على رأس مختار يلغيه.",
   "Vertex added.": "أُضيف الرأس.",
   "That vertex was picked already: taken back.": "كان هذا الرأس مختارًا: أُلغي.",
-  "No vertex under that click: click on the mesh, on one of its vertices.": "لا رأس تحت تلك النقرة: انقر على الشبكة، على أحد رؤوسها."
+  "No vertex under that click: click on the mesh, on one of its vertices.": "لا رأس تحت تلك النقرة: انقر على الشبكة، على أحد رؤوسها.",
+  "Finding the crease": "البحث عن الحافة",
+  "Crease: %1 · click to take it": "الحافة: %1 · انقر لأخذها",
+  "Crease, %1 long": "حافة بطول %1",
+  "Crease": "حافة",
+  "Line along %1 sides": "خط على امتداد %1 أضلاع",
+  "no crease near there: no other flat meets the flat around the picked side": "لا حافة هناك: لا يلتقي سطح مستوٍ آخر بالسطح المحيط بالضلع المختار",
+  "no crease near there: one side of it is too small a flat to fit": "لا حافة هناك: أحد جانبيها سطح أصغر من أن يُلاءَم",
+  "no crease near there: the two flats do not come near their meeting line": "لا حافة هناك: لا يقترب السطحان من خط التقائهما",
+  "pick sides along the line: two nodes or more": "اختر أضلاعًا على امتداد الخط: عقدتان أو أكثر"
 }
