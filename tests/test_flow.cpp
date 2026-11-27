@@ -732,8 +732,10 @@ TEST(flow_case_written) {
 // ---------------------------------------------------------------- the solves (ctest flow-solve)
 namespace {
 bool solves() { return sim::openfoam().found() && std::getenv("OPAD_TEST_FLOW"); }
-// How near the whole part's pressure drop comes to the stepped wedge's (a share of it): see flow_solve_step_wedge_vs_3d.
-constexpr double kStepAgreement = 0.35;
+// How near the whole part's pressure drop comes to the stepped wedge's (a share of it), flow_solve_step_wedge_vs_3d: as an
+// expansion (5.5 Pa) within 2 % (v2606); as a contraction the loss is a tenth of the stub's friction taken out of it
+// (1.2 Pa against 11), and the whole part's coarser cells along the walls give 15 to 25 % less.
+constexpr double kStepAgreementExpansion = 0.05, kStepAgreementContraction = 0.25;
 void show(const char* what, const sim::StudyRun& r) {
   const json& s = r.summary;
   std::printf("%s: dp %.2f Pa (faces %.2f, static %.2f), K %.3f, Q %.4f m3/s, vmax %.2f m/s, %zu recirculation, %s, %d cells, %d iterations%s, %.0f s\n", what,
@@ -821,7 +823,7 @@ TEST(flow_solve_step_wedge_vs_3d) {
     show(expansion ? "adapter expansion, 3d" : "adapter contraction, 3d", d);
     const double dw = w.summary["pressure_drop_pa"].get<double>(), dd = d.summary["pressure_drop_pa"].get<double>();
     std::printf("  wedge %.3f Pa, 3d %.3f Pa: %.1f %%\n", dw, dd, 100 * (dd - dw) / dw);
-    CHECK_NEAR(dd, dw, kStepAgreement * std::fabs(dw));
+    CHECK_NEAR(dd, dw, (expansion ? kStepAgreementExpansion : kStepAgreementContraction) * std::fabs(dw));
   }
 }
 
