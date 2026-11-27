@@ -69,5 +69,22 @@
  "This file has %1 records from a newer OPAD (%2); they are kept and saved back unchanged.": "يحتوي هذا الملف على %1 من السجلات من إصدار أحدث من OPAD ‏(%2)؛ تُبقى وتُحفظ كما هي دون تغيير.",
  "… and %1 more": "… و%1 غيرها",
  "%1: overhang up to %2 over %3": "%1: بروز حتى %2 على مساحة %3",
- "%1: face %2 overhangs %3": "%1: الوجه %2 بارز بزاوية %3"
+ "%1: face %2 overhangs %3": "%1: الوجه %2 بارز بزاوية %3",
+ "%1: wall %2 between %3 and %4": "%1: جدار سماكته %2 بين %3 و%4",
+ "%1: wall %2 in %3": "%1: جدار سماكته %2 في %3",
+ "PRINT PLACEMENT": "الوضع على لوح الطباعة",
+ "Up from the bed": "الأعلى من اللوح",
+ "As modelled": "كما في النموذج",
+ "+Z up": "+Z للأعلى",
+ "−Z up": "−Z للأعلى",
+ "+X up": "+X للأعلى",
+ "−X up": "−X للأعلى",
+ "+Y up": "+Y للأعلى",
+ "−Y up": "−Y للأعلى",
+ "Selected face down on the bed": "الوجه المحدد على اللوح",
+ "Drop onto the bed (lowest point at Z = 0)": "إنزال إلى اللوح (أدنى نقطة عند Z = 0)",
+ "Centre on the bed (X = Y = 0)": "توسيط على اللوح (X = Y = 0)",
+ "bed_face takes a face reference": "يأخذ bed_face مرجع وجه",
+ "bed_face: the face has no normal to lie on (a degenerate face, or a curved one that faces every way)": "bed_face: ليس للوجه اتجاه عمودي يستقر عليه (وجه متحلل، أو وجه منحنٍ يتجه في كل اتجاه)",
+ "print placement (build_direction, bed_face, drop_to_bed, center_xy) is for STL, 3MF, OBJ and PLY": "الوضع للطباعة (build_direction وbed_face وdrop_to_bed وcenter_xy) لصيغ STL و3MF وOBJ وPLY فقط"
 }

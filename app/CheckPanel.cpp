@@ -213,10 +213,18 @@ void CheckPanel::setResult(const opad::json& r) {
       add(mesh ? tr("%1: overhang up to %2 over %3").arg(who, angle(o), units::format(units::Kind::Area, o.value("area_mm2", 0.0), 1))
                : tr("%1: face %2 overhangs %3").arg(who).arg(o.value("face", 0)).arg(angle(o)),
           faces(o), "overhang");
-    for (const auto& w : body.value("thin_walls", opad::json::array()))
-      add(mesh ? tr("%1: wall %2 thin over %3 triangles").arg(who, units::format(units::Kind::Length, w.value("thickness_mm", 0.0))).arg(w.value("triangles", 0))
-               : tr("%1: wall %2 at face %3").arg(who, units::format(units::Kind::Length, w.value("thickness_mm", 0.0))).arg(w.value("face", 0)),
-          faces(w), "thin_wall");
+    for (const auto& w : body.value("thin_walls", opad::json::array())) {
+      // Named by what makes it: the features whose surfaces come too close (a solid of a design), both sides shown.
+      const QString thick = units::format(units::Kind::Length, w.value("thickness_mm", 0.0));
+      const opad::json named = w.value("features", opad::json::array());
+      opad::json sides = faces(w);
+      if (!mesh && w.value("opposite_face", -1) >= 0) sides.push_back(w["opposite_face"]);
+      add(mesh ? tr("%1: wall %2 thin over %3 triangles").arg(who, thick).arg(w.value("triangles", 0))
+          : named.size() == 2 ? tr("%1: wall %2 between %3 and %4").arg(who, thick, QString::fromStdString(named[0].get<std::string>()), QString::fromStdString(named[1].get<std::string>()))
+          : named.size() == 1 ? tr("%1: wall %2 in %3").arg(who, thick, QString::fromStdString(named[0].get<std::string>()))
+                              : tr("%1: wall %2 at face %3").arg(who, thick).arg(w.value("face", 0)),
+          sides, "thin_wall");
+    }
     if (const int more = body.value("more_overhangs", 0) + body.value("more_thin_walls", 0); more > 0)
       add(tr("%1: %2 smaller findings not listed").arg(who).arg(more), opad::json::array(), "more");
     for (const auto& t : body.value("thin_features", opad::json::array()))
