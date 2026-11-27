@@ -22,6 +22,7 @@
 #include "opad/design/feature.hpp"
 #include "opad/geometry.hpp"
 #include "opad/point_cloud.hpp"
+#include "opad/render.hpp"
 #include "opad/step_io.hpp"
 
 using namespace opad;
@@ -666,6 +667,61 @@ TEST(cloud_commands) {
   CHECK_THROWS(commands::run("cloud", {{"body", body}, {"action", "nope"}}, &d));
   CHECK_THROWS(commands::run("cloud", {{"body", body}, {"action", "region"}}, &d));
 }
+TEST(clouds_render_as_points_and_by_height) {
+  // A 60 x 40 sheet with a step: z = 0 for x < 36, z = 5 beyond, points 0.5 mm apart, normals up. Headless renders used to
+  // draw a cloud as nothing (it has no triangles); now as splats, and by height against a plane.
+  Files f;
+  pc::Points p;
+  for (double x = 0; x <= 60; x += 0.5)
+    for (double y = 0; y <= 40; y += 0.5) {
+      p.xyz.insert(p.xyz.end(), {float(x), float(y), float(x < 36 ? 0 : 5)});
+      p.normals.insert(p.normals.end(), {0.f, 0.f, 1.f});
+    }
+  pc::write_file(f.dir / "sheet.ply", p);
+  Document d = Document::create();
+  commands::run("import", {{"file", path_to_utf8(f.dir / "sheet.ply")}}, &d);
+  const Scene s = resolve(d);
+  const std::string body = s.all_bodies().front();
+  CHECK(pc::from_shape(node_world_shape(d, s, body), true, 1000).size() <= 1000u);  // a sample of a big cloud
+  RenderOptions o;
+  o.width = 320, o.height = 200, o.supersample = 1;
+  o.camera = Camera::preset("top");
+  json receipt;
+  const Image plain = render_scene(d, s, o, &receipt);
+  size_t drawn = 0;
+  for (size_t i = 0; i < plain.rgb.size(); i += 3) drawn += plain.rgb[i] < 250 || plain.rgb[i + 1] < 250 || plain.rgb[i + 2] < 250;
+  std::printf("    cloud render: %zu of %d pixels drawn\n", drawn, o.width * o.height);
+  CHECK(drawn > size_t(0.5 * o.width * o.height));
+  CHECK_EQ(receipt["visible_ids"].size(), 1u);
+  // By height: the cloud's own base (the larger flat, z = 0) is blue, the step red; the range and plane reported.
+  o.cloud_color = "height";
+  json heights;
+  const Image h = render_scene(d, s, o, &heights);
+  CHECK(heights.contains("cloud_height"));
+  const json& ch = heights["cloud_height"];
+  std::printf("    by height: %.3f .. %.3f mm\n", ch["range_mm"][0].get<double>(), ch["range_mm"][1].get<double>());
+  CHECK_NEAR(ch["range_mm"][0].get<double>(), 0, 0.01);
+  CHECK_NEAR(ch["range_mm"][1].get<double>(), 5, 0.01);
+  CHECK_EQ(ch["planes"].size(), 1u);
+  const uint8_t* low = h.px(96, 100);
+  const uint8_t* high = h.px(272, 100);
+  CHECK(low[2] > low[0] + 80);
+  CHECK(high[0] > high[2] + 80);
+  // Against a plane given (XZ: the heights run along Y, 0 to 40, the range cut at the 2nd and 98th percentiles).
+  o.height_plane = {{"base", "xz"}};
+  json given;
+  render_scene(d, s, o, &given);
+  CHECK(given["cloud_height"].contains("plane"));
+  const double y0 = given["cloud_height"]["range_mm"][0].get<double>(), y1 = given["cloud_height"]["range_mm"][1].get<double>();
+  std::printf("    against XZ: %.3f .. %.3f mm\n", y0, y1);
+  CHECK(std::fabs(std::fabs(y1 - y0) - 38.4) < 1.0);
+  // Through the render command.
+  const json r = commands::run("render", {{"out", path_to_utf8(f.dir / "h.png")}, {"view", "top"}, {"cloud_color", "height"}}, &d);
+  CHECK(!r.contains("error"));
+  CHECK(std::filesystem::exists(f.dir / "h.png"));
+  CHECK_THROWS(commands::run("render", {{"out", path_to_utf8(f.dir / "x.png")}, {"cloud_color", "rainbow"}}, &d));
+}
+
 namespace {
 // A flat patch of points 1 mm apart on z = 0 (x, y in 0..40), normals +Z, colours by x.
 std::shared_ptr<const pc::Points> patch(bool normals = true, bool colours = true) {

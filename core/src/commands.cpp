@@ -134,6 +134,13 @@ void apply_picture_options(RenderOptions& o, const json& a) {
     o.views.push_back(v);
   }
   if (o.views.size() > 9) throw Error("at most 9 views in one image");
+  o.cloud_color = a.value("cloud_color", std::string());
+  if (o.cloud_color == "own") o.cloud_color.clear();
+  if (!o.cloud_color.empty() && o.cloud_color != "height") throw Error("cloud_color is own or height");
+  if (a.contains("height_plane") && !a["height_plane"].is_null()) {
+    if (o.cloud_color.empty()) o.cloud_color = "height";
+    o.height_plane = a["height_plane"];
+  }
 }
 
 namespace {
@@ -627,11 +634,13 @@ void register_builtins() {
         return export_document(doc, resolve(doc), a);
       });
 
-  reg("render", "Headless screenshot (PNG). views puts several fitted views in one labelled grid; edge_lines draws the model's edges; highlight tints faces and edges; shading smooth uses vertex normals",
+  reg("render", "Headless screenshot (PNG). views puts several fitted views in one labelled grid; edge_lines draws the model's edges; highlight tints faces and edges; shading smooth uses vertex normals; point clouds are drawn as points (cloud_color height: by height above a plane)",
       {{"doc", "path"}, {"out", "path - .png"}, {"view", "iso|top|bottom|front|back|left|right"}, {"camera", "object - {eye,target,up,projection,scale}"},
        {"width", "int"}, {"height", "int"}, {"select", "array|csv - node uuids"}, {"edges", "bool - silhouette outlines (default true)"}, {"background", "[r,g,b] 0..1"}, {"tolerance", "number"},
        {"views", "array|csv - e.g. iso,front,top,right: one labelled grid"}, {"edge_lines", "bool - the model's edges as lines"}, {"highlight", "array - face/edge references to tint"},
-       {"shading", "flat|smooth"}, {"explode", "uuid|object - an exploded view: a view op id or an explode spec"},
+       {"shading", "flat|smooth"}, {"cloud_color", "own|height - point clouds in their own colours, or by height above a plane"},
+       {"height_plane", "object - a plane input the heights are measured from (default: each cloud's own dominant plane)"},
+       {"explode", "uuid|object - an exploded view: a view op id or an explode spec"},
        {"joints", "object - {joint: value}: the mechanism there"}, {"study", "object - {id, t | frame | mode, field (von_mises | displacement | failure_index | temperature | air_speed), streamlines, hide, ghost (body ids: left out, see-through), scale, max}: a study's frame or result map"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
