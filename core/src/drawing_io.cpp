@@ -579,7 +579,7 @@ std::string dwg_reader() {
 const std::vector<std::string>& importable_extensions() {
   static const std::vector<std::string> list = {".step", ".stp", ".iges", ".igs", ".brep", ".brp", ".stl", ".obj", ".3mf", ".ply",
                                                 ".gltf", ".glb", ".wrl", ".vrml", ".dxf", ".dwg", ".svg", ".kicad_pcb", ".x_t", ".x_b",
-                                                ".xmt_txt", ".xmt_bin"};
+                                                ".xmt_txt", ".xmt_bin", ".xyz", ".pts", ".e57", ".las", ".laz"};
   return list;
 }
 
@@ -678,6 +678,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     if(ext==".stl") return detail::import_stl(doc,file,options);
     if(ext==".ply") return detail::import_ply(doc,file,options);
     if(ext==".3mf") return detail::import_3mf(doc,file,options);
+    if(ext==".xyz" || ext==".pts" || ext==".csv" || ext==".e57" || ext==".las" || ext==".laz") return detail::import_cloud(doc,file,options);
     if(ext==".obj" || ext==".gltf" || ext==".glb" || ext==".wrl" || ext==".vrml") return detail::import_mesh_scene(doc,file,options);
     if(ext==".kicad_pcb") return options.kicad.kicad_cli?import_kicad_export(doc,file,options):import_kicad_pcb(doc,file,options);
     if(ext==".png" || ext==".jpg" || ext==".jpeg" || ext==".bmp" || ext==".gif" || ext==".webp") return detail::import_image(doc,file,options);

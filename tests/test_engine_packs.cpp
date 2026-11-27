@@ -182,7 +182,7 @@ TEST(a_unix_pack_keeps_its_programs_runnable_and_is_found) {
 }
 
 // The table compiled in: one pack per revision and system, each at its own release.
-TEST(every_system_has_its_own_release_of_each_pack) {
+TEST(every_system_has_its_zip_of_each_pack) {
   Sandbox box;
   const std::string here = opad::sim::engine_pack_platform();
 #if defined(_WIN32)
@@ -194,8 +194,8 @@ TEST(every_system_has_its_own_release_of_each_pack) {
 #endif
   std::map<std::string, int> systems;
   for (const auto& p : opad::sim::engine_pack_table()) {
-    const std::string stem = p.id + "-" + p.version + "-" + p.platform;
-    CHECK(p.url == "https://github.com/ahmad-amrey/opad/releases/download/engines-" + stem + "/opad-" + stem + ".zip");
+    const std::string stem = p.id + "-" + p.version + "-" + p.platform;  // one release per pack revision, every system's zip in it
+    CHECK(p.url == "https://github.com/ahmad-amrey/opad/releases/download/engines-" + p.id + "-" + p.version + "/opad-" + stem + ".zip");
     CHECK(opad::sim::engine_pack_url_allowed(p.url));
     CHECK(p.sha256.empty() == (p.size == 0));  // published: both pinned; else neither
     ++systems[p.id + " " + p.platform];

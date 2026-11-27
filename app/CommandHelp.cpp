@@ -220,7 +220,7 @@ QString group(const QString& id) {
   if (area == "annotate") return QCoreApplication::translate("help", "Annotate");
   // Linked files, canvases and KiCad boards are the Insert menu's (its inserts, then a submenu each): Insert, as the menu names it.
   if (area == "assets" || area == "canvas" || area == "kicad") return QCoreApplication::translate("MainWindow", "I&nsert").remove('&');
-  if (area == "design" || area == "assembly") return QCoreApplication::translate("help", "Design");
+  if (area == "design" || area == "assembly" || area == "cloud") return QCoreApplication::translate("help", "Design");  // cloud: Design > Scan
   if (area == "drawings") return QCoreApplication::translate("help", "Drawings");
   if (area == "simulate") return QCoreApplication::translate("help", "Simulate");
   if (id.startsWith("sketch.c.") || id == "sketch.dimension" || id == "sketch.constraints" || id == "sketch.moreConstrain")

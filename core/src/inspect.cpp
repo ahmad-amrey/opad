@@ -53,6 +53,7 @@
 
 #include "opad/assets.hpp"
 #include "opad/checks.hpp"
+#include "opad/point_cloud.hpp"
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/mass.hpp"
@@ -515,7 +516,21 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
       j["missing"] = true;
       return j;
     }
+    if (n->representation == "points")  // a point cloud: its count from the store's meta at once
+      if (const BodyEntry* b = doc.body(n->body_key); b && b->meta.contains("points")) j["points"] = b->meta["points"];
     if (!geometry) return j;
+    if (n->representation == "points") {  // its points: count, attributes, box (world) and spacing, never faces or volume
+      const cloud::Points p = cloud::world_points(doc, scene, node_id, true);
+      const json d = cloud::describe(p, true);
+      j["points"] = d["points"];
+      j["attributes"] = d["attributes"];
+      j["spacing"] = d.value("spacing", 0.0);
+      const auto b = cloud::bounds(p);
+      Bnd_Box box;
+      box.Update(b[0][0] + p.offset[0], b[0][1] + p.offset[1], b[0][2] + p.offset[2], b[1][0] + p.offset[0], b[1][1] + p.offset[1], b[1][2] + p.offset[2]);
+      j["bbox"] = bbox_json(box);
+      return j;
+    }
     TopoDS_Shape world = node_world_shape(doc, scene, node_id);
     TopoDS_Shape proto = body_shape(doc, n->body_key);
     j["faces"] = subshape_count(proto, Ref::Kind::Face);

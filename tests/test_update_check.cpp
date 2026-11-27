@@ -122,6 +122,25 @@ TEST(each_system_downloads_its_own_installer) {
   CHECK(parseLatest(withAssets)->download.isEmpty());
 }
 
+// From 0.11.0 a release names its files after its tag, and keeps the old names for the copies before it.
+TEST(release_files_carry_their_version) {
+  CHECK(releaseAssetName("v0.11.0", "OPAD-windows-x64-setup.exe") == "OPAD-0.11.0-windows-x64-setup.exe");
+  CHECK(releaseAssetName("v0.11.0-rc.72", "OPAD-macos.dmg") == "OPAD-0.11.0-rc.72-macos.dmg");
+  CHECK(releaseAssetName("v0.11.1-dev.80", "OPAD-linux-amd64.deb") == "OPAD-0.11.1-dev.80-linux-amd64.deb");
+  const QByteArray both = R"({"tag_name":"v0.11.0","assets":[)"
+                          R"({"name":"OPAD-windows-x64-setup.exe","browser_download_url":"https://x/old-setup"},)"
+                          R"({"name":"OPAD-0.11.0-windows-x64.exe","browser_download_url":"https://x/single"},)"
+                          R"({"name":"opad-cli-0.11.0-windows-x64.exe","browser_download_url":"https://x/cli"},)"
+                          R"({"name":"OPAD-0.11.0-windows-x64-setup.exe","browser_download_url":"https://x/setup"},)"
+                          R"({"name":"OPAD-0.11.0-macos.dmg","browser_download_url":"https://x/dmg"}]})";
+  CHECK(parseLatest(both, "OPAD-windows-x64-setup.exe")->download == "https://x/setup");  // the versioned one first
+  CHECK(parseLatest(both, "OPAD-windows-x64.exe")->download == "https://x/single");     // not the setup, not the CLI
+  CHECK(parseLatest(both, "OPAD-macos.dmg")->download == "https://x/dmg");
+  CHECK(parseLatest(both, "OPAD-linux-amd64.deb")->download.isEmpty());
+  const QByteArray old = R"({"tag_name":"v0.10.0","assets":[{"name":"OPAD-windows-x64-setup.exe","browser_download_url":"https://x/old"}]})";
+  CHECK(parseLatest(old, "OPAD-windows-x64-setup.exe")->download == "https://x/old");  // a release before 0.11.0
+}
+
 TEST(only_opads_release_addresses_are_opened) {
   const QString latest = kLatestPageUrl;
   CHECK(safeReleaseUrl("https://github.com/ahmad-amrey/opad/releases/tag/v0.10.0").toString() == "https://github.com/ahmad-amrey/opad/releases/tag/v0.10.0");
@@ -199,7 +218,7 @@ TEST(a_rate_limited_api_falls_back_to_the_release_page) {
   qputenv("OPAD_UPDATE_PAGE_URL", github.url("/latest"));
   Checker checker("0.9.0");
   const QString asset = installerAssetName();
-  const QString download = asset.isEmpty() ? QString() : assetDownloadUrl("v0.10.0", asset);
+  const QString download = asset.isEmpty() ? QString() : assetDownloadUrl("v0.10.0", releaseAssetName("v0.10.0", asset));
   CHECK(runCheck(checker) == ("available 0.10.0 https://github.com/ahmad-amrey/opad/releases/tag/v0.10.0 " + download));
   Checker newest("0.10.0");
   CHECK(runCheck(newest) == "up to date");
@@ -277,7 +296,7 @@ TEST(the_list_keys_releases_and_development_builds) {
     if (r.tag == "v0.10.0") stable = &r;
   }
   CHECK(rc && rc->development && rc->candidate && rc->version == "0.10.2" && rc->build == 130);
-  CHECK(rc->download == assetDownloadUrl("v0.10.2-rc.130", "OPAD-windows-x64-setup.exe"));  // no asset listed: its address
+  CHECK(rc->download == assetDownloadUrl("v0.10.2-rc.130", "OPAD-0.10.2-rc.130-windows-x64-setup.exe"));  // no asset listed: named after the tag
   CHECK(dev && dev->development && !dev->candidate && dev->version == "0.10.1" && dev->build == 126);  // the marker's version, not the tag's
   CHECK(stable && !stable->development && stable->build == 0);
 }

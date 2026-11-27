@@ -7,6 +7,7 @@
 #include <gp_Vec.hxx>
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -91,5 +92,14 @@ Frame plane_through(const gp_Pnt& origin, const gp_Vec& normal, const gp_Vec* x 
 
 // Geometric fingerprint of a sub-shape in world coordinates (centre + size + the body's entity counts).
 json ref_hint(const TopoDS_Shape& body_world, const TopoDS_Shape& sub);
+
+// Fitted references (fit_refs.cpp): {"fit": {...}, "result": {...}} as a plane or an axis, in world coordinates; the stored
+// result while it is current, else fitted now. mesh_point: a vertex reference on a mesh body (its node), else nullopt.
+Frame fitted_plane(const Ctx& ctx, const json& in);
+gp_Ax1 fitted_axis(const Ctx& ctx, const json& in);
+std::optional<gp_Pnt> mesh_point(const Ctx& ctx, const json& ref);
+// Every fitted reference inside v given a current result (fitted where it has none or a stale one): true when one changed.
+bool complete_fits(const Ctx& ctx, json& v, bool want_axis);
+bool complete_feature_fits(const Ctx& ctx, const std::string& kind, json& inputs);
 
 }  // namespace opad::design

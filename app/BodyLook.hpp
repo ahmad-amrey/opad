@@ -27,7 +27,8 @@
 // Edit: an appearance being edited and not written yet (the opacity slider while it is dragged), over the document's.
 // Navigation: parts hidden while the view moves (Viewport::setSmallPartFilter), over everything else.
 // Simulate: bodies hidden under a structural study's result map (SimulateArea).
-enum class LookSource { Edit, Asset, Lock, Activation, Compare, Explode, Candidate, Navigation, Simulate, Count };
+// Deviation: the measured body drawn plainly under its colour map, the reference faded behind it (DeviationArea).
+enum class LookSource { Edit, Asset, Lock, Activation, Compare, Deviation, Explode, Candidate, Navigation, Simulate, Count };
 constexpr std::size_t kLookSources = static_cast<std::size_t>(LookSource::Count);
 
 struct LookDelta {

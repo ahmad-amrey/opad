@@ -52,6 +52,9 @@ class DesignController : public QObject {
   // Align for a sketch: the Align form without its bodies, From the sketch's own plane; committed as an edit of the sketch's
   // plane, so the features built on it regenerate. An open sketch is finished first.
   void startSketchAlign(const std::string& sketchId);
+  // Align scan to axes: Align on the mesh body with its first candidate frame (a base flat to XY, a wall's direction to X,
+  // centred), the others a click away in the From plane's row (Next base, Next X, Flip).
+  void startAlignScan(const std::string& body);
   const std::string& aligningSketch() const { return m_alignSketch; }
   // `command`: what the plane is chosen for (its help, the picker's title): New sketch, Align view to plane, Import's drawing.
   void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin=false,const QString& command="design.sketch");
@@ -225,6 +228,10 @@ class DesignController : public QObject {
   int m_routeSerial = 0;
   QString m_idlePlane;             // the plane input a click fills while no input is active
   Job* m_idleJob = nullptr;
+  // A plane or axis fitted on a mesh (FitPick): fitted on a worker, then put into its input with its result.
+  void refitPick(const QString& input, opad::json ref, bool axis);
+  Job* m_fitJob = nullptr;
+  int m_fitSerial = 0;
   int m_idleSerial = 0;
   QString m_nothingToPick;      // the active input has no candidates at all: says so instead of "Pick: …"
   int m_planSerial = 0;

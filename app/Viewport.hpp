@@ -39,6 +39,7 @@
 #include "AppDocument.hpp"
 #include "BodyLook.hpp"
 #include "BodyShape.hpp"
+#include "VertexPaint.hpp"
 #include "ScrollInput.hpp"
 #include "Theme.hpp"
 #include "Tracking.hpp"
@@ -380,6 +381,25 @@ class Viewport : public QWidget, protected AIS_ViewController {
   opad::Vec3 shownOffset(const std::string& node) const;
   opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
   Graphic3d_ZLayerId throughLayer() const { return m_throughLayer; }  // where a canvas shown through the model is drawn
+  // Point clouds (ViewportCloud.cpp): a cloud body's worker arrays (its points, spacing, the drawn sample) and its world
+  // placement, null for any other node; how many points are drawn of it now; the camera's world -> NDC matrix (row-major,
+  // `world` the body's placement) and a widget point in NDC, for lasso regions; the colour mode (BodyPrs::cloudColorMode);
+  // the point sizes and the zoomed-in part at full density (from the refinement's timer); a region overlay (null clears).
+  std::shared_ptr<const BodyPrs> cloudPrs(const std::string& node, opad::Mat4* world = nullptr) const;
+  size_t benchCloudDrawn(const std::string& node) const;
+  std::array<double, 16> worldToNdc(const opad::Mat4& world) const;
+  QPointF widgetToNdc(const QPointF& widget) const;
+  void setCloudColorMode(int mode);
+  // A display-only colour overlay on one cloud node (a deviation map): one 0xAARRGGBB per point by its ordinal (QRgb, as
+  // qRgba makes), alpha 0 = no value there (the cloud's own colour). Null or empty clears it. It never changes the body or
+  // its cached shape: the node's drawn points are recoloured on a worker (RecomputePrsOnly, no Redisplay), its sample or
+  // its zoomed-in part alike, again through every level-of-detail swap. Other instances of the same body keep their look.
+  void setCloudColours(const std::string& node, std::shared_ptr<const std::vector<uint32_t>> colours);
+  bool benchCloudOverlaid(const std::string& node) const;  // the node is drawn now with the overlay it was given last
+  void updateClouds();
+  void showCloudRegion(const std::string& node, std::shared_ptr<const std::vector<uint32_t>> indices);
+  bool pickCloudPoint(const QPointF& widget, opad::Vec3& point);  // the drawn surface (or point) under a widget point
+  void setCloudLasso(const QPolygonF& widget, bool closed);  // the region tool's lasso or box over the view; under two points: none
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
   void benchClickAt(int x, int y);  // a left click at this device pixel through the mouse handlers, then the frame's flush
@@ -416,6 +436,21 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // faces), over the faces the file coloured. The arrays are built on a worker from the base mesh and drawn in place of
   // the zoom refinement's while the tint lasts. Node id -> colours; empty: none.
   void setFaceTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints);
+  // Bodies drawn with a colour per vertex (Deviation's map, VertexPaint.hpp): like the face tints, the coloured arrays are
+  // made on a worker from the base mesh (vertexPaintsDrawn once drawn) and refined with the body; a paint replaced by
+  // another stays drawn until the new one is ready. Node id -> paint; empty: none. A body with Compare's tint keeps that.
+  void setVertexPaints(std::map<std::string, std::shared_ptr<const VertexPaint>> paints);
+  bool vertexPaintDrawn(const std::string& id) const;  // its current paint is drawn (benches)
+  // Labels pinned to points of the model (Deviation's worst spots and probes): text on a coloured plate with a dot at the
+  // point, drawn over everything (Topmost), never picked or fitted. Replaces the earlier ones; empty: none.
+  struct Pin {
+    opad::Vec3 at{0, 0, 0};
+    QString text;
+    QColor color;
+  };
+  void setDeviationPins(const std::vector<Pin>& pins);
+  size_t deviationPinCount() const { return m_deviationPins.size() / 2; }
+  opad::json benchVertexPaint(const std::string& id, size_t samples) const;  // OPAD_BENCH_DEVIATION: drawn or not, sampled vertices (world) and colours
   bool faceTintsPending() const {
     return std::any_of(m_faceTints.begin(), m_faceTints.end(), [](const auto& t) { return t.second.ais == nullptr; });
   }
@@ -735,6 +770,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void filterApplied();     // a setSelectionFilter() call has reached every displayed body
   void hoverChanged(const QString& text);
   void hoverPoint(bool valid, const opad::Vec3& point);  // with hoverChanged: where the mouse met the hovered entity
+  void vertexPaintsDrawn();  // setVertexPaints: the coloured arrays asked for are on screen
   // The drawing entity under the mouse in the 2D vocabulary: drawing2d::entityInfo plus body and index; null when none.
   void hoverInfo(const opad::json& info);
   void contextMenuRequested(const QPoint& globalPos);
@@ -1146,6 +1182,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QTimer m_refineTimer;
   Graphic3d_WorldViewProjState m_refineCamera;
   Job* m_refineJob = nullptr;
+  Job* m_cloudJob = nullptr;  // ViewportCloud.cpp
+  Handle(AIS_InteractiveObject) m_cloudLasso;
+  std::map<std::string, std::shared_ptr<const std::vector<uint32_t>>> m_cloudColours;  // colour overlays by node
+  std::set<std::string> m_cloudColourDirty;  // nodes whose overlay changed since they were drawn
+  std::set<std::string> m_cloudRecolour, m_cloudShown;  // cloud keys to draw again in the colour mode
+  Graphic3d_WorldViewProjState m_cloudCamera;
+  std::map<std::string, Handle(AIS_InteractiveObject)> m_cloudRegion;  // region overlays by node
   qint64 m_refineClock = 0;
   void scheduleRefinement();
   void refineVisible();
@@ -1268,9 +1311,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
     const AIS_InteractiveObject* ais = nullptr;  // drawn on this object (null: its arrays are being built)
     std::string key;
     std::shared_ptr<const BodyPrs> arrays;  // its coloured base mesh: what the body goes back to when its refinement is dropped
+    std::shared_ptr<const VertexPaint> paint;     // setVertexPaints: coloured per vertex instead of per face (colors empty)
+    const AIS_InteractiveObject* drawnOn = nullptr;  // showing some arrays of this entry (a paint's older ones while ais is null)
   };
-  std::map<std::string, FaceTint> m_faceTints;  // setFaceTints
-  unsigned m_faceTintSerial = 0;
+  std::map<std::string, FaceTint> m_faceTints;  // setFaceTints, setVertexPaints
+  unsigned m_faceTintSerial = 0, m_paintSerial = 0;
+  void applyTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints, std::map<std::string, std::shared_ptr<const VertexPaint>> paints, bool painting);
+  std::vector<Handle(AIS_InteractiveObject)> m_deviationPins;  // setDeviationPins (ViewportDeviation.cpp)
   bool faceTinted(const std::string& id) const { return m_faceTints.count(id) > 0; }
   void styleComparePart(const Handle(AIS_Shape)& ais, const ComparePart& part);
   class SideView;  // side by side (ViewportCompare.cpp)

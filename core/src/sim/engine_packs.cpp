@@ -14,9 +14,10 @@ namespace fs = std::filesystem;
 namespace {
 
 // Built by engines/<id>/make-pack.sh in .github/workflows/engines.yml and published by it on dev, one release per pack
-// revision and system (tag engines-<id>-<version>-<platform>, never replaced: a change is a new revision). The size and
-// SHA-256 are the release's (its SHA256SUMS), pinned here in the commit after it was published; until then they are
-// empty and the pack is not offered, so no Install button points at a missing file.
+// revision with every system's zip (tag engines-<id>-<version>, version = <solver version>-<pack revision>, never
+// replaced: a change is a new revision). The size and SHA-256 are the release's (its SHA256SUMS), pinned here in the
+// commit after it was published; until then they are empty and the pack is not offered, so no Install button points at
+// a missing file.
 constexpr const char* kReleases = "https://github.com/ahmad-amrey/opad/releases/download/";
 
 struct Pin {
@@ -28,12 +29,12 @@ struct Pin {
   const char* sha256;
 };
 constexpr Pin kPins[] = {
-    {"openfoam", "OpenFOAM v2606", "v2606-1", "windows-x64", 0, ""},
-    {"openfoam", "OpenFOAM v2606", "v2606-1", "linux-x64", 0, ""},
-    {"openfoam", "OpenFOAM v2606", "v2606-1", "macos-arm64", 0, ""},
-    {"calculix", "CalculiX 2.24", "2.24-1", "windows-x64", 0, ""},
-    {"calculix", "CalculiX 2.24", "2.24-1", "linux-x64", 0, ""},
-    {"calculix", "CalculiX 2.24", "2.24-1", "macos-arm64", 0, ""},
+    {"openfoam", "OpenFOAM v2606", "v2606-1", "windows-x64", 43636466, "70562bb0c93a1173785669c9f5adf771a5ae8d76c66dfcf1828b155e5b8c1fb4"},
+    {"openfoam", "OpenFOAM v2606", "v2606-1", "linux-x64", 60183982, "6732b2d0e486c24223871120846f001d0e1dc71c8985a21c864e9b1cbb5f8be2"},
+    {"openfoam", "OpenFOAM v2606", "v2606-1", "macos-arm64", 33134002, "a00fa3286df7410a4eca44d54f9ab21dcda00f070707375d75224d5802d19fcd"},
+    {"calculix", "CalculiX 2.24", "2.24-1", "windows-x64", 13143110, "77538ad64eb542bdba9f046b8b450b7094ca2c51d18e8a8d35581241e6aaa91c"},
+    {"calculix", "CalculiX 2.24", "2.24-1", "linux-x64", 10086856, "621937940e494355a6253e026c39e4c27c8b5061e872ece42edae82763700bca"},
+    {"calculix", "CalculiX 2.24", "2.24-1", "macos-arm64", 13352000, "7712a0af1689f4dca6cb1b805baf94edd8c053da1e9ed3e776f1d972705d57e4"},
 };
 
 std::vector<EnginePack> pinned() {
@@ -112,8 +113,8 @@ std::string engine_pack_platform() {
 std::vector<EnginePack> engine_pack_table() {
   std::vector<EnginePack> out;
   for (const Pin& p : kPins) {
-    const std::string stem = std::string(p.id) + "-" + p.version + "-" + p.platform;
-    out.push_back({p.id, p.name, p.version, p.platform, std::string(kReleases) + "engines-" + stem + "/opad-" + stem + ".zip", p.size, p.sha256});
+    const std::string release = std::string(p.id) + "-" + p.version, stem = release + "-" + p.platform;
+    out.push_back({p.id, p.name, p.version, p.platform, std::string(kReleases) + "engines-" + release + "/opad-" + stem + ".zip", p.size, p.sha256});
   }
   return out;
 }

@@ -528,7 +528,7 @@ void MainWindow::buildActions() {
 
 void MainWindow::showDocument(bool has) {
   showCentral();
-  m_browserOverlay->setVisible(has && action("panel.browser")->isChecked());
+  syncBrowserShown();
   for (QAction* a : m_actions) {
     QString id = a->objectName();
     const bool setting = id == "view.dark" || id == "view.cubeEdgesCorners" || id == "view.xrayHighlight" || id == "view.hoverHighlight";  // settings: also without a document

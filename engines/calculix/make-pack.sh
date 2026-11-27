@@ -39,9 +39,21 @@ out=$(mkdir -p "$2" && cd "$2" && pwd)
 jobs=${JOBS:-$(getconf _NPROCESSORS_ONLN)}
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+# Mirrors (SourceForge behind dl.openfoam.com) now and then answer with a web page instead of the file, quickly and with
+# 200, so a download whose SHA-256 differs is tried again a few times before the recipe gives up.
 fetch() {  # url sha256 file
-  if [ ! -f "$work/$3" ]; then curl -sSfL --retry 3 -o "$work/$3.part" "$1" && mv "$work/$3.part" "$work/$3"; fi
-  [ "$(sha256 "$work/$3" | cut -d' ' -f1)" = "$2" ] || { echo "error: $3 does not have the pinned SHA-256" >&2; exit 1; }
+  local try
+  for try in 1 2 3 4; do
+    if [ ! -f "$work/$3" ]; then curl -sSfL --retry 3 -o "$work/$3.part" "$1" && mv "$work/$3.part" "$work/$3" || true; fi
+    if [ -f "$work/$3" ] && [ "$(sha256 "$work/$3" | cut -d' ' -f1)" = "$2" ]; then return 0; fi
+    if [ -f "$work/$3" ]; then
+      echo "warning: $3 (try $try) does not have the pinned SHA-256: $(wc -c <"$work/$3") bytes, $(head -c 60 "$work/$3" | tr -c '[:print:]' '.')" >&2
+      rm -f "$work/$3"
+    fi
+    [ "$try" = 4 ] || sleep $((try * 20))
+  done
+  echo "error: $3 does not have the pinned SHA-256" >&2
+  exit 1
 }
 fetch "$CCX_URL" "$CCX_SHA256" "ccx_${CCX_VERSION}.src.tar.bz2"
 fetch "$SPOOLES_URL" "$SPOOLES_SHA256" "spooles.2.2.tgz"

@@ -133,8 +133,15 @@ int main(){try {
   // Second MCP stress test (#17, #25, #26; measured 161670 live, 90918 headless): features and ops take offset, limit and
   // detail (compact pages by default live: replies of 52 KB and 67 KB before), live_state's change_history, joint_set's
   // preview said to have no id. With joint re-anchoring merged: measured 161693 live, 90946 headless.
-  CHECK(live<161800);  // 160900 before paging; all three merged: measured 160762; 160200 before rules, mirror names and ellipse radii; 159300 before set_phase; 159100 before the guide by section; 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
-  CHECK(headless<91050);  // 90450 before paging; 89950 before rules, mirror names and ellipse radii; 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
+  // Point clouds (+4.4 KB live, measured 166148; +2.8 KB headless, measured 93856): the cloud read (info, points, region,
+  // slice), cloud_sketch, import's scale and up, and the five cloud feature kinds with the region input.
+  // Fitted references (measured 165625 live, 93556 headless): the fit_reference and scan_axes tools, {fit, result} in every
+  // plane and axis input, Align's frame input, best-fit points in the construction plane and axis.
+  // Both merged (0.11.0 batch): measured 169983 live, 96407 headless.
+  // Deviation (+1.8 KB live, +1.3 KB headless; with both above measured 171797 live, 97720 headless): the read-only deviation
+  // command (from, to, tolerance, both_ways, max_distance, region, sample, worst, bins, range, align, exact), the rest in the guide.
+  CHECK(live<172000);  // 170100 before deviation; 165800 before point clouds; 161800 before fitted references; 160900 before paging; all three merged: measured 160762; 160200 before rules, mirror names and ellipse radii; 159300 before set_phase; 159100 before the guide by section; 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  CHECK(headless<97900);  // 96500 before deviation; 93700 before point clouds; 91050 before fitted references; 90450 before paging; 89950 before rules, mirror names and ellipse radii; 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});

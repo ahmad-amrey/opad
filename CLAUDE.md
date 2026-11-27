@@ -127,6 +127,35 @@ Bench: `OPAD_BENCH_VIEWER=<out.opad>` (gui case "viewer"); benches that open a S
 the main window) covers the workspace, blocks the mouse and shows a spinner; actions other than file/panel ones wait.
 Benches (`--bench-select`) keep every other top-level window off screen (`BenchQuiet`) and never ask on quit.
 
+## Point clouds (`core/src/cloud/`, `opad/point_cloud.hpp`, app `CloudArea.cpp`, `ViewportCloud.cpp`)
+
+A cloud body is a mesh body with nodes and no triangles: one surface-less face whose `Poly_Triangulation` holds the points
+(single precision), normals, and in its UV nodes the colour (U = 0xRRGGBB, exact in a float; -1 none) and one scalar (V).
+So it rides the shape cache, BinTools (viewer cache), make_editable and linked assets as any mesh; `is_mesh_shape` is true,
+`cloud::is_cloud` says which. Node/meta `representation: "points"`; a point is vertex ordinal i. Body-store text is
+`cloud::to_brep` (BREP format 3, precision 9: normals kept, floats exact) in `store_body`, `persist_body` and the engine's
+`materialize`; never `brep_from_shape` (no triangulation). Far scans: readers keep points near zero (`Points::offset`, the
+first point rounded to a metre beyond 10 m) and the import puts the offset into the body's `transform`. Readers
+(`cloud/io.cpp`, `e57.cpp`): PLY (the mesh reader's parser too, `read_ply_data`), XYZ/PTS/CSV (columns by header or by
+value ranges, parsed in parallel blocks), LAS 0-10 (LAZ refused: LASzip is LGPL), E57 without a library (pages + CRC-32C,
+XML, bit-packed streams joined per field, pose, invalid points; a writer too). Tools (`cloud/tools.cpp`): `Grid` (kNN,
+radius), `spacing` (sampled above 400k points), `slice` + `profile` (chained polylines, Douglas-Peucker), `outliers`,
+`voxel_downsample`, `estimate_normals` (PCA, oriented by a walk over grid cells). Features `cloud_*` in
+`design/cloud_features.cpp` (one dispatch line in `compute_feature`): normals/outliers/downsample/crop change the cloud in
+place (a result located by its node, `materialize` keeps it in its own frame), `cloud_slice` makes flat clouds; the region
+input type "region" = `{"body", "kind": "region", "vertices": [[first, last], ...]}`; `design::slice_sketch_op` turns a slice
+into lines. Commands `cloud` (read: info/points/region/slice) and `cloud_sketch` (`cloud/commands_cloud.cpp`), export
+ply/xyz/pts/csv/e57. App: `BodyPrs::buildCloud` (worker) draws a stride sample of `cloudBudget` (8M) points, picks through
+`CloudPickSet` (runs of 32 points in Morton order under one BVH: mode 0 and the Vertex filter as `meshGroups[2]`, no owner
+per point); `Viewport::updateClouds` (from `refineVisible`) sets point sizes from spacing/pixel and, zoomed in, draws the
+visible part at full density (`setDisplayPrs`); `setCloudColorMode` (view/cloudColor); `setCloudColours(node, colours)`
+(one 0xAARRGGBB a point, alpha 0 none; null clears) a display-only overlay per node (deviation maps), redrawn per node
+through every level-of-detail pass. Select points: lasso/box (NDC
+polygon, `cloud::in_polygon` on a worker), brush (spheres at navigation picks), overlay in Topmost; Keep/Delete = one
+`cloud_crop`. Known limit: a non-linked 20M cloud is ~700 MB of BREP text, and `applyOps` copies the Document on the UI
+thread: big scans are best linked (`import --link`). `ctest -R point-cloud`; gui case `cloud-20m` (OPAD_BENCH_CLOUD,
+tools/bench_cases/cloud.py makes a 20M-point PLY).
+
 ## Parasolid X_T / X_B (`core/src/xt/`, no dependency)
 
 `xt_parse.cpp` reads text and neutral/typed binary (bare binary refused) into nodes; layouts: embedded edits (V14+ keys
@@ -173,8 +202,9 @@ OpenFOAM v2606 (zlib 1.4) and CalculiX 2.24 for windows-x64, linux-x64 and macos
 `engines/<id>/make-pack.sh` and checked on their own system by `engines/<id>/smoke.sh` (CI: `.github/workflows/engines.yml`,
 planned by `engines/ci/plan.sh`: pull requests build and check; on dev every pack whose tag is missing is published with
 GITHUB_TOKEN, from the pull request's artifact of the same git tree when there is one; docs/releasing.md "Solver packs"),
-one release per system, `engines-<id>-<ver>-<rev>-<platform>` (not latest, never replaced: a change bumps `PACK_REV`),
-their size + SHA-256 pinned per system in `engine_packs.cpp`'s `kPins` the commit after (no hash = not offered).
+one release per pack revision with every system's zip, `engines-<id>-<ver>-<rev>` (`engines/ci/publish.sh`; not latest,
+never replaced: a change bumps `PACK_REV`; the first packs' per-system releases are taken over byte for byte), their size
++ SHA-256 pinned per system in `engine_packs.cpp`'s `kPins` the commit after (no hash = not offered).
 Install (check's Run step "Install OpenFOAM (42 MB)", `SolverWindow`'s Install): `engineinstall::Installer` downloads in a
 `Downloading` job (only `engine_pack_url_allowed` URLs: github.com/ahmad-amrey/opad/releases/download/, or 127.0.0.1 when
 `OPAD_ENGINE_PACKS=<json>` replaces the table), then `install_pack` on a worker: size, hash, every member inside the
@@ -392,6 +422,28 @@ a sphere): candidates are chosen by the facets' middles too (`centre_error`); ve
 sides (chord sagitta limited by `mesh_sagitta`); arcs need their centre on the ends' bisector or the sketch's wire does
 not close. `OPAD_MESHSOLID_DEBUG=1` traces why a profile or attempt was refused. `ctest -R mesh_solid`; bench
 `mesh-to-solid` (OPAD_BENCH_MESHSOLID).
+
+## Fitted references on meshes (`core/src/scan_fit.cpp`, `core/src/design/fit_refs.cpp`, `app/FitPick.*`)
+
+A scan's "faces" are triangles, so planes and axes on a mesh body are fitted: `{"fit": {body, seed | triangles | points |
+planes, tolerance, of}, "result": {...}}` in any plane or axis input (`Ctx::plane` / `Ctx::axis` -> `fitted_plane` /
+`fitted_axis`). The result is stored in body coordinates with the body key and a digest of `fit`: while both match it is
+used as is (a moved body carries it), else fitted again; `complete_feature_fits` in the Walk writes results into new ops
+and edits, as automatic targets are (replay never fits). Fits are robust: least median of squares over sampled hypotheses,
+then least squares on the 3-sigma inliers; a region grows from its seed by normals (averaged over 6 rings on noisy meshes,
+raw on clean CAD ones) plus "on the region's plane" for facets the noise turned; round faces (`grow_round`) grow by the
+cylinder fitted so far (corner distances, normals square to the axis), so neither noise nor a rim stops or leaks them.
+`Quality.grade` (rms / extent, inlier share) tells a curved region taken for a plane. `scan_axes`: mean shift of the
+area-weighted (averaged) normals from a cube-map histogram, each direction's heaviest offset band fitted as a base, bases
+the scan lies behind first; walls by a doubled-angle histogram in the base plane, quarter turns offered; no flat over 4% =
+PCA. Align's `frame` input maps the From frame onto the To one. UI: a mesh triangle (face or edge pick) in the plane
+picker or an axis input becomes a fit (`fitpick::fromPick`), a box of triangles `fromTriangles`, the picker's Fit to
+points `fromPoints`; `DesignController::refitPick` fits on a worker and the panel's fit row (tolerance, kind, Next base /
+Next X / Box centre) asks again; the preview waits for the fit (`FeaturePanel::complete`). `design.alignScan` = Align with
+`scan_axes`. Point clouds (a face whose triangulation has nodes, no triangles): `fit_mesh` keeps the nodes only, a fit takes
+them by `"vertices"` ranges (plane, normal, line), `scan_axes` falls back to PCA of the points. Test meshes: faces split into cells (`BRepAlgoAPI_Splitter` on the skin, never the solid: cells get inner
+walls) and subdivided at side midpoints (shared sides split alike), noise hashed by position. `ctest -R scan-fit`; bench
+`fit-align` (OPAD_BENCH_FITALIGN, generated 1.1M-triangle plate). Commands `fit_reference`, `scan_axes`.
 
 ## One-shot tools (close after use, Shift keeps them)
 
@@ -773,6 +825,25 @@ with `view` 'C'/'D' only there, the session's own objects masked out; 3 panes = 
 filled by `CompareMode::buildExtras` from the table's bodies (`m_variantBodies`, the files in `m_variantDocs`). `opad-cli variants`,
 `ctest -R "variants|xt"`, bench `compare-files` (OPAD_BENCH_COMPARE_FILES).
 
+## Deviation (`core/src/deviation.cpp`, `opad/deviation.hpp`, `app/DeviationArea.cpp`)
+
+How far body A (a scan, a print, a revision) lies from B, signed per sampled point of A (+ outside B = added, - inside =
+missing). Core: B's triangles (a mesh as stored, a solid meshed on a copy at `deflection_for(tol, size)`, welded on a
+1e-7 x size grid) in a median-split BVH (`Surface`); the sign from angle-weighted pseudo-normals, undefined where the
+nearest point is on an open border (`sign_undefined`, `sign_note`); a closed B with a negative volume is turned round.
+A mesh's welded vertices are the samples (thinned evenly past `sample`), a point cloud's points too (node order, `from`
+only; the app colours its points through `Viewport::setCloudColours`, given back on close), a solid's faces by area (fixed seed);
+2000 points or fewer on a solid B are refined on the exact face (BRepExtrema). Worst spots: greedy by |d|, each 6% of A's
+size (at least 10 tolerances) from the others. ICP (`best_fit`): point-to-plane, 6x6 solve about the centroid, pairs past
+3x the median dropped. Command `deviation` (CLI, MCP, live MCP; guide "Checking the result"); `summary` re-summarises a
+study for another tolerance without measuring. App: Inspect > Check > Deviation, panel "deviation"; the map is a
+`VertexPaint` (app/VertexPaint.hpp) through `Viewport::setVertexPaints`, which shares Compare's tinted arrays (`applyTints`,
+`refineTintKey`: the zoom refinement paints its finer arrays too); per-array values are cached per study, so a new
+tolerance only recolours. LookSource::Deviation keeps A plain (white material under the vertex colours) and fades B. Probe
+= `pointUnder` + one BVH query; pins = `setDeviationPins` (AIS_TextLabel on a plate + a dot, Topmost). Best fit is a
+`setPreviewMotion` preview; Accept = one `transform` of the picked node. `ctest -R deviation`; gui case `deviation`
+(OPAD_BENCH_DEVIATION: the heavy-mesh tube, 1.2M triangles, against a solid cylinder: measured in 0.6 s, map drawn in ~1 s; then a 100k-point cloud against the same solid, `benchCloudOverlaid` on and off).
+
 ## CI and releases (`.github/workflows/ci.yml`, `promote.yml`, docs/releasing.md)
 
 Branches: **work goes into `dev`** (never `main`), the pre-release branch: only by pull requests, each built, tested and
@@ -841,8 +912,12 @@ automatic one is answered by it (`m_userAsked`). The Windows single exe (no `uni
 any `OPAD_BENCH*` variable is set or with `OPAD_NO_UPDATE_CHECK`; `OPAD_UPDATE_URL` / `OPAD_UPDATE_PAGE_URL` point the two
 requests elsewhere (bench `updates`; `ctest -R update-check` runs a fake GitHub on a local socket). HTTPS needs Qt's TLS
 plugin: the static build imports `Qt6::QSchannelBackendPlugin`, the portable stage copies `tls/qschannelbackend.dll`.
-Asset names are fixed by the release job's renames (version-free); renaming one means the README links and
-`installerAssetName` too.
+Assets carry their release's tag without the v (`OPAD-0.11.0-windows-x64-setup.exe`, `-rc.N`, `-dev.N`: the Collect
+step's LABEL, which is also the tag); the update check takes `OPAD-*-<installerAssetName's system part>`; version-free
+copies of the four installers stay for copies before 0.11.0. The README links to the latest release's page. The
+installer moves a running opad-cli.exe aside (`opad-cli.exe.<n>.old`, `PrepareToInstall`) instead of asking to close it:
+every open AI session (Claude Code, Desktop, Codex) runs its own `opad-cli mcp` for as long as it is open. OPAD's start
+removes the free ones (`appdata::removeMovedAside`). Release notes list the solver packs (`tools/solver_packs_notes.sh`).
 
 ## Where settings live (`app/AppData.*`)
 

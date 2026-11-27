@@ -27,11 +27,15 @@ json ref() {
   value["anyOf"]={{{"required",{"body"}}},{{"required",{"point"}}}};
   return {{"anyOf",{type("string"),value}},{"description","Body UUID or body/face/N, body/edge/N, body/vertex/N (zero-based); structured {body,kind,index,hint}; or a rule {body,kind,select,expect?,ambiguity?} that picks every face/edge/vertex of the body matching the query_entities filters in select (curve, surface, radius_min, radius_max, parallel_to, normal, at_plane, bounds) when the feature is computed, and fails when the count is not expect. Use references from the current document revision."}};
 }
+// A fitted reference (design/fit_refs.cpp): its fields are fit_reference's to describe (this schema is in every plane
+// and axis input of every feature kind).
+json fit_ref(bool){return type("object");}
 json plane() {
   auto frame=object({{"origin",vector(3)},{"x",vector(3)},{"y",vector(3)}},{"origin","x","y"});
-  auto p=object({{"base",choice({"xy","xz","yz"})},{"face",ref()},{"feature",type("string")},{"frame",frame},{"origin",vector(3)},{"normal",vector(3)},{"x",vector(3)}},{},false);
-  p["anyOf"]={{{"required",{"base"}}},{{"required",{"face"}}},{{"required",{"feature"}}},{{"required",{"frame"}}},{{"required",{"origin","normal"}}}};
-  p["description"]="A base plane, a planar face, a construction plane feature, or origin + normal [x,y,z] (x optional: world X laid onto the plane, or world Y when X is the normal). The resolved frame is returned and stored.";
+  auto p=object({{"base",choice({"xy","xz","yz"})},{"face",ref()},{"feature",type("string")},{"frame",frame},{"origin",vector(3)},{"normal",vector(3)},{"x",vector(3)},
+    {"fit",fit_ref(false)},{"result",type("object")}},{},false);
+  p["anyOf"]={{{"required",{"base"}}},{{"required",{"face"}}},{{"required",{"feature"}}},{{"required",{"frame"}}},{{"required",{"origin","normal"}}},{{"required",{"fit"}}}};
+  p["description"]="A base plane, a planar face, a construction plane feature, origin + normal [x,y,z] (x optional: world X laid onto the plane, or world Y when X is the normal), or {fit, result?}: fitted on a mesh or to points (see fit_reference). The resolved frame is returned and stored.";
   return p;
 }
 json sketch_geometry() {
@@ -63,8 +67,11 @@ json input_schema(const design::InputSpec& in) {
     out={{"anyOf",{type("string"),{{"type","object"},{"additionalProperties",type("string")}}}}};
     out["description"]="Whole words swapped in copy names: \"R=L, Right=Left\" or {\"R\":\"L\"}; also picks the sibling component so named.";}
   else if(in.type=="plane")out=plane();
-  else if(in.type=="axis"){out=object({{"base",choice({"x","y","z"})},{"edge",ref()},{"face",ref()},{"sketch",type("string")},{"entity",type("integer")},{"feature",type("string")},{"direction",vector(3)},{"origin",vector(3)}},{},false);
-    out["description"]="A base axis; a straight or circular edge (its line or centre axis); a face (a cylinder's, cone's or torus's axis, or a planar face's normal); a sketch line {sketch, entity}; a construction axis feature; or written out {direction: [x,y,z], origin?: [x,y,z]}.";}
+  else if(in.type=="region"){  // a region of a point cloud's points (opad/point_cloud.hpp)
+    out=object({{"body",type("string")},{"kind",choice({"region"})},{"vertices",array({{"anyOf",{type("integer"),array(type("integer"),2,2)}}},1)},{"count",type("integer")}},{"body","vertices"});
+    out["description"]="Points of a cloud body by ordinal: {\"body\": <cloud>, \"kind\": \"region\", \"vertices\": [[first, last], ...]} (inclusive ranges), as the cloud command's region action returns.";}
+  else if(in.type=="axis"){out=object({{"base",choice({"x","y","z"})},{"edge",ref()},{"face",ref()},{"sketch",type("string")},{"entity",type("integer")},{"feature",type("string")},{"direction",vector(3)},{"origin",vector(3)},{"fit",fit_ref(true)},{"result",type("object")}},{},false);
+    out["description"]="A base axis; a straight or circular edge (its line or centre axis); a face (a cylinder's, cone's or torus's axis, or a planar face's normal); a sketch line {sketch, entity}; a construction axis feature; written out {direction: [x,y,z], origin?: [x,y,z]}; or {fit, result?}: fitted on a mesh or to points (see fit_reference).";}
   else if(in.type=="path")out={{"anyOf",{object({{"sketch",type("string")},{"entities",array(type("integer"))}},{"sketch"}),object({{"edges",array(ref(),1)}},{"edges"}),array(ref(),1)}}};
   else if(in.type=="profiles")out=array({{"anyOf",{ref(),object({{"sketch",type("string")},{"at",vector(2)},{"boundary",array(type("integer"))},{"all",type("boolean")}},{"sketch"})}}},in.min_count,in.max_count);
   else if(in.type=="points"){  // a vertex, a sketch point, or a point in space written out (gap log #14)
@@ -125,7 +132,7 @@ json command_schema(const commands::CommandInfo& command,bool live) {
     {"properties",{"node"}},{"import",{"file"}},{"export",{"format","out"}},{"render",{"out"}},{"diff",{"b"}},
     {"annotate",{"anchor","text"}},{"delete_annotation",{"target"}},{"delete",{"target"}},{"rename",{"name"}},{"transform",{"target","matrix"}},{"section",{"origin","normal"}},{"view",{"camera"}},{"param",{"name"}},{"param_delete",{"name"}},
     {"sketch_edit",{"target"}},{"align_sketch",{"target","inputs"}},{"feature",{"kind"}},{"feature_edit",{"target"}},{"drawing_to_sketch",{"layers"}},{"mesh_to_solid",{"body"}},
-    {"query_entities",{"body"}},{"clearance",{"a","b"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}},
+    {"query_entities",{"body"}},{"clearance",{"a","b"}},{"deviation",{"from","to"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"fit_reference",{"ref"}},{"scan_axes",{"body"}},{"sketch_tool",{"target","tool"}},
     {"sheet_view",{"sheet"}},{"sheet_item",{"sheet"}},{"sheet_edit",{"target","set"}},{"part_properties",{"set"}},{"related",{"refs"}}
   };
   if(auto it=needed.find(name);it!=needed.end())for(const auto& key:it->second)required.push_back(key);

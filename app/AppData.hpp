@@ -35,4 +35,9 @@ QString start(const QString& programDir);
 // adopted, or empty when nothing was.
 QString adoptOldPortable(const QString& programDir, QSettings& settings, const QString& dataDir, const QString& templatesDir);
 
+// The installer moves an opad-cli.exe that an AI session still runs aside (opad-cli.exe.<n>.old, installer/opad.iss)
+// rather than asking to close it. Each start removes those that nothing runs any more; one still running stays for the
+// next start. Returns how many were removed.
+int removeMovedAside(const QString& programDir);
+
 }  // namespace appdata

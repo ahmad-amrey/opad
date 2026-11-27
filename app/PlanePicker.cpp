@@ -1,4 +1,5 @@
 #include "PlanePicker.hpp"
+#include "FitPick.hpp"
 #include "GuidedTool.hpp"
 #include "ToolValues.hpp"
 #include "Units.hpp"
@@ -15,6 +16,7 @@
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QFormLayout>
 #include <QPushButton>
 #include <QLineEdit>
@@ -61,8 +63,15 @@ class PlaneTiles : public QWidget {
 PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget* window):QObject(window),m_doc(doc),m_view(view),m_jobs(jobs),m_snap(view) {
   auto* body=new QWidget;auto* layout=new QVBoxLayout(body);
   m_steps=new ToolStepsPanel(body);m_steps->setSummary({},{},{});m_steps->setFixedHeight(125);layout->addWidget(m_steps);
-  auto* hint=new QLabel(tr("Click an origin plane (in the view or the corner tiles), a planar face or a sketch."),body);hint->setObjectName("planeHint");hint->setWordWrap(true);layout->addWidget(hint);
+  auto* hint=new QLabel(tr("Click an origin plane (in the view or the corner tiles), a planar face or a sketch. On a mesh (a scan), a click fits the flat around it, a box the triangles it takes."),body);hint->setObjectName("planeHint");hint->setWordWrap(true);layout->addWidget(hint);
   m_construction=new QCheckBox(tr("Show construction planes"),body);m_construction->setObjectName("constructionPlanes");layout->addWidget(m_construction);
+  // A scan or an STL has no planar face: a click on it fits the flat around that triangle, a box the triangles it takes;
+  // Fit to points takes vertices (a scan's nodes too) and fits the plane through them.
+  {auto* row=new QHBoxLayout;m_pointsMode=new QPushButton(tr("Fit to points"),body);m_pointsMode->setObjectName("fitPoints");m_pointsMode->setCheckable(true);
+   m_pointsMode->setToolTip(tr("Pick three or more vertices (a mesh's too) and fit a plane through them; a stray one is left out"));
+   m_usePoints=new QPushButton(tr("Use points"),body);m_usePoints->setObjectName("usePoints");m_usePoints->setVisible(false);
+   row->addWidget(m_pointsMode);row->addWidget(m_usePoints);row->addStretch();layout->addLayout(row);
+   connect(m_pointsMode,&QPushButton::toggled,this,[this](bool on){setPointsMode(on);});connect(m_usePoints,&QPushButton::clicked,this,[this]{usePoints();});}
   connect(m_construction,&QCheckBox::toggled,this,[this]{constructionPlanes();});
   m_originControls=new QWidget(body);auto* form=new QFormLayout(m_originControls);form->setContentsMargins(0,0,0,0);
   m_u=new QLineEdit(body);m_v=new QLineEdit(body);form->addRow(tr("Plane X"),m_u);form->addRow(tr("Plane Y"),m_v);  // in the shown unit
@@ -120,6 +129,7 @@ void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open
   }
 }
 void PlanePicker::stop(bool restoreCamera) {
+  if(m_points){const QSignalBlocker quiet(m_pointsMode);m_pointsMode->setChecked(false);m_points=false;m_view->setPickAccumulate(m_accumulateBefore);m_usePoints->hide();}
   const bool wasActive=m_active;m_active=false;m_originStage=false;m_drag=false;m_mouseDown=false;++m_serial;++m_candidateSerial;m_values->reset();
   if(m_job)m_job->cancel();m_job=nullptr;preview(nullptr);m_tiles->hide();m_panel->hide();
   if(wasActive){if(restoreCamera)m_view->setCameraJson(m_cameraBefore);m_view->clearCandidates();m_view->clearSelection();m_view->setSelectionFilter(m_oldFilter);}
@@ -128,9 +138,12 @@ void PlanePicker::cancel(){if(!m_active)return;stop();emit cancelled();}
 void PlanePicker::choose(const opad::json& support) {
   if(!m_active)return;const int serial=++m_serial;if(m_job)m_job->cancel();
   auto doc=std::make_shared<opad::Document>(m_doc->doc);auto scene=std::make_shared<opad::Scene>(m_doc->scene);auto plane=std::make_shared<opad::json>(support);auto frame=std::make_shared<opad::Frame>();QPointer<PlanePicker> guard(this);
-  m_status->setText(tr("Resolving sketch plane"));m_apply->setEnabled(false);
-  m_job=m_jobs->async(tr("Resolving sketch plane"),[doc,scene,plane,frame](Progress p){if(p.cancelled())return;*frame=resolve_plane(*doc,*scene,*plane);if(plane->contains("face"))(*plane)["face"]=make_ref(*doc,*scene,opad::Ref::from_json(plane->at("face")));},[this,guard,serial,plane,frame](bool ok,const QString& error){
-    if(!guard||!m_active||serial!=m_serial)return;m_job=nullptr;if(!ok){m_status->setText(i18n::t(error));return;}m_status->clear();m_support=*plane;m_supportFrame=*frame;m_frame=*frame;
+  const bool fit=fitpick::isFit(support);m_status->setText(fit?tr("Fitting the plane"):tr("Resolving sketch plane"));m_apply->setEnabled(false);
+  m_job=m_jobs->async(fit?tr("Fitting the plane"):tr("Resolving sketch plane"),[doc,scene,plane,frame](Progress p){if(p.cancelled())return;
+    if(fitpick::isFit(*plane)){*plane=fit_reference(*doc,*scene,*plane,"plane",[p]{return p.cancelled();});plane->erase("world");}  // fitted once, here: the feature keeps the result
+    *frame=resolve_plane(*doc,*scene,*plane);if(plane->contains("face"))(*plane)["face"]=make_ref(*doc,*scene,opad::Ref::from_json(plane->at("face")));},[this,guard,serial,plane,frame](bool ok,const QString& error){
+    if(!guard||!m_active||serial!=m_serial)return;m_job=nullptr;if(!ok){m_status->setText(i18n::t(error));if(m_points)refreshPoints();return;}
+    m_status->setText(fitpick::isFit(*plane)?fitpick::title(*plane)+QString::fromUtf8(" · ")+fitpick::quality(*plane):QString());m_support=*plane;m_supportFrame=*frame;m_frame=*frame;
     if(!m_positionOrigin){const auto value=*plane;const auto f=*frame;stop(false);emit accepted(value,f);return;}
     // The origin starts where the plane has its own (a face's lower-left corner, a sketch's or a construction plane's origin,
     // as hovering it previewed and a face picked first takes), not under the world origin.
@@ -148,7 +161,30 @@ QString PlanePicker::candidateName(const opad::json& support) const {
 }
 void PlanePicker::selectionChanged() {
   if(!m_active||m_originStage)return;const auto candidates=m_view->selectedCandidates();const auto refs=m_view->selection();
-  if(!candidates.empty())choose(opad::json::parse(candidates.back()));else if(!refs.empty()&&refs.back().kind==opad::Ref::Kind::Face)choose({{"face",refs.back().to_json()}});
+  if(m_points){refreshPoints();return;}
+  if(!candidates.empty())choose(opad::json::parse(candidates.back()));
+  else if(!refs.empty()&&refs.back().kind==opad::Ref::Kind::Face){
+    // A mesh: a box's triangles (several taken at once), else the flat grown from the clicked triangle.
+    const opad::json box=refs.size()>1?fitpick::fromTriangles(m_doc->scene,refs):opad::json();
+    const opad::json one=fitpick::fromPick(m_doc->scene,refs.back(),false);
+    choose(!box.is_null()?box:!one.is_null()?one:opad::json{{"face",refs.back().to_json()}});
+  }
+}
+void PlanePicker::setPointsMode(bool on){
+  if(!m_active||m_originStage||on==m_points)return;
+  m_points=on;m_view->clearSelection();
+  if(on){m_accumulateBefore=m_view->pickAccumulate();m_view->setPickAccumulate(true);m_view->setSelectionFilter(Viewport::SelFilter::Vertex);}
+  else {m_view->setPickAccumulate(m_accumulateBefore);m_view->setSelectionFilter(Viewport::SelFilter::Face);m_status->clear();}
+  m_usePoints->setVisible(on);refreshPoints();
+}
+void PlanePicker::refreshPoints(){
+  if(!m_points)return;int n=0;for(const auto& r:m_view->selection())n+=r.kind==opad::Ref::Kind::Vertex;
+  m_usePoints->setEnabled(n>=3&&!m_job);m_usePoints->setText(n>=3?tr("Use %1 points").arg(n):tr("Use points"));
+  m_status->setText(n<3?tr("Pick %1 more vertices (three or more)").arg(3-n):tr("%1 points picked: Use fits the plane through them").arg(n));
+}
+void PlanePicker::usePoints(){
+  if(!m_points)return;std::vector<opad::Ref> pts;for(const auto& r:m_view->selection())if(r.kind==opad::Ref::Kind::Vertex)pts.push_back(r);
+  if(pts.size()<3)return;choose(fitpick::fromPoints(pts,false));
 }
 void PlanePicker::back(){if(!m_active)return;++m_serial;if(m_job)m_job->cancel();m_job=nullptr;m_originStage=false;m_view->setCameraJson(m_cameraBefore);m_view->setSelectionFilter(Viewport::SelFilter::Face);preview(nullptr);m_tiles->show();constructionPlanes();refresh();}
 void PlanePicker::setOrigin(double u,double v){if(!m_originStage||!std::isfinite(u)||!std::isfinite(v))return;++m_serial;if(m_job)m_job->cancel();m_job=nullptr;m_origin={{"uv",{u,v}}};m_frame=m_supportFrame;m_frame.origin=m_supportFrame.to_world(u,v);m_status->clear();refresh();}
@@ -156,6 +192,7 @@ void PlanePicker::apply(){if(!m_active||!m_originStage||m_job)return;const opad:
 // What the plane step took (UI-25: never "Ready"): a base plane, a body's face, a sketch's or a construction plane's name.
 QString PlanePicker::supportName() const {
   if(m_support.contains("base"))return candidateName(m_support);
+  if(fitpick::isFit(m_support))return fitpick::title(m_support);
   if(m_support.contains("face")) {
     std::string body;try{body=opad::Ref::from_json(m_support.at("face")).body;}catch(...){}
     const opad::Node* n=m_doc->scene.node(body);return n?tr("Face of %1").arg(QString::fromStdString(n->name)):tr("A face");
@@ -172,7 +209,7 @@ QList<ToolStep> PlanePicker::steps() const {
 void PlanePicker::refresh(){
   m_refreshing=true;
   m_steps->setSteps(steps(),{});
-  m_panel->findChild<QLabel*>("planeHint")->setVisible(!m_originStage);m_originControls->setVisible(m_originStage);m_construction->setVisible(!m_originStage);m_apply->setVisible(m_originStage);m_apply->setEnabled(!m_job);m_back->setVisible(m_originStage);
+  m_panel->findChild<QLabel*>("planeHint")->setVisible(!m_originStage);m_originControls->setVisible(m_originStage);m_construction->setVisible(!m_originStage);m_pointsMode->setVisible(!m_originStage);m_usePoints->setVisible(!m_originStage&&m_points);m_apply->setVisible(m_originStage);m_apply->setEnabled(!m_job);m_back->setVisible(m_originStage);
   if(m_originStage){double u,v;m_supportFrame.to_local(m_frame.origin,u,v);m_u->setText(units::editable(units::Kind::Length,u));m_v->setText(units::editable(units::Kind::Length,v));preview(&m_frame);}m_refreshing=false;
 }
 void PlanePicker::constructionPlanes(){

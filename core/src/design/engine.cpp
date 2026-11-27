@@ -26,6 +26,7 @@
 
 #include "opad/assets.hpp"
 #include "opad/geometry.hpp"
+#include "opad/point_cloud.hpp"
 #include "opad/inspect.hpp"
 #include "opad/recognize.hpp"
 #include "opad/design/sketch_pattern.hpp"
@@ -81,7 +82,8 @@ void string_refs(const json& v, bool reference, std::set<std::string>& out) {
 }
 
 bool reference_input(const std::string& type) {
-  return type == "bodies" || type == "faces" || type == "edges" || type == "points" || type == "profiles" || type == "plane" || type == "axis" || type == "path";
+  return type == "bodies" || type == "faces" || type == "edges" || type == "points" || type == "profiles" || type == "plane" || type == "axis" || type == "path" ||
+         type == "region";
 }
 
 // Two results of one feature from equal inputs: the same topology, vertices (to about 1e-6 mm), volume, area and centre.
@@ -170,6 +172,7 @@ TopoDS_Shape Ctx::node_shape(const std::string& node) const {
   const Node* n = scene.node(node);
   if (!n || n->kind != Node::Kind::Body) throw Error("a referenced body no longer exists");
   if (n->representation == "mesh") throw Error("Mesh objects are view-only; solid modelling requires a CAD body");
+  if (n->representation == "points") throw Error("Point clouds are measured, not modelled on: slice the cloud and sketch over the slice, or mesh it");
   TopoDS_Shape proto = key_shape(n->body_key);
   const gp_Trsf t = node_trsf(node);
   return t.Form() == gp_Identity ? proto : proto.Moved(TopLoc_Location(t));
@@ -455,6 +458,7 @@ Frame plane_through(const gp_Pnt& origin, const gp_Vec& normal, const gp_Vec* x)
 
 Frame Ctx::plane(const json& in) const {
   if (!in.is_object()) throw Error("no plane was chosen");
+  if (in.contains("fit")) return fitted_plane(*this, in);  // estimated from a mesh or points (fit_refs.cpp)
   if (in.contains("normal")) {  // {"origin", "normal", "x"?} (TODO 10 B5)
     auto vec3 = [&](const char* key, gp_Vec fallback) {
       if (!in.contains(key)) return fallback;
@@ -552,6 +556,7 @@ Frame Ctx::plane(const json& in) const {
 
 gp_Ax1 Ctx::axis(const json& in) const {
   if (!in.is_object()) throw Error("no axis was chosen");
+  if (in.contains("fit")) return fitted_axis(*this, in);
   if (in.contains("direction")) {  // written out: {"direction": [x, y, z], "origin": [x, y, z]} (mcp-eval 2026-10-06, a hole's direction)
     const json& d = in["direction"];
     const json o = in.value("origin", json::array({0, 0, 0}));
@@ -880,15 +885,35 @@ struct Walk {
         else entry.erase("parent");
         entry["new"] = true;
       }
+      const bool points = cloud::is_cloud(b.shape);
       TopoDS_Shape local = b.shape;
-      if (to_local.Form() != gp_Identity) local = BRepBuilderAPI_Transform(b.shape, to_local, Standard_True).Shape();
-      // Locations are baked in so the entry is the same text whichever way the body was moved about.
-      if (!local.Location().IsIdentity()) {
-        const gp_Trsf where = local.Location().Transformation();
-        local = BRepBuilderAPI_Transform(local.Located(TopLoc_Location()), where, Standard_True).Shape();
+      std::string brep, key;
+      if (points) {
+        // A point cloud keeps its points in its own frame (far scans stay exact in floats): a new one takes its placement as
+        // the entry's transform, a changed one is handed back in its node's frame (cloud_features.cpp).
+        const gp_Trsf total = to_local.Multiplied(b.shape.Location().Transformation());
+        local = b.shape.Located(TopLoc_Location());
+        const Mat4 m = mat_from_trsf(total);
+        if (!m.is_identity(1e-9)) {
+          if (b.node.empty()) entry["transform"] = m.to_json();
+          else {
+            cloud::Points p = cloud::from_shape(local);
+            p.transform(m);
+            local = cloud::to_shape(p);
+          }
+        }
+        brep = cloud::to_brep(local);
+        key = sha256_hex(brep);
+        entry["representation"] = "points";
+      } else {
+        if (to_local.Form() != gp_Identity) local = BRepBuilderAPI_Transform(b.shape, to_local, Standard_True).Shape();
+        // Locations are baked in so the entry is the same text whichever way the body was moved about.
+        if (!local.Location().IsIdentity()) {
+          const gp_Trsf where = local.Location().Transformation();
+          local = BRepBuilderAPI_Transform(local.Located(TopLoc_Location()), where, Standard_True).Shape();
+        }
+        key = body_key_for(local, &brep);
       }
-      std::string brep;
-      std::string key = body_key_for(local, &brep);
       // What later features of this walk (and the shape cache) get is the body as read back from its entry, the same
       // shape every later regeneration and a reopened file start from; the kernel's in-memory result made the first
       // computation of a feature differ from its recomputations (new keys for unchanged bodies).
@@ -896,7 +921,7 @@ struct Walk {
       std::string was;
       for (const auto& p : previous.value("bodies", json::array()))
         if (p.value("id", "") == entry["id"].get<std::string>()) was = p.value("key", "");
-      if (!was.empty() && was != key && doc.has_body(was)) {
+      if (!points && !was.empty() && was != key && doc.has_body(was)) {
         const TopoDS_Shape old = body_shape(doc, was);
         if (same_geometry(local, old)) {
           key = was;
@@ -905,11 +930,12 @@ struct Walk {
       }
       entry["key"] = key;
       if (stored.IsNull() && !doc.has_body(key) && !fresh.count(key)) {
-        stored = shape_from_brep(brep);
+        stored = points ? local : shape_from_brep(brep);
         NewBody nb;
         nb.key = key;
         nb.brep = std::move(brep);
         nb.meta = {{"name", entry.value("name", std::string("Body"))}, {"units", "mm"}, {"source", "design"}};
+        if (points) nb.meta.update(cloud::meta_of_shape(local));
         nb.shape = std::make_shared<TopoDS_Shape>(stored);
         plan.bodies.push_back(std::move(nb));
       }
@@ -1179,6 +1205,17 @@ struct Walk {
             Ctx made_in = ctx;
             made_in.component = component;
             made_in.name = data.value("name", "");
+            // Fitted references keep what they fitted to (a new op, or the edit making the change), so a replay or an
+            // unrelated regeneration never fits a scan again (fit_refs.cpp).
+            if (json* patch = patchable_inputs(id)) {
+              const json before = inputs;
+              if (complete_feature_fits(made_in, kind, inputs)) {
+                for (auto& [k, v] : inputs.items())
+                  if (!before.contains(k) || before[k] != v) (*patch)[k] = v;
+                data["inputs"] = inputs;
+                fp = fingerprint();
+              }
+            }
             Out out = compute_feature(made_in, kind, inputs);
             check_read_only(ctx, kind, out);
             for (auto& [k, v] : notes.items()) out.extra[k] = v;
@@ -1623,6 +1660,7 @@ json hint_refs(const Document& doc, const Scene& scene, json inputs) {
     if (j.is_array()) {
       for (auto& v : j) walk(v);
     } else if (j.is_object()) {
+      if (j.contains("fit")) return;  // a fitted reference: its points are kept as given (fit_refs.cpp digests them)
       if (j.contains("body") && j.contains("kind") && j["kind"].is_string() && !j.contains("hint") && !j.contains("select")) {
         try {
           const Ref r = Ref::from_json(j);

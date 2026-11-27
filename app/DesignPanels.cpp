@@ -16,6 +16,7 @@
 #include <cmath>
 #include <set>
 
+#include "FitPick.hpp"
 #include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
@@ -400,10 +401,134 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
       continue;
     }
     m_rows->addWidget(w.row);
+    if (in.type == "plane" || in.type == "axis") buildFitRow(key, w, in.type == "axis");
     m_widgets[key] = w;
   }
   refreshVisibility();
   activateNextPick();
+}
+
+// Under a plane or axis input: what its fit on a mesh came to, and what fits it again (on a worker, DesignController).
+void FeaturePanel::buildFitRow(const QString& key, Row& w, bool axis) {
+  w.fit = new QWidget(this);
+  w.fit->setObjectName("fitRow");
+  auto* v = new QVBoxLayout(w.fit);
+  v->setContentsMargins(126, 0, 0, 4);
+  v->setSpacing(4);
+  w.fitText = new QLabel(w.fit);
+  w.fitText->setObjectName("fitQuality");
+  w.fitText->setWordWrap(true);
+  v->addWidget(w.fitText);
+  auto* h = new QHBoxLayout;
+  h->setSpacing(6);
+  auto* tolLabel = new QLabel(tr("Tolerance"), w.fit);
+  tolLabel->setObjectName("secondary");
+  w.fitToleranceLabel = tolLabel;
+  w.fitTolerance = new QLineEdit(w.fit);
+  w.fitTolerance->setObjectName("fitTolerance");
+  w.fitTolerance->setToolTip(tr("How far a facet may lean and still belong to the region (from the flat's mean normal; neighbour to neighbour on a round face)"));
+  w.fitTolerance->setMaximumWidth(80);
+  h->addWidget(tolLabel);
+  h->addWidget(w.fitTolerance);
+  connect(w.fitTolerance, &QLineEdit::editingFinished, this, [this, key] {
+    const auto it = m_widgets.find(key);
+    if (it == m_widgets.end() || !it->second.fitTolerance->isModified()) return;
+    it->second.fitTolerance->setModified(false);
+    QString text = it->second.fitTolerance->text().trimmed();
+    bool number = false;
+    text.toDouble(&number);
+    if (number) text += " deg";
+    editFit(key, [text](opad::json& fit) { fit["tolerance"] = text.toStdString(); });
+  });
+  if (axis) {
+    w.fitKind = new QComboBox(w.fit);
+    w.fitKind->setObjectName("fitKind");
+    w.fitKind->addItem(tr("Automatic"), "auto");
+    w.fitKind->addItem(tr("Round face axis"), "cylinder");
+    w.fitKind->addItem(tr("Flat's normal"), "normal");
+    w.fitKind->addItem(tr("Wall direction"), "wall");
+    connect(w.fitKind, &QComboBox::activated, this, [this, key](int) {
+      const auto it = m_widgets.find(key);
+      if (it == m_widgets.end()) return;
+      const std::string of = it->second.fitKind->currentData().toString().toStdString();
+      editFit(key, [of](opad::json& fit) {
+        fit["of"] = of;
+        fit["tolerance"] = of == "cylinder" || of == "auto" ? "20 deg" : "10 deg";
+      });
+    });
+    h->addWidget(w.fitKind, 1);
+  }
+  h->addStretch();
+  v->addLayout(h);
+  // A scan stood on the axes (Align scan to axes): the other candidates, never one silent guess.
+  auto* scan = new QHBoxLayout;
+  w.fitBase = new QPushButton(tr("Next base"), w.fit);
+  w.fitBase->setObjectName("fitNextBase");
+  w.fitBase->setToolTip(tr("Stand it on the next flat found (or the next principal direction)"));
+  w.fitTurn = new QPushButton(tr("Next X"), w.fit);
+  w.fitTurn->setObjectName("fitNextTurn");
+  w.fitTurn->setToolTip(tr("Turn it to the next wall direction for X (a quarter turn on a boxy part)"));
+  w.fitCentre = new QCheckBox(tr("Box centre"), w.fit);
+  w.fitCentre->setObjectName("fitCentre");
+  w.fitCentre->setToolTip(tr("Put the middle of its box on the origin instead of the middle of its base"));
+  scan->addWidget(w.fitBase);
+  scan->addWidget(w.fitTurn);
+  scan->addWidget(w.fitCentre);
+  scan->addStretch();
+  v->addLayout(scan);
+  connect(w.fitBase, &QPushButton::clicked, this, [this, key] {
+    editFit(key, [](opad::json& fit) {
+      fit["base"] = fit.value("base", 0) + 1;
+      fit["turn"] = 0;
+    });
+  });
+  connect(w.fitTurn, &QPushButton::clicked, this, [this, key] { editFit(key, [](opad::json& fit) { fit["turn"] = fit.value("turn", 0) + 1; }); });
+  connect(w.fitCentre, &QCheckBox::toggled, this, [this, key](bool on) { editFit(key, [on](opad::json& fit) { fit["origin"] = on ? "centre" : "base"; }); });
+  w.fit->hide();
+  m_rows->addWidget(w.fit);
+}
+
+void FeaturePanel::refreshFitRow(const QString& key, Row& w, const opad::json& value) {
+  if (!w.fit) return;
+  const bool on = fitpick::isFit(value) && !w.row->isHidden();
+  w.fit->setVisible(on);
+  if (!on) return;
+  const opad::json& fit = value["fit"];
+  const std::string grade = fitpick::grade(value);
+  const Tokens& t = theme::current();
+  w.fitText->setText(fitpick::quality(value));
+  w.fitText->setStyleSheet(QString("color: %1;").arg(theme::css(grade == "poor" ? t.red : grade == "fair" ? t.warning : t.fg2)));
+  const std::string of = fit.value("of", std::string());
+  const bool scan = of == "scan_axes", region = fit.contains("seed");
+  for (QWidget* x : {static_cast<QWidget*>(w.fitBase), static_cast<QWidget*>(w.fitTurn), static_cast<QWidget*>(w.fitCentre)}) x->setVisible(scan);
+  w.fitTolerance->setVisible(region);
+  w.fitToleranceLabel->setVisible(region);
+  if (!w.fitTolerance->hasFocus()) {
+    const opad::json tol = fit.value("tolerance", opad::json());
+    w.fitTolerance->setText(tol.is_string() ? QString::fromStdString(tol.get<std::string>()) : tol.is_number() ? QString::number(tol.get<double>()) + " deg" : QString("10 deg"));
+  }
+  if (w.fitKind) {
+    w.fitKind->setVisible(region);
+    const QSignalBlocker quiet(w.fitKind);
+    w.fitKind->setCurrentIndex(std::max(0, w.fitKind->findData(QString::fromStdString(of.empty() ? "auto" : of))));
+  }
+  if (scan) {
+    const QSignalBlocker quiet(w.fitCentre);
+    const std::string origin = fit.value("origin", std::string("auto"));
+    w.fitCentre->setChecked(origin == "centre" || (origin == "auto" && fitpick::fitted(value) && value["result"].value("method", std::string()) == "pca"));
+    const bool many = fitpick::fitted(value);
+    w.fitBase->setEnabled(many && value["result"].value("bases", 1) > 1);
+    w.fitTurn->setEnabled(many && value["result"].value("turns", 1) > 1);
+  }
+}
+
+void FeaturePanel::editFit(const QString& key, const std::function<void(opad::json&)>& change) {
+  const opad::json value = picks(key);
+  if (!fitpick::isFit(value)) return;
+  opad::json ref = {{"fit", value["fit"]}};  // no result: it fits again
+  change(ref["fit"]);
+  setPicks(key, ref);
+  emit fitEdited(key, ref);
 }
 
 void FeaturePanel::refreshVisibility() {
@@ -451,10 +576,12 @@ void FeaturePanel::refreshVisibility() {
         }
         else if (one.contains("feature")) what = tr("Construction");
         else if (one.contains("direction")) what = tr("Direction");
+        else if (fitpick::isFit(one)) what = fitpick::title(one);
         else what = in.type == "plane" || one.contains("face") ? tr("Face") : tr("Edge");  // an axis through a round face
       }
       if (!rule && in.type == "bodies" && (m_spec->kind == "move" || m_spec->kind == "align")) what = linkedMoveText(p, what);
       it->second.pick->set(n, what, m_active == it->first, in.optional || n >= std::max(1, in.min_count) || in.min_count == 0);
+      if (it->second.fit) refreshFitRow(it->first, it->second, p);
       const auto note = m_notes.find(it->first);
       it->second.pick->setNote(note == m_notes.end() ? QString() : note->second);
     }
@@ -569,6 +696,10 @@ bool FeaturePanel::complete(QString* missing) const {
       const int n = p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1;
       if (n < in.min_count || (singlePick(in.type) && !in.optional && n == 0)) {
         if (missing) *missing = tr("Pick: %1").arg(label);
+        return false;
+      }
+      if (fitpick::isFit(p) && !fitpick::fitted(p)) {  // the fit runs on a worker: the preview waits for it, not fits it again
+        if (missing) *missing = tr("%1: fitting…").arg(label);
         return false;
       }
     }

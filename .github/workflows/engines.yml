@@ -4,12 +4,14 @@
 #
 # A pull request touching engines/ builds and checks every pack and publishes nothing: each pack, its exact sources, the
 # recipe and SHA256SUMS are the run's artifact engine-<id>-<platform>, kept 30 days. On dev (the merge, or Run workflow with
-# "publish"), every pack whose release does not exist yet is published, one release per pack revision and system: tag
-# engines-<id>-<version>-<rev>-<platform> on the commit that was built, never marked latest (the update check reads
-# releases/latest and both its lists skip tags that are not OPAD versions), notes = the pack's NOTICE.txt, every artifact
-# file attached. Build once: a pack built by the pull request's run of exactly this code (same git tree: the pull request
-# was up to date with dev) is published from that run, not built again (engines/ci/plan.sh). A published tag is never
-# replaced: a change to a pack is a new revision (PACK_REV in its make-pack.sh). The pins in engine_packs.cpp follow in the
+# "publish"), every pack revision whose release does not exist yet is published: one release per pack revision with every
+# system's zip, tag engines-<id>-<version>-<rev> on dev's commit, never marked latest (the update check reads
+# releases/latest and both its lists skip tags that are not OPAD versions), notes = the packs' NOTICE.txt, the sources
+# once, each system's recipe, one SHA256SUMS (engines/ci/publish.sh). Build once: a pack built by the pull request's run of
+# exactly this code (same git tree: the pull request was up to date with dev) is published from that run, not built again,
+# and one published before as a release of its own system (engines-<id>-<version>-<rev>-<platform>, the first packs) is
+# taken from there (engines/ci/plan.sh). A published tag is never replaced: a change to a pack is a new revision
+# (PACK_REV in its make-pack.sh). The pins in engine_packs.cpp follow in the
 # next commit (docs/releasing.md, "Solver packs"). Tags of that shape start no ci.yml run (it takes v* only), and its
 # pruning of development builds only ever deletes vX.Y.Z-dev.N / -rc.N releases.
 name: engines
@@ -196,21 +198,16 @@ jobs:
     needs: [plan, build, openfoam-windows-runs]
     if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.publish != '[]' }}
     strategy:
-      fail-fast: false  # each system's pack is a release of its own
+      fail-fast: false  # each pack revision is a release of its own
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.publish) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write  # the release and its tag
-      actions: read    # an earlier run's artifact
+      actions: read    # earlier runs' artifacts
     steps:
-      # This run's pack, or the one an earlier run built of the same code (the plan names it).
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: ${{ matrix.artifact }}
-          path: out
-          run-id: ${{ matrix.run || github.run_id }}
-          github-token: ${{ github.token }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Every system's pack (from where the plan found it) in one release; the sizes and SHA-256s to pin in the summary.
       - name: Publish ${{ matrix.tag }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -218,23 +215,5 @@ jobs:
           TAG: ${{ matrix.tag }}
           TARGET: ${{ matrix.target }}
           TITLE: ${{ matrix.title }}
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          cd out
-          sha256sum -c SHA256SUMS
-          zip=$(ls opad-*-"$PLATFORM".zip)
-          [ "$(printf '%s\n' "$zip" | wc -l)" = 1 ] || { echo "::error::not one pack in the artifact: $zip"; exit 1; }
-          unzip -p "$zip" NOTICE.txt > "$RUNNER_TEMP/notes.md"
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "::notice::$TAG is published already (another run was first); it is never replaced."
-            exit 0
-          fi
-          gh release create "$TAG" ./* --latest=false --target "$TARGET" --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
-          size=$(stat -c %s "$zip")
-          sha=$(sha256sum "$zip" | cut -d' ' -f1)
-          echo "::notice title=Published $TAG::$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
-          {
-            echo "### $TITLE"
-            echo "Published: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG (commit $TARGET)."
-            echo "To pin in core/src/sim/engine_packs.cpp: size \`$size\`, SHA-256 \`$sha\`."
-          } >> "$GITHUB_STEP_SUMMARY"
+          PARTS: ${{ toJSON(matrix.parts) }}
+        run: bash engines/ci/publish.sh

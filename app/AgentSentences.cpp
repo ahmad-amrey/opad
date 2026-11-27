@@ -476,7 +476,7 @@ const std::set<std::string>& hidden() {
 const std::set<std::string>& folded() {
   static const std::set<std::string> f = {"tree", "inspect", "properties", "features", "params", "ops", "info", "entity_details",
                                           "query_entities", "sketch_details", "related", "mechanism", "git_status", "git_log",
-                                          "git_branches", "git_diff", "annotations"};
+                                          "git_branches", "git_diff", "annotations", "fit_reference", "scan_axes"};
   return f;
 }
 }  // namespace
@@ -504,7 +504,7 @@ Kind kindOf(const std::string& tool, const json& args) {
   if (tool == "joint_set" && args.value("preview", false)) return Kind::Fold;
   if (tool == "viewport_image") return Kind::Look;
   if (tool == "annotate" || tool == "delete_annotation") return Kind::Note;
-  if (tool == "selection" || tool == "live_select" || tool == "measure" || tool == "clearance" || tool == "validate" || tool == "export") return Kind::Result;
+  if (tool == "selection" || tool == "live_select" || tool == "measure" || tool == "clearance" || tool == "deviation" || tool == "validate" || tool == "export") return Kind::Result;
   if (tool == "save") return Kind::Quiet;
   if (tool == "model_batch") return Kind::Group;
   return Kind::Change;
@@ -522,6 +522,7 @@ QString running(const std::string& tool, const json& args, const opad::Scene& sc
   if (tool == "live_select") return Say::tr("Selecting…");
   if (tool == "measure") return Say::tr("Measuring…");
   if (tool == "clearance") return Say::tr("Checking the gap…");
+  if (tool == "deviation") return Say::tr("Comparing the surfaces…");
   if (tool == "validate") return Say::tr("Checking the model…");
   if (tool == "export") return Say::tr("Exporting…");
   if (tool == "save") return Say::tr("Saving…");
@@ -632,6 +633,13 @@ Sentence done(const std::string& tool, const json& args, const json& output, con
       const auto* k = sketchOf(after, output, args);
       s.text = k ? Say::tr("Looked at %1").arg(isolate(S(k->name))) : Say::tr("Looked at a sketch");
     } else if (tool == "related") s.text = Say::tr("Found which step made a part of the model");
+    else if (tool == "fit_reference") {
+      const QString who = sc.name(args.value("ref", json::object()).value("fit", json::object()).value("body", std::string()));
+      s.text = who.isEmpty() ? Say::tr("Fitted a plane or an axis") : Say::tr("Fitted a plane or an axis on %1").arg(who);
+    } else if (tool == "scan_axes") {
+      const QString who = nameArg("body");
+      s.text = who.isEmpty() ? Say::tr("Worked out how a scan could stand on the axes") : Say::tr("Worked out how %1 could stand on the axes").arg(who);
+    }
     else if (tool == "mechanism") s.text = Say::tr("Looked at how the parts move");
     else if (tool == "explode") s.text = Say::tr("Worked out an exploded view");
     else if (tool == "joint_set") s.text = Say::tr("Tried a joint position");
@@ -715,6 +723,19 @@ Sentence done(const std::string& tool, const json& args, const json& output, con
       s.text = Say::tr("Checked the gap between %1: they overlap").arg(between);
     } else if (gap) s.text = Say::tr("Checked the gap between %1: %2").arg(between, units::compact(units::Kind::Length, gap->second, d));
     else s.text = Say::tr("Checked the gap between %1").arg(between);
+    return s;
+  }
+  if (tool == "deviation") {
+    s.icon = QStringLiteral("deviation");
+    const auto a = ownersOf(refsArg("from")), b = ownersOf(refsArg("to"));
+    s.subjects = a;
+    s.subjects.insert(s.subjects.end(), b.begin(), b.end());
+    const QString pair = a.empty() || b.empty() ? Say::tr("the surfaces") : Say::tr("%1 with %2").arg(sc.bodies(a), sc.bodies(b));
+    const json stats = output.value("stats", json::object());
+    if (stats.contains("median_abs") && stats.contains("within_tolerance_pct"))
+      s.text = Say::tr("Compared %1: median %2, %3% within tolerance")
+                   .arg(pair, units::compact(units::Kind::Length, stats["median_abs"].get<double>(), d), QString::number(stats["within_tolerance_pct"].get<double>(), 'f', 1));
+    else s.text = Say::tr("Compared %1").arg(pair);
     return s;
   }
   if (tool == "validate") {

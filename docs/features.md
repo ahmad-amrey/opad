@@ -97,6 +97,12 @@ bounding boxes first, exact Booleans only on candidates) and 3D printing (overha
 thin walls, thin features, build-plate contact). The desktop's Inspect tab (Review and Design) has both as Interference
 and Print check, listing findings in the tool panel; clicking one highlights the bodies and their overlap, or the faces.
 
+`deviation` compares two bodies' surfaces: a 3D scan against the CAD rebuilt from it, a printed part against its design,
+or two revisions. Every sampled point of the measured body gets its signed distance to the reference (material added or
+missing), with statistics (mean, median, RMS, percentiles, the share within tolerance), a histogram and the worst spots,
+optionally both ways and after a best fit (ICP). The desktop's Inspect > Deviation shows it as a colour map on the body,
+with a probe, pinned values at the worst spots, and the best fit as a preview to accept.
+
 Live write tools take `verbosity: "compact"` for replies that list only what that command changed.
 
 Reported sizes (`info`, `properties`, `validate`, `changes.bodies`, the bounding-box measurement and the desktop's
