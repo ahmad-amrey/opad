@@ -209,8 +209,13 @@ json Edit::summary() const {
   return {{"moved", moved.size()}, {"deleted", deleted.count()}, {"added", added.size()}, {"strokes", strokes}};
 }
 
-double falloff(double t) {
+double falloff(double t, Falloff kind) {
   if (!(t >= 0) || t >= 1) return 0;
+  if (kind == Falloff::Sharp) return (1 - t) * (1 - t) * (1 - t);
+  if (kind == Falloff::Flat) {
+    if (t <= 0.6) return 1;
+    t = (t - 0.6) / 0.4;
+  }
   const double s = 1 - t * t;
   return s * s;
 }
@@ -354,7 +359,7 @@ void Editor::under(const Brush& b, std::vector<uint32_t>& ids, std::vector<float
   if (!(b.radius > 0)) return;
   // A brush reaches the surface under it, not the far side of a part: half its radius along the view (at least a few
   // point spacings, as deep as a scan's noise).
-  const double depth = std::max(0.5 * b.radius, 3 * m_spacing);
+  const double depth = b.front ? std::max(0.5 * b.radius, 3 * m_spacing) : 4 * b.radius;
   std::vector<uint32_t> near;
   candidates(b.centre, std::hypot(b.radius, depth), near);
   for (uint32_t i : near) {
@@ -362,7 +367,7 @@ void Editor::under(const Brush& b, std::vector<uint32_t>& ids, std::vector<float
     const double along = dot(d, b.toward);
     if (std::abs(along) > depth) continue;
     const double lateral = std::sqrt(std::max(0.0, dot(d, d) - along * along));
-    const double w = falloff(lateral / b.radius);
+    const double w = falloff(lateral / b.radius, b.falloff);
     if (w <= 0) continue;
     ids.push_back(i);
     weights.push_back(float(w));
@@ -509,6 +514,60 @@ std::optional<uint32_t> Editor::add(const Vec3& seed, const Vec3& toward, int k)
   if (m_base->has_scalar()) m_added.scalar.push_back(float(scalar / wsum));
   m_deleted.push_back(0);
   return uint32_t(base + m_added.size() - 1);
+}
+
+Vec3 Editor::normalOf(uint32_t i, std::vector<uint32_t>& scratch) const {
+  const size_t n = m_base->size();
+  const Points& from = i < n ? *m_base : m_added;
+  const size_t j = i < n ? i : i - n;
+  Vec3 v{0, 0, 0};
+  if (from.has_normals()) {
+    v = {from.normals[3 * j], from.normals[3 * j + 1], from.normals[3 * j + 2]};
+  } else {
+    nearest(at(i), 10, scratch);
+    std::vector<Vec3> pts;
+    for (uint32_t k : scratch) pts.push_back(at(k));
+    Vec3 c;
+    if (!fit_plane(pts, c, v)) return {0, 0, 0};
+  }
+  const double l = std::sqrt(dot(v, v));
+  return l > 1e-9 ? Vec3{v[0] / l, v[1] / l, v[2] / l} : Vec3{0, 0, 0};
+}
+
+Region Editor::grow(uint32_t seed, double angle, double offset, size_t limit, bool* stopped, const Cancel& cancel) {
+  if (stopped) *stopped = false;
+  if (seed >= size() || deleted(seed)) return {};
+  const double cosMax = std::cos(std::clamp(angle, 0.0, 180.0) * 3.14159265358979323846 / 180);
+  const size_t k = 12;
+  std::vector<uint8_t> seen(size(), 0);
+  std::vector<uint32_t> taken{seed}, queue{seed}, near, scratch;
+  std::unordered_map<uint32_t, Vec3> normals;  // fitted ones, each once
+  auto normal = [&](uint32_t i) {
+    if (const auto it = normals.find(i); it != normals.end()) return it->second;
+    return normals[i] = normalOf(i, scratch);
+  };
+  seen[seed] = 1;
+  for (size_t head = 0; head < queue.size(); ++head) {
+    if ((head & 4095) == 0 && cancel && cancel()) throw Error("cancelled");
+    const uint32_t p = queue[head];
+    const Vec3 at_p = at(p), n_p = normal(p);
+    nearest(at_p, k, near);
+    for (uint32_t q : near) {
+      if (seen[q]) continue;
+      const Vec3 n_q = normal(q);
+      // An unoriented normal (fitted, or a scan's) may point either way: the angle between the lines.
+      if (dot(n_p, n_p) > 0 && dot(n_q, n_q) > 0 && std::abs(dot(n_p, n_q)) < cosMax) continue;
+      if (dot(n_p, n_p) > 0 && std::abs(dot(sub(at(q), at_p), n_p)) > offset) continue;
+      seen[q] = 1;
+      taken.push_back(q);
+      queue.push_back(q);
+      if (taken.size() >= limit) {
+        if (stopped) *stopped = true;
+        return Region::of(std::move(taken));
+      }
+    }
+  }
+  return Region::of(std::move(taken));
 }
 
 Region Editor::inPolygon(const std::array<double, 16>& view, const std::vector<std::array<double, 2>>& polygon, const Cancel& cancel) const {

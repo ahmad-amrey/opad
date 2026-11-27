@@ -861,4 +861,75 @@ TEST(cloud_edit_feature_replays_the_same_cloud) {
   CHECK_THROWS(pc::apply(*base, wrong));
 }
 
+TEST(cloud_edit_falloff_presets_and_the_front_surface) {
+  // Smooth (1 - t^2)^2, Sharp (1 - t)^3, Flat: all of it to 0.6 of the radius.
+  CHECK_NEAR(pc::falloff(0.5, pc::Falloff::Smooth), 0.5625, 1e-12);
+  CHECK_NEAR(pc::falloff(0.5, pc::Falloff::Sharp), 0.125, 1e-12);
+  CHECK_NEAR(pc::falloff(0.5, pc::Falloff::Flat), 1.0, 1e-12);
+  CHECK_NEAR(pc::falloff(0.8, pc::Falloff::Flat), 0.5625, 1e-12);
+  for (auto kind : {pc::Falloff::Smooth, pc::Falloff::Sharp, pc::Falloff::Flat}) {
+    CHECK_NEAR(pc::falloff(0, kind), 1.0, 1e-12);
+    CHECK_EQ(pc::falloff(1, kind), 0.0);
+  }
+  auto base = patch();
+  pc::Editor e(base);
+  pc::Brush b;
+  b.centre = {20, 20, 0};
+  b.radius = 5;
+  b.falloff = pc::Falloff::Sharp;
+  e.push(b, 2.0);
+  CHECK_NEAR(e.at(at_xy(22, 20))[2], 2.0 * 0.216, 1e-6);  // (1 - 0.4)^3
+  // A wall 4 mm behind the surface: out of reach from the front, reached when the brush goes through.
+  auto two = std::make_shared<pc::Points>(*base);
+  two->xyz.insert(two->xyz.end(), {20.f, 20.f, -4.f});
+  two->normals.insert(two->normals.end(), {0.f, 0.f, -1.f});
+  two->rgb.insert(two->rgb.end(), {0, 0, 0});
+  pc::Editor h(two);
+  const uint32_t back = uint32_t(two->size() - 1);
+  pc::Brush front;
+  front.centre = {20, 20, 0};
+  front.radius = 5;
+  std::vector<uint32_t> ids;
+  std::vector<float> w;
+  h.under(front, ids, w);
+  CHECK(!std::binary_search(ids.begin(), ids.end(), back));
+  front.front = false;
+  h.under(front, ids, w);
+  CHECK(std::binary_search(ids.begin(), ids.end(), back));
+}
+
+TEST(cloud_edit_grow_region_keeps_to_its_surface) {
+  // A floor (z = 0, 30 x 30) and a wall standing on its far edge (x = 30, z up to 15), 0.5 mm apart, no normals.
+  auto p = std::make_shared<pc::Points>();
+  for (int j = 0; j <= 60; ++j)
+    for (int i = 0; i <= 60; ++i) p->xyz.insert(p->xyz.end(), {float(i * 0.5), float(j * 0.5), 0.f});
+  const size_t floor = p->size();
+  for (int j = 0; j <= 60; ++j)
+    for (int k = 1; k <= 30; ++k) p->xyz.insert(p->xyz.end(), {30.f, float(j * 0.5), float(k * 0.5)});
+  // A step: a raised patch 1 mm up at the floor's near corner, its own surface.
+  for (int j = 0; j <= 10; ++j)
+    for (int i = 0; i <= 10; ++i) p->xyz.insert(p->xyz.end(), {float(-5.5 + i * 0.5), float(j * 0.5), 1.f});
+  pc::Editor e(p);
+  bool stopped = true;
+  const pc::Region r = e.grow(uint32_t(15 * 61 + 15), 10, 0.05, 4000000, &stopped);  // a floor point
+  CHECK(!stopped);
+  size_t onFloor = 0, onWall = 0, onStep = 0;
+  for (uint32_t i : r.indices()) {
+    if (i < floor) ++onFloor;
+    else if (i < floor + 61 * 30) ++onWall;
+    else ++onStep;
+  }
+  CHECK(onFloor > floor * 9 / 10);  // the floor, up to its corner with the wall
+  CHECK(onWall < 61 * 2);           // the wall's first row at most (its corner points bend both ways)
+  CHECK_EQ(onStep, size_t(0));
+  // Bends allowed up to a right angle: the wall comes too. A limit stops it early.
+  const pc::Region all = e.grow(uint32_t(15 * 61 + 15), 95, 0.6);
+  CHECK(all.count() > floor + 61 * 25);
+  const pc::Region few = e.grow(uint32_t(15 * 61 + 15), 10, 0.05, 100, &stopped);
+  CHECK(stopped && few.count() == 100u);
+  // Deleted points are not grown over.
+  e.erase(r);
+  CHECK(e.grow(uint32_t(15 * 61 + 15), 10, 0.05).empty());
+}
+
 CHECK_MAIN()

@@ -42,12 +42,19 @@ struct Edit {
 Points apply(const Points& base, const Edit& edit);
 
 // A brush in the cloud's own frame.
+// How a brush's effect fades from its middle (t = 0) to its rim (t = 1): Smooth (1 - t^2)^2, Sharp (1 - t)^3 (a peak),
+// Flat (all of it to 0.6 of the radius, then Smooth's curve over the rest).
+enum class Falloff { Smooth, Sharp, Flat };
 struct Brush {
   Vec3 centre{0, 0, 0};    // the surface point under the pointer
   Vec3 toward{0, 0, 1};    // unit, from the surface toward the eye (the view's direction reversed)
   double radius = 1;       // mm at the centre's depth
+  Falloff falloff = Falloff::Smooth;
+  // Front surface only: the brush reaches half its radius (at least three point spacings) into the surface along the view,
+  // so the far wall of a thin part stays; off, four radii (through the part).
+  bool front = true;
 };
-double falloff(double t);  // (1 - t^2)^2 for t in [0, 1), else 0
+double falloff(double t, Falloff kind = Falloff::Smooth);  // 0 outside [0, 1)
 
 class Editor {
  public:
@@ -83,12 +90,17 @@ class Editor {
   // The points inside a screen polygon (view: cloud frame -> NDC, row-major, as in_polygon), where they are now, deleted
   // ones left out.
   Region inPolygon(const std::array<double, 16>& view, const std::vector<std::array<double, 2>>& polygon, const Cancel& cancel = {}) const;
+  // Grow region: from `seed` over its neighbours on the same surface, a neighbour joining when its normal turns at most
+  // `angle` degrees from the point it was reached from and it lies at most `offset` mm off that point's plane (normals from
+  // the scan, else fitted to the nearest points). Stops at `limit` points (`stopped` says so).
+  Region grow(uint32_t seed, double angle, double offset, size_t limit = 4000000, bool* stopped = nullptr, const Cancel& cancel = {});
   // The k nearest live points of a place (working positions), nearest first.
   void nearest(const Vec3& q, size_t k, std::vector<uint32_t>& out) const;
 
  private:
   void candidates(const Vec3& c, double radius, std::vector<uint32_t>& out) const;  // live points within radius (now)
   void offsetBy(uint32_t i, float dx, float dy, float dz);
+  Vec3 normalOf(uint32_t i, std::vector<uint32_t>& scratch) const;  // the scan's normal, else fitted (unit; zero: none)
   std::shared_ptr<const Points> m_base;
   std::unique_ptr<Grid> m_grid;
   double m_spacing = 0;
