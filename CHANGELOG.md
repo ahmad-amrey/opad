@@ -5,6 +5,23 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
+## [Unreleased]
+
+### Added
+- **Export straight to the printer's bed.** Export now writes 3MF and PLY meshes as well as STL and OBJ, and places
+  them for printing: turn the part so the side you choose is up (or the selected face lies on the bed), drop it onto
+  the bed and centre it there, so the slicer opens it ready to print. With one STL file per body, each part lands on
+  the bed by itself. AI assistants get the same (`export` with `build_direction` or `bed_face`, `drop_to_bed`,
+  `center_xy`), using the build direction the print check takes.
+
+### Changed
+- **Thin walls say what makes them.** The print check names the two features whose surfaces come too close, a shell
+  against its block or a pocket against a rib, and clicking a thin wall selects both of its sides.
+
+### Fixed
+- **The print check no longer reports sharp edges as thin walls.** Where a pocket comes out of a slanted face, the
+  thin wedge along the edge was listed as a wall; it is left out now.
+
 ## [0.11.0] - 2026-11-27
 
 OPAD now works with 3D scans: open the raw point cloud, line a scan up with the axes from fitted planes and axes, and

@@ -300,6 +300,12 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   need `expected_revision` and `request_id`, and not during a transaction.
 - `export` inside a transaction writes its staged state; outside, the document. STEP files are reproducible: the
   header carries the document's last change time and the file's name, so the same document exports the same bytes.
+- Meshes for a printer (`stl`, `3mf`, `obj`, `ply`; world mm, 3MF and PLY with shared vertices): `build_direction`
+  (as `validate` print takes it: "+x".."-z" or [x, y, z], up from the bed) is turned to +Z, or `bed_face` (a face
+  reference) is laid down on the bed; `drop_to_bed` puts the lowest point at Z = 0 (the default once turned) and
+  `center_xy` the box's middle at X = Y = 0. Everything exported turns together; `per_body` STL files are dropped and
+  centred one by one. The result's `placement` gives `up`, `rotation` (3x3 rows), `translation` and the `bbox`
+  written (per file under `files`). Check first with `validate` print and the same `build_direction`.
 - Exploded views: `explode` lists the units (what moves together) and their moves at `t` (0 assembled, 1 exploded).
   `levels` is how deep components split (0 = all); `keep` holds a component together (a PCB), `split` spreads its
   parts beyond the level (screws), `groups` move node lists as one, small parts ride on what they touch; `mode`
@@ -523,7 +529,12 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   `clearance_mm`, pairs closer than that (`ignore` lists pairs meant to overlap); `checks: ["print"]` reports, per
   body, faces overhanging more than `overhang_deg` (default 45, from vertical) against `build_direction` ("+z"),
   the build-plate contact area, walls thinner than `min_wall_mm` (0.8) and thin features. Add "solid" for the usual
-  validity page.
+  validity page. A thin wall names both sides: `face` and `opposite_face` (with `point` and `opposite_point`), and
+  `between`, each side's face with `created_by` (the feature or import that made it, as `entity_details` says), so
+  `features` lists the features whose surfaces come too close (a shell against its block, a pocket against a rib).
+  Sharp edges are not walls: a ray that leaves through a face sharing an edge with its own measures that edge's wedge
+  (a pocket coming out of a slanted face), so it is left out (counted in `knife_edges`) unless the two faces are
+  within 10 degrees of parallel.
 - `clearance` (read-only) between two groups `a` and `b` (bodies or components): `min_distance_mm` and the closest
   pair, then the pairs across that intersect (overlap volume and box), touch, or come closer than `clearance_mm`,
   worst first and paged; `status` intersecting|touching|too_close|clear. An enclosure against a board assembly.
