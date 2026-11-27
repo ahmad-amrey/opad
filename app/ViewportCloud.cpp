@@ -227,6 +227,7 @@ void Viewport::updateClouds() {
           if (const auto stroke = m_cloudStroke.find(id); stroke != m_cloudStroke.end()) {
             m_ctx->Remove(stroke->second, Standard_False);
             m_cloudStroke.erase(stroke);
+            m_cloudStrokePoints.erase(id);
             changed = true;
           }
         }
@@ -259,8 +260,10 @@ void Viewport::showCloudStroke(const std::string& node, Handle(Graphic3d_ArrayOf
     m_ctx->Remove(old->second, Standard_False);
     m_cloudStroke.erase(old);
   }
+  m_cloudStrokePoints.erase(node);
   opad::Mat4 world;
   if (points.IsNull() || !cloudPrs(node, &world)) return redrawScene();
+  m_cloudStrokePoints[node] = size_t(points->VertexNumber());
   // In the cloud's own colours, as wide as its points, over the cloud: the part a brush is working on now.
   Handle(CloudRegionPrs) overlay = new CloudRegionPrs(points, Quantity_Color(0.8, 0.8, 0.8, Quantity_TOC_sRGB), cloudPointSize(node));
   if (!world.is_identity() && opad::mat_is_rigid(world)) overlay->SetLocalTransformation(opad::trsf_from_mat(world));
@@ -299,6 +302,11 @@ bool Viewport::cloudBrushFrame(const QPointF&, const opad::Vec3& world, opad::Ve
     mmPerPixel = 2 * depth * std::tan(camera->FOVy() * M_PI / 360) / h * scale;
   }
   return mmPerPixel > 0 && std::isfinite(mmPerPixel);
+}
+
+size_t Viewport::benchCloudStroke(const std::string& node) const {
+  const auto it = m_cloudStrokePoints.find(node);
+  return it == m_cloudStrokePoints.end() ? 0 : it->second;
 }
 
 bool Viewport::benchCloudEdited(const std::string& node) const {

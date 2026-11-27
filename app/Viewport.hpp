@@ -411,6 +411,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   float cloudPointSize(const std::string& node) const;
   bool cloudBrushFrame(const QPointF& widget, const opad::Vec3& world, opad::Vec3& toward, double& mmPerPixel) const;
   bool benchCloudEdited(const std::string& node) const;  // drawn now with the edit it was given last
+  size_t benchCloudStroke(const std::string& node) const;  // points of the stroke drawn over it now (0: none)
+  void benchRedraw() { if (m_initialised) m_view->Redraw(); }  // a hidden bench window: the picker's z range from one frame
   bool cloudDrawing() const { return m_cloudJob != nullptr; }  // a level-of-detail pass is being made
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
@@ -1208,6 +1210,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   };
   std::map<std::string, CloudEditView> m_cloudEdits;               // working edits by node (setCloudEdit)
   std::map<std::string, Handle(AIS_InteractiveObject)> m_cloudStroke;  // strokes under way by node
+  std::map<std::string, size_t> m_cloudStrokePoints;
   bool m_cloudAgain = false;  // an edit or overlay came while a pass was being made: another pass right after it
   qint64 m_refineClock = 0;
   void scheduleRefinement();
