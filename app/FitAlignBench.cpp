@@ -6,6 +6,7 @@
 // committed, and the scan's box measured on a worker (flat on XY, its sides along X and Y, centred). Every step keeps the
 // UI thread under the stall limit (250 ms, CLAUDE.md "nothing long runs on the UI thread"): "bench: fit align: ... PASS".
 #include <QApplication>
+#include <QCheckBox>
 #include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QPushButton>
@@ -243,6 +244,14 @@ OPAD_BENCH(OPAD_BENCH_FITALIGN, fitAlign) {
         require(r.value("of", "") == "scan_axes" && r.value("method", "") == "flats", "a scan_axes candidate from the flats");
         require(r.value("bases", 0) >= 2 && r.value("turns", 0) >= 4, QStringLiteral("candidates to cycle: %1 bases, %2 X turns").arg(r.value("bases", 0)).arg(r.value("turns", 0)));
         require(view->previewMovedCount() > 0, "the preview stands the scan on XY");
+        // X squared to the outline by default: the outline's size shown, the switch on.
+        const opad::json outline = r.value("outline", opad::json::object());
+        const opad::json size = outline.value("size_mm", opad::json::array());
+        require(size.size() == 2 && std::fabs(size[0].get<double>() - 120) < 0.6 && std::fabs(size[1].get<double>() - 80) < 0.6,
+                QStringLiteral("the outline squared: %1").arg(QString::fromStdString(outline.dump())));
+        auto* square = form->findChild<QCheckBox*>("fitSquare");
+        require(square && square->isVisible() && square->isChecked(), "Square to outline is offered and on");
+        require(fitpick::quality(from).contains(QStringLiteral("outline")), "the fit row shows the outline's size");
         auto* next = form->findChild<QPushButton*>("fitNextTurn");
         require(next && next->isVisible() && next->isEnabled(), "Next X is offered");
         form->window()->grab().save(prefix + ".scan-axes-panel.png");

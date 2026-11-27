@@ -495,9 +495,13 @@ void FeaturePanel::buildFitRow(const QString& key, Row& w, bool axis) {
   w.fitCentre = new QCheckBox(tr("Box centre"), w.fit);
   w.fitCentre->setObjectName("fitCentre");
   w.fitCentre->setToolTip(tr("Put the middle of its box on the origin instead of the middle of its base"));
+  w.fitSquare = new QCheckBox(tr("Square to outline"), w.fit);
+  w.fitSquare->setObjectName("fitSquare");
+  w.fitSquare->setToolTip(tr("Lay the long side of the smallest rectangle round its outline (seen from above) along X; off: its walls along X"));
   scan->addWidget(w.fitBase);
   scan->addWidget(w.fitTurn);
   scan->addWidget(w.fitCentre);
+  scan->addWidget(w.fitSquare);
   scan->addStretch();
   v->addLayout(scan);
   connect(w.fitBase, &QPushButton::clicked, this, [this, key] {
@@ -508,6 +512,12 @@ void FeaturePanel::buildFitRow(const QString& key, Row& w, bool axis) {
   });
   connect(w.fitTurn, &QPushButton::clicked, this, [this, key] { editFit(key, [](opad::json& fit) { fit["turn"] = fit.value("turn", 0) + 1; }); });
   connect(w.fitCentre, &QCheckBox::toggled, this, [this, key](bool on) { editFit(key, [on](opad::json& fit) { fit["origin"] = on ? "centre" : "base"; }); });
+  connect(w.fitSquare, &QCheckBox::toggled, this, [this, key](bool on) {
+    editFit(key, [on](opad::json& fit) {
+      fit["x"] = on ? "outline" : "walls";
+      fit["turn"] = 0;
+    });
+  });
   w.fit->hide();
   m_rows->addWidget(w.fit);
 }
@@ -524,7 +534,8 @@ void FeaturePanel::refreshFitRow(const QString& key, Row& w, const opad::json& v
   w.fitText->setStyleSheet(QString("color: %1;").arg(theme::css(grade == "poor" ? t.red : grade == "fair" ? t.warning : t.fg2)));
   const std::string of = fit.value("of", std::string());
   const bool scan = of == "scan_axes", region = fit.contains("seed");
-  for (QWidget* x : {static_cast<QWidget*>(w.fitBase), static_cast<QWidget*>(w.fitTurn), static_cast<QWidget*>(w.fitCentre)}) x->setVisible(scan);
+  for (QWidget* x : {static_cast<QWidget*>(w.fitBase), static_cast<QWidget*>(w.fitTurn), static_cast<QWidget*>(w.fitCentre), static_cast<QWidget*>(w.fitSquare)})
+    x->setVisible(scan);
   w.fitTolerance->setVisible(region);
   w.fitToleranceLabel->setVisible(region);
   if (!w.fitTolerance->hasFocus()) {
@@ -537,9 +548,11 @@ void FeaturePanel::refreshFitRow(const QString& key, Row& w, const opad::json& v
     w.fitKind->setCurrentIndex(std::max(0, w.fitKind->findData(QString::fromStdString(of.empty() ? "auto" : of))));
   }
   if (scan) {
-    const QSignalBlocker quiet(w.fitCentre);
+    const QSignalBlocker quiet(w.fitCentre), quietSquare(w.fitSquare);
     const std::string origin = fit.value("origin", std::string("auto"));
-    w.fitCentre->setChecked(origin == "centre" || (origin == "auto" && fitpick::fitted(value) && value["result"].value("method", std::string()) == "pca"));
+    const bool principal = fitpick::fitted(value) && value["result"].value("kind", value["result"].value("method", std::string())) == "pca";
+    w.fitCentre->setChecked(origin == "centre" || (origin == "auto" && principal));
+    w.fitSquare->setChecked(fit.value("x", std::string("outline")) == "outline");
     const bool many = fitpick::fitted(value);
     w.fitBase->setEnabled(many && value["result"].value("bases", 1) > 1);
     w.fitTurn->setEnabled(many && value["result"].value("turns", 1) > 1);

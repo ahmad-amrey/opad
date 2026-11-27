@@ -202,13 +202,20 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   not that shape (a curved region taken for a plane): pick elsewhere or lower the tolerance. Pass the returned ref on
   as it is: a feature keeps `result` (with the body key it was fitted on) and never fits again while the mesh is the
   same; a feature given a `fit` without one fits it and stores it.
-- Standing a scan on the axes: `scan_axes {body}` lists the candidates, never one guess: `bases` (flats found by mean
-  shift of the area-weighted normals, the ones the whole scan lies behind first, then by area; `method: "pca"` when it
-  has no flats: the principal directions, the least spread standing up) with quality and share, each with its X
-  `turns` (the walls' main direction and its quarter turns). `align_inputs` is a ready Align: `from_plane: {"fit":
-  {"body", "of": "scan_axes", "base": 0, "turn": 0, "origin": "auto"}}` onto `{"base": "xy"}` with `"frame": true`
-  (origin and X onto the plane's too). Choose another with `base` / `turn`, `"flip": true` stands it the other way up,
-  `origin` "base" (centred, on its base) or "centre" (the box centre; pca's default).
+- Standing a scan on the axes: `scan_axes {body}` (a mesh or a point cloud) lists the candidates, never one guess:
+  `bases` with `kind`, quality and share. `method: "flats"`: flats found by mean shift of the area-weighted normals, the
+  ones the whole scan lies behind first, then by area. `method: "plane"` (no flat by the normals, as on a point cloud or
+  a scan with noisy normals): the dominant plane fitted by position (the densest band along the normals' main
+  direction, least median of squares, grown to its 3-sigma inliers, kept only when flat), then the principal
+  directions. `method: "pca"`: no plane either, the principal directions, the least spread first (the thin direction
+  stands up). Each base has its `outline` (`size_mm` of the outline's minimum-area rectangle seen square to the base,
+  `turn_deg` from the unsquared X to it, `unsquared_mm` the box the unsquared X gives) and its X `turns`: with `x:
+  "outline"` (the default) the rectangle's long side and its quarter turns, then the wall directions; `x: "walls"` the
+  walls' main direction (else the longest direction) and its quarter turns. Squaring matters: a few degrees off adds
+  millimetres to every side of the part's box. `align_inputs` is a ready Align: `from_plane: {"fit": {"body", "of": "scan_axes",
+  "base": 0, "turn": 0, "origin": "auto", "x": "outline"}}` onto `{"base": "xy"}` with `"frame": true` (origin and X onto
+  the plane's too); its stored result keeps `outline`. Choose another with `base` / `turn` / `x`, `"flip": true` stands
+  it the other way up, `origin` "base" (centred, on its base) or "centre" (the box centre; a principal base's default).
 - Live server: a `seed` or `triangles` names no entity and needs no reference token (a triangle the user selected is
   the `n` of its `<body>/face/<n>`); vertex refs in `points` do, as any vertex input, so pass coordinates there.
 - Align's `frame` (to a plane): the From plane's frame onto the To plane's, origin, normal and x; `offset` and `angle`
@@ -555,6 +562,11 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   lists every cell's camera); `edges: true` (viewport_image) or `edge_lines: true` (render; there `edges` is the
   silhouette outline, on by default) draws the model's edges; `highlight: [refs]` tints faces and edges orange;
   `shading: "smooth"` shades curved surfaces smoothly. All are off by default.
+- Point clouds are drawn as points (round splats sized from their spacing, lit by their normals, in their own colours).
+  `cloud_color: "height"` colours them by height above a plane, blue low to red high with a legend: `height_plane` (any
+  plane input; default each cloud's own dominant plane from `scan_axes`, heights into the material) ; the result's
+  `cloud_height` gives `range_mm` (2nd to 98th percentile) and the plane(s). It shows a scan's flat as one colour and
+  what stands off it, before and after an Align.
 
 ## Point clouds
 
@@ -583,6 +595,8 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   them; `sketch_id` and `profile` {polylines, lines, points} come back): fit arcs, constraints and dimensions to them
   with `sketch_edit`, then extrude or revolve as usual.
 - `export` writes clouds as `ply` (binary, every attribute), `xyz`, `pts`, `csv` or `e57` (metres), world mm.
+- Standing a cloud on the axes: `scan_axes {body}` works on clouds too (their dominant plane by position, X squared to the
+  outline); `viewport_image` / `render` draw them as points, `cloud_color: "height"` by height above a plane.
 
 ## Drawings
 

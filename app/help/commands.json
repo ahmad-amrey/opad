@@ -2344,10 +2344,10 @@
   {
    "id": "design.alignScan",
    "title": "Align scan to axes",
-   "summary": "Stands a mesh body, such as a 3D scan, on the XY plane: its base flat down, a wall along X, its box centred on the origin.",
-   "details": "Select the scan and start: OPAD finds its flats from the facets' normals, fits the largest one it stands on as the base and lines its walls up with X; a scan with no flats is aligned by its principal axes. Next base and Next X in the From row offer the other candidates, Flip stands it the other way up and Box centre puts the middle of its box on the origin. Press {fixed:enter} to keep it: it is an Align step, and the fit is kept with it.",
-   "keywords": ["scan", "3d scan", "stl", "mesh", "level", "square up", "orient", "register", "best fit plane", "align to axes"],
-   "requires": "Select a mesh body first (a scan, an STL or an OBJ)."
+   "summary": "Stands a mesh body or point cloud, such as a 3D scan, on the XY plane: its base flat down, the long side of its outline along X, its box centred on the origin.",
+   "details": "Select the scan and start: OPAD finds its flats from the facets' normals, fits the largest one it stands on as the base; when the normals show no flat (a point cloud, a noisy scan) it fits the dominant plane by the points' positions, and a scan with no flat at all is aligned by its principal axes. Square to outline turns it so the smallest rectangle round its outline lies along X and Y, and the From row shows that size and how far it turned; switch it off to line the walls up with X instead. Next base and Next X offer the other candidates, Flip stands it the other way up and Box centre puts the middle of its box on the origin. Press {fixed:enter} to keep it: it is an Align step, and the fit is kept with it.",
+   "keywords": ["scan", "3d scan", "stl", "mesh", "point cloud", "level", "square up", "square to outline", "orient", "register", "best fit plane", "align to axes"],
+   "requires": "Select a mesh body or a point cloud first (a scan, an STL or an OBJ)."
   },
   {
    "id": "design.remove",
