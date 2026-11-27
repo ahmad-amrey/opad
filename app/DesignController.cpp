@@ -239,6 +239,21 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::schedulePreview);
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::refreshValues);
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::inputsSettled);
+  connect(m_form, &FeaturePanel::pairsEdited, this, [this] { syncSelectionToInput(); });  // a pair removed in the list
+  m_creaseTimer.setSingleShot(true);
+  m_creaseTimer.setInterval(120);  // the pointer resting on a side, not passing over it
+  connect(&m_creaseTimer, &QTimer::timeout, this, &DesignController::creaseHover);
+  connect(m_viewport, &Viewport::hoverPoint, this, [this](bool, const opad::Vec3&) {
+    const InputSpec* in = m_featureOn ? m_form->input(m_form->activeInput()) : nullptr;
+    if (!in || in->type != "axis") return clearCrease();
+    std::string body;
+    int side = -1;
+    if (!m_viewport->hoveredMeshSide(body, side) || !fitpick::onMesh(m_doc->scene, opad::Ref::parse(body + "/edge/" + std::to_string(side)))) return clearCrease();
+    if (body == m_creaseBody && side == m_creaseSide) return;
+    m_creaseBody = body;
+    m_creaseSide = side;
+    m_creaseTimer.start();
+  });
   connect(viewport, &Viewport::notesMoved, this, [this] { if (m_triad && m_triad->shown()) placeMoveTriad(); });  // every camera move
   connect(m_form, &FeaturePanel::activeInputChanged, this, &DesignController::activateInput);
   connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
@@ -536,6 +551,10 @@ void DesignController::startFeature(const QString& kind) {
       const QString active = m_form->activeInput();
       m_form->setPicks(active, picks);
       if (in->advance) m_form->activateNextPick();  // Combine: the selection is the target, the tools come next
+      if (spec->kind == "align") {  // the bodies taken: Align's next step (its From plane) is shown
+        m_form->activate(QString());
+        m_form->activateNextPick();
+      }
       if (m_form->activeInput() == active) activateInput(active);
     }
   }
@@ -560,6 +579,11 @@ void DesignController::startFeature(const QString& kind, const std::vector<std::
                         in->type == "plane" || in->type == "axis" || in->type == "path";
       pick ? m_form->setPicks(name, value) : m_form->setValue(name, value);  // a plane or axis given as its one object too
     }
+  // Align given its bodies (a command, a bench): its next step is shown, as when the bodies were picked first.
+  if (kind == "align" && m_form->activeInput() == "bodies" && !m_form->picks("bodies").is_null() && !m_form->picks("bodies").empty()) {
+    m_form->activate(QString());
+    m_form->activateNextPick();
+  }
   activateInput(m_form->activeInput());  // the view shows the given picks
   schedulePreview();
 }
@@ -614,6 +638,7 @@ void DesignController::editOp(const std::string& opId) {
   }
   const opad::Feature* f = m_doc->scene.feature(opId);
   if (!f) return;
+  if (const auto editor = m_kindEditors.find(f->kind); editor != m_kindEditors.end()) return editor->second(opId);  // its own mode
   const FeatureSpec* spec = feature_spec(f->kind);
   if (!spec) return;
   const opad::Feature feature = *f;
@@ -675,6 +700,12 @@ void DesignController::endFeature() {
   m_planScene.reset();
   m_viewport->clearPreviewBodies();
   m_viewport->clearCandidates();
+  clearCrease();
+  ++m_pairSerial;
+  if (Job* j = std::exchange(m_pairJob, nullptr)) j->cancel();
+  m_pairPoints = opad::json();
+  m_pairStray = -1;
+  m_viewport->setPairMarkers({});
   m_viewport->setPickAccumulate(false);
   m_viewport->setBodiesPickable(true);
   m_activating = true;  // the clean-up below is not a pick
@@ -755,7 +786,9 @@ void DesignController::showCandidatesFor(const QString& typeName, bool planes) {
     m_activeCandidates = *found;
     showAllCandidates();
     syncSelectionToInput();
-    if (found->empty() && (type == "points" || type == "profiles")) {  // else the input waits for a pick that cannot come
+    const InputSpec* active = m_form->input(m_form->activeInput());
+    const bool paired = active && !active->pairs_with.empty();  // point pairs take vertices: no sketch is needed
+    if (found->empty() && !paired && (type == "points" || type == "profiles")) {  // else the input waits for a pick that cannot come
       m_nothingToPick = type == "points" ? tr("No sketch points yet: sketch points first (or pick vertices).")
                                          : tr("No sketch profiles yet: draw a closed shape in a sketch first (or pick a planar face).");
       if (!m_form->complete()) m_form->setStatus(m_nothingToPick, false);
@@ -916,6 +949,7 @@ void DesignController::offerRules(const QString& input, QWidget* anchor) {
 
 void DesignController::activateInput(const QString& name) {
   if (!m_featureOn) return;
+  clearCrease();  // offered for the input that had the clicks
   const InputSpec* in = m_form->input(name);
   if (in && in->type == "plane" && m_placer->active()) m_placer->stop();  // the Plane box clicked: the plane picker, then the panel
   if (!in) {
@@ -956,7 +990,9 @@ void DesignController::activateInput(const QString& name) {
       if(!m_featureOn)return;m_form->setPicks(name,plane);schedulePreview();m_openPanel(m_panel);m_form->activate(QString());m_form->activateNextPick();
     };
     // Not the selection: that is the feature's other picks (a single draft face became its own neutral plane).
-    emit stateChanged();QTimer::singleShot(0,this,[this]{if(m_pickPlane&&m_featureOn){m_planePicker->panel()->setHeader("plane",tr("Choose plane"));m_planePicker->start(false,m_openPanel,false);}});return;
+    // The picker says which plane it is choosing (Align's From or To), not just "Choose plane".
+    const QString header = m_form->spec() && m_form->spec()->kind == "align" ? tr("Choose plane: %1").arg(i18n::t(QString::fromStdString(in->label))) : tr("Choose plane");
+    emit stateChanged();QTimer::singleShot(0,this,[this,header]{if(m_pickPlane&&m_featureOn){m_planePicker->panel()->setHeader("plane",header);m_planePicker->start(false,m_openPanel,false);}});return;
   }
   if (m_placer->active()) m_placer->panelPicking(true);  // the box takes the clicks: no marker meanwhile
   const Viewport::SelFilter want = filterFor(in->type);
@@ -1296,6 +1332,11 @@ void DesignController::viewportSelectionChanged() {
       continue;
     }
     if (in->type == "axis" && fitpick::onMesh(m_doc->scene, r)) {  // a scan's triangle or side: the axis fitted around it
+      // The crease offered while this side was hovered (fitted already, drawn as the guide line): taken as it is.
+      if (r.kind == opad::Ref::Kind::Edge && fitpick::fitted(m_crease) && r.body == m_creaseBody && r.index == m_creaseSide) {
+        picks.push_back(m_crease);
+        continue;
+      }
       if (const opad::json fit = fitpick::fromPick(m_doc->scene, r, true); !fit.is_null()) picks.push_back(fit);
       continue;
     }
@@ -1306,6 +1347,23 @@ void DesignController::viewportSelectionChanged() {
   for (const auto& c : m_viewport->selectedCandidates())
     if (!m_routeIds.count(c)) picks.push_back(opad::json::parse(c));
   const bool single = in->type == "plane" || in->type == "axis" || in->type == "path" || in->max_count == 1;
+  // A box or brush over a run of a scan's sides in an axis input (several taken at once, nothing picked before): the line
+  // through them, the fallback where no crease is found (a click on a side picks a fit, never a side: only a box selects several).
+  if (in->type == "axis" && picks.size() > 1) {
+    const auto refs = m_viewport->selection();
+    opad::json sides = opad::json::array();
+    std::string body;
+    for (const auto& r : refs)
+      if (r.kind == opad::Ref::Kind::Edge && fitpick::onMesh(m_doc->scene, r) && (body.empty() || r.body == body)) body = r.body, sides.push_back(r.index);
+    if (sides.size() >= 2 && sides.size() == refs.size()) {
+      const opad::json fit = {{"fit", {{"body", body}, {"of", "line"}, {"sides", sides}}}};
+      m_form->setPicks(name, fit);
+      refitPick(name, fit, true);
+      syncSelectionToInput();
+      m_form->activateNextPick();
+      return;
+    }
+  }
   if (single && picks.size() > 1) {
     m_activating = true;
     m_viewport->keepLastSelected();  // a new pick replaces the old one
@@ -1318,6 +1376,7 @@ void DesignController::viewportSelectionChanged() {
     m_activating = false;
     return;
   }
+  if (!in->pairs_with.empty() && pairPicked(name, *in, picks)) return;  // Align's point pairs: the other side next
   const opad::json had = m_form->picks(name);
   const bool first = had.is_null() || (had.is_array() && had.empty());
   m_form->setPicks(name, picks);
@@ -1390,6 +1449,7 @@ void DesignController::refreshValues() {
 void DesignController::schedulePreview() {
   if (!m_featureOn) return;
   placeMoveTriad();  // every pick and value change comes here: Move's triad follows them
+  refreshPairMarkers();  // and point pairs' markers (when their picks changed)
   m_readyPlan.reset();
   // While the handle is pulled, preview as fast as plans come back (the latest value wins) instead of waiting for
   // the pointer to rest: the body follows the drag as if its face were dragged. Otherwise inputs settle first.
@@ -1434,7 +1494,14 @@ void DesignController::runPreview(bool commit, bool keep) {
     m_viewport->clearPreviewBodies();
     return;
   }
-  const opad::json inputs = m_form->inputs();
+  opad::json inputs = m_form->inputs();
+  if (pairsWaiting(inputs)) {  // point pairs: three whole ones first
+    if (!m_distanceHandle->interacting()) m_distanceHandle->hide();
+    m_readyPlan.reset();
+    m_viewport->clearPreviewBodies();
+    pairPreviewed(opad::json());
+    return;
+  }
   const std::string name = m_form->name().toStdString();
   // A new feature is made in the active component (UI-33): its new bodies, plane or axis go there, in its frame.
   const std::string component = m_editing.empty() ? m_doc->activeComponent() : std::string();
@@ -1643,6 +1710,8 @@ void DesignController::runPreview(bool commit, bool keep) {
           picked = picked || (p.is_array() && !p.empty());
         }
       if (error != "cancelled") m_form->setStatus(i18n::t(error), picked || !picks);
+      if (error != "cancelled") pairPreviewed(opad::json());
+      if (error != "cancelled") m_form->setResultNote(QString());
       return;
     }
     m_readyPlan = plan;
@@ -1711,6 +1780,18 @@ void DesignController::runPreview(bool commit, bool keep) {
     parts.insert(parts.end(), construction->begin(), construction->end());
     m_viewport->setPreviewBodies(parts, hidden);
     m_viewport->setPreviewMotion(*motions);  // moved as they are (Move, Align): their own objects drawn elsewhere
+    {  // Align 3-2-1: what is still free after the steps given (slides along, turns about), or fully fixed
+      QString note;
+      for (const auto& result : resultsFor(*plan, target, editResult))
+        if (result.is_object() && result.contains("free")) note = freedomText(result["free"]);
+      m_form->setResultNote(note);
+    }
+    if (!m_form->pairInputs().first.isEmpty()) {  // point pairs: the residuals in the list, the markers moved with the bodies
+      opad::json fit;
+      for (const auto& result : resultsFor(*plan, target, editResult))
+        if (result.is_object() && result.contains("pairs")) fit = result;
+      pairPreviewed(fit);
+    }
     m_viewport->setPreviewSketch(alignSketch, *sketchMotion);
     if (m_stretch.valid) for (const auto& part : parts) m_stretch.base.push_back(part.prs);
     if (m_distanceHandle->dragging()) stretchPreview(m_distanceHandle->value());  // this plan is for an older value
@@ -1886,6 +1967,7 @@ bool DesignController::escape() {
   }
   if (m_featureOn) {
     if (m_placer->escape()) return true;  // a primitive being placed: one stage back
+    if (stepBackPair()) return true;      // point pairs: the last pick
     endFeature();
     return true;
   }
@@ -2119,4 +2201,222 @@ void DesignController::bench() {
     });
   });
   });
+}
+
+// ---------------------------------------------------------------- point pairs (Align)
+// The two sides are two inputs (InputSpec::pairs_with: from_points, to_points). The viewport selection is the active side's
+// picks, so a pick hands over to the other side; the markers (ViewportPairs.cpp) show both, numbered, the bodies' side
+// where the preview moves it. Points are resolved on a worker (a scan's nodes are read), never in the click handler.
+namespace {
+opad::json listOf(const opad::json& p) { return p.is_array() ? p : p.is_null() ? opad::json::array() : opad::json::array({p}); }
+}  // namespace
+
+bool DesignController::pairPicked(const QString& name, const InputSpec& in, const opad::json& picks) {
+  const auto [from, to] = m_form->pairInputs();
+  const QString other = QString::fromStdString(in.pairs_with);
+  if (from.isEmpty() || !m_form->input(other)) return false;
+  const opad::json had = listOf(m_form->picks(name)), partner = listOf(m_form->picks(other));
+  if (picks.size() < had.size()) {  // a click on a picked point (picks toggle): its pair goes
+    size_t gone = 0;
+    while (gone < picks.size() && picks[gone] == had[gone]) ++gone;
+    m_form->removePair(int(gone));
+    emit status(tr("Pair %1 removed").arg(gone + 1));
+    return true;
+  }
+  opad::json added;
+  for (const auto& p : picks)
+    if (std::find(had.begin(), had.end(), p) == had.end()) added = p;
+  if (added.is_null()) {
+    syncSelectionToInput();
+    return true;
+  }
+  opad::json list = had;
+  if (had.size() > partner.size()) list.back() = added;  // this side was a pick ahead (its box clicked again): the new one replaces it
+  else list.push_back(added);
+  m_form->setPicks(name, list);
+  m_nothingToPick.clear();
+  m_form->setPairFit({}, -1, 0);  // fitted again with it
+  // Uneven: the other side's match next; even: the next pair starts on the bodies.
+  const QString next = list.size() != partner.size() ? other : from;
+  if (next != m_form->activeInput()) m_form->activate(next);
+  else syncSelectionToInput();
+  const size_t pair = std::max(list.size(), partner.size());
+  emit status(next == to ? tr("Pair %1: now pick its match on the target").arg(pair) : tr("Pair %1: pick a point on the bodies").arg(pair + 1));
+  schedulePreview();
+  return true;
+}
+
+bool DesignController::stepBackPair() {
+  const auto [from, to] = m_form->pairInputs();
+  if (from.isEmpty()) return false;
+  opad::json f = listOf(m_form->picks(from)), t = listOf(m_form->picks(to));
+  if (f.empty() && t.empty()) return false;
+  const QString side = f.size() > t.size() ? from : to;  // the last pick: the side a pick ahead, else the target's
+  opad::json& list = side == from ? f : t;
+  list.erase(list.end() - 1);
+  m_form->setPicks(side, list);
+  m_form->setPairFit({}, -1, 0);
+  if (m_form->activeInput() != side) m_form->activate(side);  // that point is picked again
+  else syncSelectionToInput();
+  schedulePreview();
+  emit status(tr("Took back the last pick · %1 again takes the one before; with none left it closes Align").arg(keys::fixedText("esc")));
+  return true;
+}
+
+bool DesignController::pairsWaiting(opad::json& inputs) {
+  const auto [from, to] = m_form->pairInputs();
+  if (from.isEmpty()) return false;
+  opad::json f = listOf(inputs.value(from.toStdString(), opad::json())), t = listOf(inputs.value(to.toStdString(), opad::json()));
+  const size_t n = std::min(f.size(), t.size());
+  if (n < 3) {
+    m_form->setStatus(tr("Pick a point on the bodies, then its match on the target: three pairs or more fix the move (%1 so far)").arg(n), false);
+    return true;
+  }
+  f.erase(f.begin() + long(n), f.end());  // a pick waiting for its match is not fitted yet
+  t.erase(t.begin() + long(n), t.end());
+  inputs[from.toStdString()] = f;
+  inputs[to.toStdString()] = t;
+  return false;
+}
+
+void DesignController::pairPreviewed(const opad::json& result) {
+  m_pairStray = -1;
+  if (result.is_object() && result.contains("pairs")) {
+    std::vector<double> residuals;
+    for (const auto& p : result["pairs"]) residuals.push_back(p.value("residual", 0.0));
+    m_pairStray = result.value("dropped_pair", 0) - 1;
+    m_form->setPairFit(residuals, m_pairStray, result.value("rms", 0.0));
+  } else {
+    m_form->setPairFit({}, -1, 0);
+  }
+  drawPairMarkers();
+}
+
+void DesignController::refreshPairMarkers() {
+  const auto [from, to] = m_form->pairInputs();
+  const opad::json picks = from.isEmpty() ? opad::json() : opad::json{{"from", listOf(m_form->picks(from))}, {"to", listOf(m_form->picks(to))}};
+  const std::string signature = picks.dump();
+  if (signature == m_pairPicks) return;
+  m_pairPicks = signature;
+  const int serial = ++m_pairSerial;
+  if (Job* j = std::exchange(m_pairJob, nullptr)) j->cancel();
+  if (from.isEmpty() || (picks["from"].empty() && picks["to"].empty())) {
+    m_pairPoints = opad::json();
+    m_pairStray = -1;
+    return drawPairMarkers();
+  }
+  refreshPlanCopies();
+  auto doc = m_planDoc;
+  auto scene = m_planScene;
+  auto out = std::make_shared<opad::json>();
+  m_pairJob = m_jobs->async(tr("Finding the picked points"), [doc, scene, picks, out](Progress p) {
+    Reading reading;
+    const opad::design::Cancel cancel = [p] { return p.cancelled(); };
+    *out = {{"from", point_positions(*doc, *scene, picks["from"], cancel)}, {"to", point_positions(*doc, *scene, picks["to"], cancel)}};
+  }, [this, serial, out](bool ok, const QString&) {
+    if (serial != m_pairSerial || !m_featureOn) return;
+    m_pairJob = nullptr;
+    if (!ok) return;
+    m_pairPoints = *out;
+    drawPairMarkers();
+  });
+}
+
+void DesignController::drawPairMarkers() {
+  std::vector<Viewport::PairMarker> markers;
+  const auto [from, to] = m_form->pairInputs();
+  if (m_pairPoints.is_object() && !from.isEmpty()) {
+    const opad::json& f = m_pairPoints["from"];
+    const opad::json& t = m_pairPoints["to"];
+    const opad::json refs = listOf(m_form->picks(from));
+    auto vec = [](const opad::json& v, const gp_Trsf& motion) {
+      const gp_Pnt p = gp_Pnt(v[0].get<double>(), v[1].get<double>(), v[2].get<double>()).Transformed(motion);
+      return opad::Vec3{p.X(), p.Y(), p.Z()};
+    };
+    for (size_t i = 0; i < std::max(f.size(), t.size()); ++i) {
+      Viewport::PairMarker m;
+      m.label = QString::number(i + 1);
+      m.stray = int(i) == m_pairStray;
+      if (i < f.size() && f[i].is_array()) {
+        // Drawn where the preview puts its body (the bodies' points move with them).
+        std::string body;
+        if (i < refs.size()) try {
+            body = refs[i].is_object() ? refs[i].value("body", "") : opad::Ref::parse(refs[i].get<std::string>()).body;
+          } catch (const std::exception&) {
+          }
+        m.from = vec(f[i], body.empty() ? gp_Trsf() : m_viewport->previewMotion(body));
+      }
+      if (i < t.size() && t[i].is_array()) m.to = vec(t[i], gp_Trsf());
+      markers.push_back(m);
+    }
+  }
+  m_viewport->setPairMarkers(markers);
+}
+
+// ---------------------------------------------------------------- creases (a scan's edges in an axis input)
+// Mesh sides on a scan are ragged: the two flats either side of the hovered side are grown, fitted and met
+// (scanfit::crease_line, fit "of": "crease"), on a worker; the line is drawn along its whole length while the side stays
+// hovered, and a click on that side takes it as the axis, its result included (replay never fits it again).
+void DesignController::clearCrease() {
+  m_creaseTimer.stop();
+  ++m_creaseSerial;
+  if (Job* j = std::exchange(m_creaseJob, nullptr)) j->cancel();
+  m_creaseBody.clear();
+  m_creaseSide = -1;
+  m_crease = opad::json();
+  m_viewport->setGuideLine(std::nullopt);
+}
+
+void DesignController::creaseHover() {
+  if (!m_featureOn || m_creaseBody.empty() || m_creaseSide < 0) return;
+  const int serial = ++m_creaseSerial;
+  if (Job* j = std::exchange(m_creaseJob, nullptr)) j->cancel();
+  m_crease = opad::json();
+  m_viewport->setGuideLine(std::nullopt);
+  refreshPlanCopies();
+  auto doc = m_planDoc;
+  auto scene = m_planScene;
+  auto out = std::make_shared<opad::json>(opad::json{{"fit", {{"body", m_creaseBody}, {"of", "crease"}, {"seed", m_creaseSide / 3}, {"side", m_creaseSide % 3}, {"tolerance", "10 deg"}}}});
+  m_creaseJob = m_jobs->async(tr("Finding the crease"), [doc, scene, out](Progress p) {
+    Reading reading;
+    *out = fit_reference(*doc, *scene, *out, "axis", [p] { return p.cancelled(); });
+  }, [this, serial, out](bool ok, const QString& error) {
+    if (serial != m_creaseSerial || !m_featureOn) return;
+    m_creaseJob = nullptr;
+    if (!ok) {
+      if (error != "cancelled") emit status(i18n::t(error));
+      trace::log(QStringLiteral("design: crease at side %1 of %2: %3").arg(m_creaseSide).arg(QString::fromStdString(m_creaseBody), error));
+      return;
+    }
+    const opad::json world = out->value("world", opad::json::object());
+    out->erase("world");  // for showing; the input keeps the request and its result
+    m_crease = *out;
+    const double half = world.value("length", out->value("result", opad::json::object()).value("length", 0.0)) / 2;
+    if (world.contains("origin") && world.contains("dir")) {
+      const gp_Pnt o(world["origin"][0], world["origin"][1], world["origin"][2]);
+      const gp_Vec d = gp_Vec(world["dir"][0], world["dir"][1], world["dir"][2]).Normalized() * half;
+      const gp_Pnt a = o.Translated(-d), b = o.Translated(d);
+      m_viewport->setGuideLine(std::make_pair(opad::Vec3{a.X(), a.Y(), a.Z()}, opad::Vec3{b.X(), b.Y(), b.Z()}));
+    }
+    emit status(tr("Crease: %1 · click to take it").arg(fitpick::quality(m_crease)));
+  });
+}
+
+// What a 3-2-1 Align leaves free, in words: "Free: slide along X, turn about Z" (a direction named by its world axis when it
+// is one, else by its components), or that nothing is.
+QString DesignController::freedomText(const opad::json& free) {
+  if (!free.is_array()) return {};
+  if (free.empty()) return tr("Fully fixed: nothing is left free.");
+  auto name = [](const opad::json& d) {
+    const double v[3] = {d[0].get<double>(), d[1].get<double>(), d[2].get<double>()};
+    for (int k = 0; k < 3; ++k)
+      if (std::fabs(std::fabs(v[k]) - 1) < 1e-4) return QString("XYZ"[k]);
+    return QString("(%1, %2, %3)").arg(v[0], 0, 'f', 2).arg(v[1], 0, 'f', 2).arg(v[2], 0, 'f', 2);
+  };
+  QStringList parts;
+  for (const auto& f : free) {
+    if (f.contains("slide")) parts << tr("slide along %1").arg(name(f["slide"]));
+    else if (f.contains("turn")) parts << tr("turn about %1").arg(name(f["turn"]));
+  }
+  return tr("Free: %1").arg(parts.join(", "));
 }

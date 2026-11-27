@@ -109,9 +109,9 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     else p->setBrush(t.bg);  // components and the document: hollow square
     p->drawRoundedRect(sw, 2, 2);
   }
-  QString typeIcon = isDoc ? "doc" : isBody ? (n->representation=="drawing2d" ? "drawing" : n->representation=="mesh" ? "mesh" : "body") : "component";
+  QString typeIcon = isDoc ? "doc" : isBody ? (n->representation=="drawing2d" ? "drawing" : n->representation=="mesh" ? "mesh" : n->representation=="points" ? "pointCloud" : "body") : "component";
   const auto category=index.data(Qt::UserRole+4).toString();
-  if(category=="drawing2d") typeIcon="drawing"; else if(category=="mesh") typeIcon="mesh";
+  if(category=="drawing2d") typeIcon="drawing"; else if(category=="mesh") typeIcon="mesh"; else if(category=="points") typeIcon="pointCloud";
   if (!d.typeIcon.isEmpty()) typeIcon = d.typeIcon;
   p->drawPixmap(r.left() + kTypeX, y, icons::pixmap(typeIcon, n && n->body_missing ? t.red : iconColor, 16, dpr));
   if (isDoc) {
@@ -131,7 +131,7 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   p->setPen(text);
   QString name = index.data(kNameRole).toString();
   if (n->kind == opad::Node::Kind::Body && n->representation != "solid")
-    name += n->representation == "mesh" ? tr(" [mesh]") : tr(" [2D]");
+    name += n->representation == "mesh" ? tr(" [mesh]") : n->representation == "points" ? tr(" [point cloud]") : tr(" [2D]");
   if (!renaming) p->drawText(QRect(x, r.top(), std::max(10, right - x), r.height()), Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, std::max(10, right - x)));
   p->restore();
 }

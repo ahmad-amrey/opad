@@ -28,11 +28,13 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "AppDocument.hpp"
@@ -225,6 +227,7 @@ struct GuidedCheck::Setup {
 // A list the view fills: OPAD's proposal, picked by hand (the view's clicks add and take out), cleared.
 struct GuidedCheck::PickList {
   QString id, filter, nature;
+  bool loop = false;  // an opening: a click on an edge takes the loop round it, in place of what it held (one pick, then done)
   QLabel* text = nullptr;
   QPushButton *use = nullptr, *pick = nullptr, *clear = nullptr;
   std::vector<opad::Ref> proposal, base;  // base: what it held when picking began (clicks add to it; Clear empties it)
@@ -323,27 +326,12 @@ json proposals(const opad::Document& doc, const opad::Scene& s, const std::vecto
   out["supports"] = bottom;
   out["load"] = top;
   if (ends) {
-    // Rings first (a hollow duct's ends: an outer loop and its bore); else the two flat faces farthest apart.
-    std::vector<const FaceInfo*> rings;
-    for (const auto& f : all)
-      if (f.planar && f.wires >= 2 && f.holeSize > 0) rings.push_back(&f);
-    if (rings.size() < 2) {
-      rings.clear();
-      for (const auto& f : all)
-        if (f.planar) rings.push_back(&f);
-    }
-    const FaceInfo *a = nullptr, *b = nullptr;
-    double farthest = -1;
-    for (size_t i = 0; i < rings.size(); ++i)
-      for (size_t j = i + 1; j < rings.size(); ++j) {
-        const double d = rings[i]->centre.Distance(rings[j]->centre);
-        if (d > farthest) farthest = d, a = rings[i], b = rings[j];
-      }
-    if (a && b) {
-      // The opening's size: a ring's bore, else the face itself (a body that is the fluid: its end disc).
-      auto size = [](const FaceInfo* f) { return f->holeSize > 0 ? f->holeSize : f->width; };
-      if (size(b) > size(a)) std::swap(a, b);  // the wider end first: the air goes in there
-      out["ends"] = {{{"ref", a->ref.to_json()}, {"size", size(a)}}, {{"ref", b->ref.to_json()}, {"size", size(b)}}};
+    // The openings as loops of edges round them (a rim's hole, in past a chamfer to the bore; else a fluid body's end
+    // discs), of the bodies in the check only, the wider first.
+    try {
+      out["ends"] = opad::sim::propose_openings(doc, s, bodies);
+    } catch (const std::exception&) {
+    } catch (const Standard_Failure&) {
     }
   }
   return out;
@@ -1152,23 +1140,19 @@ void GuidedCheck::build() {
   // ---- air: in and out, how much air
   if (air) {
     m_stepIds << "ends";
-    QVBoxLayout* v = m_frame->addPage(tr("In and out"), tr("Which way does the air go through it: the opening it enters by and the one it leaves by."));
-    list(v, "inlet", tr("Air goes in here"), "select.faces", "fan", [this] { return m_setup->inlet; },
-         [this](const std::vector<opad::Ref>& r) { m_setup->inlet = r; });
-    list(v, "outlet", tr("Air comes out here"), "select.faces", "convection", [this] { return m_setup->outlet; },
-         [this](const std::vector<opad::Ref>& r) { m_setup->outlet = r; });
-    auto* swap = new QPushButton(tr("Swap in and out"), v->parentWidget());
-    swap->setObjectName("checkSwap");
+    QVBoxLayout* v = m_frame->addPage(tr("In and out"), tr("Where the air goes in and where it comes out: click an edge round each opening; the arrows show the air's way."));
+    m_lists[size_t(list(v, "inlet", tr("Air goes in here"), "select.edges", "fan", [this] { return m_setup->inlet; },
+                        [this](const std::vector<opad::Ref>& r) { m_setup->inlet = r; }))]->loop = true;
+    m_lists[size_t(list(v, "outlet", tr("Air comes out here"), "select.edges", "convection", [this] { return m_setup->outlet; },
+                        [this](const std::vector<opad::Ref>& r) { m_setup->outlet = r; }))]->loop = true;
+    auto* swap = new QPushButton(tr("Flip the air's way"), v->parentWidget());
+    swap->setObjectName("checkFlip");
+    swap->setToolTip(tr("The air goes the other way: in where it came out. A click on an arrow in the view does the same."));
     v->addWidget(swap);
     m_planText = text({}, v->parentWidget(), "");  // how OPAD will solve it (the core's check of the openings), before Run
     m_planText->setObjectName("checkPlan");
     v->addWidget(m_planText);
-    connect(swap, &QPushButton::clicked, this, [this] {
-      std::swap(m_setup->inlet, m_setup->outlet);
-      for (int i = 0; i < int(m_lists.size()); ++i) showList(i);
-      lightLists();
-      scheduleWrite();
-    });
+    connect(swap, &QPushButton::clicked, this, [this] { flipFlow(); });
     v->addWidget(heading(tr("What flows"), v->parentWidget()));
     auto* fluid = new QComboBox(v->parentWidget());
     fluid->setObjectName("checkFluid");
@@ -1465,6 +1449,9 @@ void GuidedCheck::showPlan() {
       l->setVisible(!t.isEmpty());
       l->setStyleSheet(m_planError.isEmpty() ? QString() : QString("color: %1;").arg(theme::current().amber.name()));
     }
+  for (int i = 0; i < int(m_lists.size()); ++i)
+    if (m_lists[size_t(i)]->loop) showList(i);  // each opening's size, as the core found it
+  showOpenings();
 }
 
 void GuidedCheck::scheduleWrite() {
@@ -1645,7 +1632,12 @@ void GuidedCheck::showList(int index) {
   QString t;
   if (refs.empty()) {
     t = m_picking == index ? tr("Waiting: click in the view") : tr("Nothing yet.");
-  } else if (l.filter == "select.faces") {
+  } else if (l.loop && refs.front().kind == opad::Ref::Kind::Edge) {
+    // The loop round the opening, and its size as the core found it.
+    const json o = m_plan.is_object() ? m_plan.value(l.id.toStdString(), json()) : json();
+    t = tr("The edge round the opening, on %1").arg(bodyNames({refs.front().body}));
+    if (o.is_object() && o.value("diameter_mm", 0.0) > 0) t += ", " + tr("%1 across").arg(units::format(units::Kind::Length, o.value("diameter_mm", 0.0)));
+  } else if (l.filter == "select.faces" || l.loop) {
     std::vector<std::string> bodies;
     for (const auto& r : refs)
       if (std::find(bodies.begin(), bodies.end(), r.body) == bodies.end()) bodies.push_back(r.body);
@@ -1663,7 +1655,8 @@ void GuidedCheck::showList(int index) {
   l.clear->setEnabled(!refs.empty());
   const QSignalBlocker quiet(l.pick);
   l.pick->setChecked(m_picking == index);
-  l.pick->setText(m_picking == index ? tr("Done") : tr("Pick in the view"));
+  l.pick->setText(m_picking == index ? (l.loop ? tr("Cancel") : tr("Done")) : tr("Pick in the view"));
+  if (l.loop && m_picking == index && refs.empty()) l.text->setText(tr("Waiting: click an edge round the opening"));
 }
 
 bool GuidedCheck::proposed(const QString& list) const {
@@ -1678,8 +1671,7 @@ void GuidedCheck::useProposal(const QString& list) {
     if (l.id != list || l.proposal.empty()) continue;
     if (list == "inlet" || list == "outlet") {  // the two ends at once, the wider one in
       for (auto& o : m_lists)
-        if (o->id == "inlet") o->set({o->proposal.empty() ? opad::Ref() : o->proposal[0]});
-        else if (o->id == "outlet") o->set({o->proposal.empty() ? opad::Ref() : o->proposal[0]});
+        if (o->id == "inlet" || o->id == "outlet") o->set(o->proposal);
     } else {
       l.set(l.proposal);
     }
@@ -1722,6 +1714,7 @@ void GuidedCheck::stopPicking() {
 void GuidedCheck::selectionChanged(const std::vector<opad::Ref>& refs) {
   if (m_picking < 0) return;
   PickList& l = *m_lists[size_t(m_picking)];
+  if (l.loop) return pickOpening(m_picking, refs);
   std::vector<opad::Ref> picked = l.base;
   auto has = [&picked](const opad::Ref& r) { return std::any_of(picked.begin(), picked.end(), [&](const opad::Ref& x) { return x.str() == r.str(); }); };
   for (const auto& r : refs) {
@@ -1738,6 +1731,92 @@ void GuidedCheck::selectionChanged(const std::vector<opad::Ref>& refs) {
   showList(m_picking);
   for (auto& f : m_refreshers) f();
   scheduleWrite();
+}
+
+// An opening picked: the newest click (an edge, or an older study's face) in place of what the list held; an edge is taken
+// with the loop round it (the core's opening_loop, on a worker). One pick, then picking stops.
+void GuidedCheck::pickOpening(int index, const std::vector<opad::Ref>& refs) {
+  PickList& l = *m_lists[size_t(index)];
+  const std::vector<opad::Ref> held = l.get();
+  auto has = [&held](const opad::Ref& r) { return std::any_of(held.begin(), held.end(), [&](const opad::Ref& x) { return x.str() == r.str(); }); };
+  std::optional<opad::Ref> fresh;
+  for (const auto& r : refs)
+    if (!r.body.empty() && (r.kind == opad::Ref::Kind::Edge || r.kind == opad::Ref::Kind::Face) && !has(r)) fresh = r;
+  if (!fresh) return;
+  auto take = [this, index](const std::vector<opad::Ref>& loop) {
+    if (index >= int(m_lists.size())) return;
+    m_lists[size_t(index)]->set(loop);
+    stopPicking();
+    for (auto& f : m_refreshers) f();
+    showOpenings();
+    scheduleWrite();
+  };
+  if (fresh->kind == opad::Ref::Kind::Face) return take({*fresh});
+  AppDocument* d = m_hooks.document();
+  if (!d || !m_hooks.jobs) return;
+  if (m_finding) m_finding->cancel();
+  auto loop = std::make_shared<std::vector<opad::Ref>>();
+  auto error = std::make_shared<std::string>();
+  const opad::Ref edge = *fresh;
+  m_finding = d->readAsync(m_hooks.jobs(), tr("Finding the edge round the opening"),
+                           [edge, loop, error](const opad::Document& doc, const opad::Scene& sc, Progress) {
+                             try {
+                               *loop = opad::sim::opening_loop(doc, sc, edge);
+                             } catch (const std::exception& e) {
+                               *error = e.what();
+                             }
+                           },
+                           [this, self = QPointer<GuidedCheck>(this), index, loop, error, take](bool ok, const QString&) {
+                             if (!self || !ok || m_picking != index) return;
+                             if (!loop->empty()) return take(*loop);
+                             m_lists[size_t(index)]->text->setText(i18n::message(QString::fromStdString(*error)));
+                             if (m_hooks.select) m_hooks.select({});
+                           });
+}
+
+// The air the other way: in where it came out. The arrows turn at once; the core plans it again when it is written.
+void GuidedCheck::flipFlow() {
+  std::swap(m_setup->inlet, m_setup->outlet);
+  if (m_plan.is_object() && m_plan.contains("inlet") && m_plan.contains("outlet")) {
+    std::swap(m_plan["inlet"], m_plan["outlet"]);
+    if (m_plan.contains("axis") && m_plan["axis"].is_array())
+      for (auto& x : m_plan["axis"]) x = -x.get<double>();
+  }
+  for (int i = 0; i < int(m_lists.size()); ++i) showList(i);
+  lightLists();
+  showOpenings();
+  scheduleWrite();
+}
+
+bool GuidedCheck::arrowClicked(const std::string& candidate) {
+  if (candidate != "flow:inlet" && candidate != "flow:outlet") return false;
+  if (!m_openingsShown) return false;
+  flipFlow();
+  return true;
+}
+
+// The openings as the core found them (the plan): each one's edge filled, and an arrow the air's way through it, coming to
+// the inlet and leaving the outlet; shown on the In and out, air and Run steps.
+void GuidedCheck::showOpenings() {
+  if (!m_hooks.openings) return;
+  const int step = m_frame ? m_frame->current() : -1;
+  const QString page = step >= 0 && step < m_stepIds.size() ? m_stepIds[step] : QString();
+  const bool air = m_check && (m_check->id == "fitting" || m_check->id == "fan");
+  const bool here = air && isVisible() && (page == "ends" || page == "air" || page == "run") && m_planError.isEmpty() && m_plan.is_object() &&
+                    m_plan.contains("inlet") && m_plan.contains("outlet") && !m_setup->inlet.empty() && !m_setup->outlet.empty();
+  std::vector<json> out;
+  if (here)
+    for (const bool in : {true, false}) {
+      const json o = m_plan[in ? "inlet" : "outlet"];
+      const opad::Vec3 n = o.value("normal", opad::Vec3{0, 0, 1});
+      json g = {{"id", in ? "flow:inlet" : "flow:outlet"}, {"centre", o.value("centre", opad::Vec3{0, 0, 0})}, {"size", o.value("diameter_mm", 0.0)},
+                {"vector", in ? opad::Vec3{-n[0], -n[1], -n[2]} : n}, {"inward", in}};
+      if (o.contains("outline") && o["outline"].size() >= 3) g["loops"] = json::array({o["outline"]});
+      out.push_back(g);
+    }
+  if (out.empty() && !m_openingsShown) return;
+  m_openingsShown = !out.empty();
+  m_hooks.openings(out);
 }
 
 void GuidedCheck::lightLists() {
@@ -1786,7 +1865,7 @@ void GuidedCheck::propose() {
                                  const json ends = result->value("ends", json());
                                  if ((l->id == "inlet" || l->id == "outlet") && ends.is_array() && ends.size() == 2) {
                                    const json& e = ends[l->id == "inlet" ? 0 : 1];
-                                   l->proposal = {opad::Ref::from_json(e["ref"])};
+                                   l->proposal = refsOf(e.value("edges", json()));
                                    l->proposalText = tr("OPAD found 2 open ends: this is the %1 one, %2 across.")
                                                          .arg(l->id == "inlet" ? tr("wider") : tr("narrower"), units::format(units::Kind::Length, e.value("size", 0.0)));
                                  }
@@ -1805,6 +1884,7 @@ void GuidedCheck::stepShown(int i) {
   flush();
   stopPicking();
   lightLists();
+  showOpenings();
   const QString page = i >= 0 && i < m_stepIds.size() ? m_stepIds[i] : QString();
   if (page == "run") showRunState();
   if (page == "results") showResults();
@@ -1859,6 +1939,16 @@ void GuidedCheck::showRunState() {
   else if ((id == "fitting" || id == "fan") && (u.inlet.empty() || u.outlet.empty())) missing = tr("Say where the air goes in and out (the In and out step).");
   else if (u.bodies.empty() && id != "clearance" && id != "forces") missing = tr("Choose the part to check (the Part step).");
   m_estimate->setText(tr("About how long: %1.").arg(m_check->time));
+  if ((id == "fitting" || id == "fan") && m_plan.is_object() && m_plan.value("seconds_estimate", 0.0) > 0) {
+    // The core's estimate (its cells, the iterations a solve takes, a measured cost per cell and iteration for this kind of
+    // system); the last run here says what this computer really takes.
+    double seconds = m_plan.value("seconds_estimate", 0.0);
+    const double solve = m_plan.value("solve_seconds_estimate", 0.0), assumed = m_plan.value("seconds_per_cell_iteration", 0.0);
+    const double measured = QSettings().value("simulate/flowSecondsPerCellIteration", 0.0).toDouble();
+    if (measured > 0 && assumed > 0) seconds += solve * (measured / assumed - 1);
+    m_estimate->setText(measured > 0 ? tr("About how long: %1 (from how fast your last airflow run went).").arg(duration(seconds))
+                                     : tr("About how long: %1.").arg(duration(seconds)));
+  }
   QString note;
   m_solverButton->hide();
   if (r.state == simchecks::Readiness::Coming) {
@@ -1897,6 +1987,8 @@ void GuidedCheck::runNow() {
 }
 
 void GuidedCheck::runFinished(const std::string& study, std::shared_ptr<const opad::sim::StudyRun> run, const QString& error) {
+  if (run && run->kind == "flow" && run->summary.value("seconds_per_cell_iteration", 0.0) > 0)
+    QSettings().setValue("simulate/flowSecondsPerCellIteration", run->summary.value("seconds_per_cell_iteration", 0.0));
   if (study != m_study || !m_status) return;
   if (!run) {
     m_status->setText(error.isEmpty() ? tr("Cancelled.") : tr("It did not run: %1").arg(error));
@@ -2107,12 +2199,14 @@ void GuidedCheck::hideEvent(QHideEvent* e) {
   flush();         // a change still to write
   stopPicking();   // the view's clicks select again
   if (m_hooks.light) m_hooks.light({});
+  if (m_openingsShown && m_hooks.openings) m_hooks.openings({}), m_openingsShown = false;
   QWidget::hideEvent(e);
 }
 
 void GuidedCheck::showEvent(QShowEvent* e) {
   QWidget::showEvent(e);
   lightLists();
+  showOpenings();
 }
 
 void GuidedCheck::setValue(const QString& field, double v) {

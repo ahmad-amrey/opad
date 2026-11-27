@@ -136,7 +136,7 @@ So it rides the shape cache, BinTools (viewer cache), make_editable and linked a
 `cloud::to_brep` (BREP format 3, precision 9: normals kept, floats exact) in `store_body`, `persist_body` and the engine's
 `materialize`; never `brep_from_shape` (no triangulation). Far scans: readers keep points near zero (`Points::offset`, the
 first point rounded to a metre beyond 10 m) and the import puts the offset into the body's `transform`. Readers
-(`cloud/io.cpp`, `e57.cpp`): PLY (the mesh reader's parser too, `read_ply_data`), XYZ/PTS/CSV (columns by header or by
+(`cloud/io.cpp`, `e57.cpp`): PLY (the mesh reader's parser too, `read_ply_data`), XYZ/ASC/PTS/CSV (columns by header or by
 value ranges, parsed in parallel blocks), LAS 0-10 (LAZ refused: LASzip is LGPL), E57 without a library (pages + CRC-32C,
 XML, bit-packed streams joined per field, pose, invalid points; a writer too). Tools (`cloud/tools.cpp`): `Grid` (kNN,
 radius), `spacing` (sampled above 400k points), `slice` + `profile` (chained polylines, Douglas-Peucker), `outliers`,
@@ -155,6 +155,26 @@ polygon, `cloud::in_polygon` on a worker), brush (spheres at navigation picks), 
 `cloud_crop`. Known limit: a non-linked 20M cloud is ~700 MB of BREP text, and `applyOps` copies the Document on the UI
 thread: big scans are best linked (`import --link`). `ctest -R point-cloud`; gui case `cloud-20m` (OPAD_BENCH_CLOUD,
 tools/bench_cases/cloud.py makes a 20M-point PLY).
+Edit point cloud (`app/CloudEditArea.*`, core `opad/cloud_edit.hpp` + `cloud/edit.cpp`, feature `cloud_edit`): a mode like
+sketch mode, entered by `cloud.edit` (Scan tab, context menu, double-click a cloud; `DesignController::setKindEditor`
+routes Edit feature of a cloud_edit step here, rolled back to it; a new edit goes at the end, refused while rolled back; a
+linked file's cloud is refused at once with "embed it first": linked parts are read-only, `check_read_only`),
+left only by Finish (one `cloud_edit` op, or an `edit` of the step's whole `inputs`, made and planned on a worker that
+reads the document in place, `AppDocument::readAsync` + `commitPlanned`: `applyOps` copies the Document on the UI thread,
+272 ms with an embedded 20M scan; the editor is freed on a worker too) or Cancel (a toast asks when strokes were made); Esc lets go of a drag, then the selection. Contextual tab
+`design.cloudEdit`; Undo/Redo inside it through `AreaController::history` + `command("edit.undo")` (stroke snapshots, the
+core `Edit`). The stored `Edit` = moved base ordinals + float offsets (base64), deleted ranges, added points (ordinal
+base + k, attributes as the base's), `base` = the cloud's count it was made on (another count: the feature fails);
+`cloud::apply` replays it bit for bit. `cloud::Editor` (worker only, one task at a time): a Grid over the base, offsets in
+a hash map (grid queries reach `m_reach` further), brushes = cylinders along the view through the picked point (Falloff
+Smooth/Sharp/Flat, `front`: half the radius deep, else 4 radii), push/pull along normals turned to the eye, smooth onto
+the 10-NN plane, erase, add on the plane fitted at the pick (ray met), `inPolygon` on working positions, `grow` (BFS over
+12-NN, normal angle + plane offset, 2M cap, cancellable). App: dabs (a quarter radius apart, filled in along the stroke)
+queue as tasks, coalescing while one runs (`quiet` jobs; Grow a shown one); the stroke's points are drawn over the cloud
+(`Viewport::showCloudStroke`, built by `BodyPrs::cloudArray(..., edit)` on the worker) and at the stroke's end the
+snapshot goes to `Viewport::setCloudEdit(node, edit, clearsStroke)`: kept per node through the LOD passes like a colour
+overlay, dropped by itself once the body's base arrays change (the commit). Brush size keys Ctrl+[ / Ctrl+] (`[`/`]` are
+Compare's). `ctest -R point-cloud` (cloud_edit cases); gui case `cloud-edit-20m` (OPAD_BENCH_CLOUDEDIT, app/CloudEditBench.cpp).
 
 ## Parasolid X_T / X_B (`core/src/xt/`, no dependency)
 
@@ -427,7 +447,22 @@ not close. `OPAD_MESHSOLID_DEBUG=1` traces why a profile or attempt was refused.
 
 A scan's "faces" are triangles, so planes and axes on a mesh body are fitted: `{"fit": {body, seed | triangles | points |
 planes, tolerance, of}, "result": {...}}` in any plane or axis input (`Ctx::plane` / `Ctx::axis` -> `fitted_plane` /
-`fitted_axis`). The result is stored in body coordinates with the body key and a digest of `fit`: while both match it is
+`fitted_axis`). Align's `point_pairs` mode (`from_points[i]` onto `to_points[i]`, `InputSpec::pairs_with`) is
+`pairs::fit_pairs` (`core/src/point_pairs.cpp`: Kabsch through an SVD, refused under three pairs or on one line; with
+`drop_outlier` the worst pair by a deleted-residual F test, its leverage included, at 0.1%), residuals/`rms`/`dropped_pair`
+in the result; the app (DesignController "point pairs", `FeaturePairs.cpp` list, `Viewport::setPairMarkers`) alternates
+the sides, resolves the points on a worker (`point_positions`), previews three whole pairs only; show_if takes
+`a=x,b=y` (all hold). `ctest -R align`, bench align-pairs. Align `sequence` (3-2-1, `sequence_motion`): `primary_from/to`
+planes, then `secondary` line|plane, then `tertiary` point|plane, each solved with only the freedoms left (the turn about
+the primary normal and in-plane slides, then one slide); a step not given is skipped; result `free` (slides/turns left,
+`DesignController::freedomText` in the panel's `setResultNote`), bench align-321. Creases (`scanfit::crease_line`, fit
+`of: "crease"` with `seed` + `side` = the mesh side 3 t + k): the flat grown from the seed, the second flat's seed the
+nearest triangle turning away by 2x tolerance whose own and averaged normals agree (near a crease the averaged normals
+blend), both fitted and met, `length` along the rim they share; an axis input fits the hovered side's crease on a worker
+(`creaseHover`, `Viewport::setGuideLine`) and a click on that side takes it fitted; a box of sides = `{"of": "line",
+"sides"}`; bench align-crease. Align's plane inputs are never activated by `activateNextPick` (`FeaturePanel::nextPlane`:
+the box says to click it, a line under it which side); the picker is titled for the input; Fit to points says what each
+click did. Bench align-steps. The result is stored in body coordinates with the body key and a digest of `fit`: while both match it is
 used as is (a moved body carries it), else fitted again; `complete_feature_fits` in the Walk writes results into new ops
 and edits, as automatic targets are (replay never fits). Fits are robust: least median of squares over sampled hypotheses,
 then least squares on the 3-sigma inliers; a region grows from its seed by normals (averaged over 6 rings on noisy meshes,
@@ -704,7 +739,10 @@ Concrete consequences already in place; keep them that way:
 - A mesh body's Face, Edge and Vertex filters pick through `BodyPrs::meshGroups` (BodyShape.cpp `MeshPickSet`: one BVH
   over the triangulations as stored, built on the mesh worker; `GroupSensitive` asks it, owners made as picked by
   `groupOwner`, ordinals as `opad::subshape` counts them), never a sensitive and owner per triangle, side or node: a
-  3.3M-triangle scan's Edge filter (the Move panel's Axis box) took 217 s on the UI thread, its Vertex filter 118 s.
+  3.3M-triangle scan's Edge filter (the Move panel's Axis box) took 217 s on the UI thread, its Vertex filter 118 s. A point
+  pick takes the corners/sides of the triangle the ray itself meets (`rayHitsTriangle`), never the volume's own overlap test:
+  that one has the 12-device-pixel tolerance, so a nearer triangle off the pointer won and fine scans' clicks found nothing
+  at one display scale (benches pick points checked with `Viewport::referenceAt`).
   `mesh_circles` (rims) welds by hash and sorts the sides (16 s -> 4 s on that scan). Bench `heavy-mesh`
   (OPAD_BENCH_HEAVYMESH, tools/bench_cases/heavy_mesh.py: a generated 1.2M-triangle tube); `BodyPrs::log` traces a big
   body's build phases.
@@ -914,7 +952,7 @@ requests elsewhere (bench `updates`; `ctest -R update-check` runs a fake GitHub 
 plugin: the static build imports `Qt6::QSchannelBackendPlugin`, the portable stage copies `tls/qschannelbackend.dll`.
 Assets carry their release's tag without the v (`OPAD-0.11.0-windows-x64-setup.exe`, `-rc.N`, `-dev.N`: the Collect
 step's LABEL, which is also the tag); the update check takes `OPAD-*-<installerAssetName's system part>`; version-free
-copies of the four installers stay for copies before 0.11.0. The README links to the latest release's page. The
+copies of the four installers stay on releases (not pre-releases) for copies before 0.11.0. The README links to the latest release's page. The
 installer moves a running opad-cli.exe aside (`opad-cli.exe.<n>.old`, `PrepareToInstall`) instead of asking to close it:
 every open AI session (Claude Code, Desktop, Codex) runs its own `opad-cli mcp` for as long as it is open. OPAD's start
 removes the free ones (`appdata::removeMovedAside`). Release notes list the solver packs (`tools/solver_packs_notes.sh`).

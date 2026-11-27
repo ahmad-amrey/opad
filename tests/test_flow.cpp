@@ -9,6 +9,7 @@
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
@@ -140,7 +141,7 @@ Fitting fitting(double half_angle, bool wall = true, double blend = 0, double sl
 
 // References to faces of a body that need not exist (the settings alone are read).
 const std::string kA0 = "0f0e0d0c-0b0a-4908-8706-050403020100/face/0", kA1 = "0f0e0d0c-0b0a-4908-8706-050403020100/face/1",
-                  kE0 = "0f0e0d0c-0b0a-4908-8706-050403020100/edge/0";
+                  kV0 = "0f0e0d0c-0b0a-4908-8706-050403020100/vertex/0";
 
 json cfm(double v) { return {{"value", v}, {"unit", "cfm"}}; }
 
@@ -237,7 +238,7 @@ TEST(flow_settings_refused) {
   ok &= says(with({{"flow", cfm(1)}, {"velocity", 3}}), "unknown setting \"velocity\"");                // unknown key
   ok &= says(with({{"flow", cfm(1)}, {"speed", 3}}), "speed is for a part in a stream");                   // around's
   ok &= says({{"inlet", kA0}, {"outlet", kA0}, {"flow", cfm(1)}}, "the same face");  // the same face
-  ok &= says({{"inlet", kE0}, {"outlet", kA1}, {"flow", cfm(1)}}, "not an edge");  // not a face
+  ok &= says({{"inlet", kV0}, {"outlet", kA1}, {"flow", cfm(1)}}, "not a vertex");  // neither a loop of edges nor a face
   ok &= says(with({{"fan", {{"curve", {{0, 100}, {0, 50}}}}}}), "larger flow than the one before");       // flow not rising along the curve
   ok &= says(with({{"fan", {{"free_flow", 100}}}}), "fan is {curve");                    // no shut-off pressure
   ok &= says(with({{"fan", {{"free_flow", 100}, {"shutoff_pressure", 50}, {"pressure_unit", "bar"}}}}), "not \"bar\"");
@@ -400,18 +401,93 @@ TEST(flow_round_fitting_is_a_wedge) {
   CHECK_EQ(sim::plan_flow(f.doc, sc, sim::flow_settings({{"inlet", f.big}, {"outlet", f.small}, {"flow", cfm(350)}, {"mesh", "3d"}})).mesh, std::string("3d"));
 }
 
-TEST(flow_sudden_step_is_3d) {
-  // An 8" bore stepping straight down to 6" (a 90 degree cone): no wedge of single blocks holds it.
+// Counts of a blockMeshDict: its blocks, and the faces listed in one of its patches.
+size_t hexes_in(const std::string& bm) {
+  size_t n = 0;
+  for (size_t at = bm.find("hex ("); at != std::string::npos; at = bm.find("hex (", at + 1)) ++n;
+  return n;
+}
+size_t patch_faces(const std::string& bm, const std::string& patch) {
+  const size_t at = bm.find("  " + patch + " { type");
+  if (at == std::string::npos) return 0;
+  const size_t end = bm.find("); }", at);
+  size_t n = 0;
+  for (size_t i = bm.find("\n      (", at); i != std::string::npos && i < end; i = bm.find("\n      (", i + 1)) ++n;
+  return n;
+}
+std::string block_mesh_of(Fitting& f, const sim::FlowSettings& s, const std::filesystem::path& dir) {
+  const Scene sc = resolve(f.doc);
+  sim::write_flow_case(f.doc, sc, s, sim::plan_flow(f.doc, sc, s), dir);
+  return text(dir / "system" / "blockMeshDict");
+}
+
+// An adapter's bore: an 8" sleeve 34 mm deep stepping in to a 196 mm bore (where the duct it slides over stops), a 12
+// degree cone down to the 6" spigot, the spigot 50 mm. (r, z)
+std::vector<std::array<double, 2>> adapter_bore() {
+  const double r1 = 4 * kIn, r2 = 98, r3 = 3 * kIn, cone = (r2 - r3) / std::tan(12 * kPi / 180);
+  return {{r1, 0}, {r1, 34}, {r2, 34}, {r2, 60}, {r3, 60 + cone}, {r3, 110 + cone}};
+}
+Fitting fitting_of(const std::vector<std::array<double, 2>>& b) {
+  Fitting f;
+  f.length = b.back()[1];
+  f.body = add_shape(f.doc, fitting_wall(b), "Fitting");
+  f.big = end_face(f.doc, f.body, 0);
+  f.small = end_face(f.doc, f.body, f.length);
+  return f;
+}
+
+// A sudden step in a round part is still round: a wedge whose blocks step with it (the bands above the step's lower radius end
+// on its face, a wall; the ones below run on through it).
+TEST(flow_sudden_step_is_a_wedge) {
+  // An 8" bore stepping straight down to 6".
   Fitting f = fitting(89.99);
   const auto s = sim::flow_settings({{"inlet", f.big}, {"outlet", f.small}, {"flow", cfm(350)}});
   const auto p = sim::plan_flow(f.doc, resolve(f.doc), s);
-  CHECK_EQ(p.mesh, std::string("3d"));
-  CHECK(p.why_3d.find("sudden step") != std::string::npos);
-  std::printf("  %s\n", p.why_3d.c_str());
-  const size_t along = p.why_3d.rfind(") ");
-  CHECK(along != std::string::npos);
-  CHECK_NEAR(std::atof(p.why_3d.c_str() + along + 2), 60, 0.5);  // where the step is
-  // A gentle cone keeps the plain schemes.
+  CHECK_EQ(p.mesh, std::string("axisymmetric"));
+  CHECK(p.why_3d.empty());
+  CHECK_EQ(p.steps.size(), size_t(1));
+  CHECK(p.step_deg > 85);
+  CHECK(p.steepest_deg < 1);  // the straight runs either side; the step itself is no skewed block
+  CHECK_NEAR(p.profile[p.steps[0]][0], 60, 0.3);  // where the step is
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-test-flow-" + new_uuid().substr(0, 8));
+  const std::string bm = block_mesh_of(f, s, dir / "step");
+  // The 8" side in two bands (to 6" and above it), the 6" side in one: the stub and the sleeve two blocks each, the spigot and
+  // its stub one each; the step's face (the 8" side's upper band) is wall, beside the four along the walls.
+  CHECK_EQ(hexes_in(bm), size_t(6));
+  CHECK_EQ(patch_faces(bm, "wall"), size_t(5));
+  CHECK_EQ(patch_faces(bm, "inlet"), size_t(2));
+  CHECK_EQ(patch_faces(bm, "outlet"), size_t(1));
+  CHECK_EQ(patch_faces(bm, "front"), size_t(6));
+  CHECK(p.cells > 3000 && p.cells < 60000);
+  // An adapter: a sleeve, a step in, a cone, the spigot; either way round.
+  Fitting a = fitting_of(adapter_bore());
+  for (bool contraction : {true, false}) {
+    const auto sa = sim::flow_settings({{"inlet", contraction ? a.big : a.small}, {"outlet", contraction ? a.small : a.big}, {"flow", cfm(350)}});
+    const auto pa = sim::plan_flow(a.doc, resolve(a.doc), sa);
+    CHECK_EQ(pa.mesh, std::string("axisymmetric"));
+    CHECK_EQ(pa.steps.size(), size_t(1));
+    CHECK_NEAR(pa.steepest_deg, 12, 0.5);
+    const std::string bma = block_mesh_of(a, sa, dir / (contraction ? "in" : "out"));
+    // The sleeve and its stub in two bands, the rest in one: six along the walls and the step's face.
+    CHECK_EQ(hexes_in(bma), size_t(8));
+    CHECK_EQ(patch_faces(bma, "wall"), size_t(7));
+  }
+  // An orifice plate 3 mm thick: two steps, the hole's bore between them.
+  Fitting o = fitting_of({{4 * kIn, 0}, {4 * kIn, 100}, {2.5 * kIn, 100}, {2.5 * kIn, 103}, {4 * kIn, 103}, {4 * kIn, 200}});
+  const auto so = sim::flow_settings({{"inlet", o.big}, {"outlet", o.small}, {"flow", cfm(350)}});
+  const auto po = sim::plan_flow(o.doc, resolve(o.doc), so);
+  CHECK_EQ(po.mesh, std::string("axisymmetric"));
+  CHECK_EQ(po.steps.size(), size_t(2));
+  const std::string bmo = block_mesh_of(o, so, dir / "orifice");
+  // Two bands either side of the plate (two blocks along each side), one through its hole; five along the walls, the plate's faces.
+  CHECK_EQ(hexes_in(bmo), size_t(9));
+  CHECK_EQ(patch_faces(bmo, "wall"), size_t(7));
+  std::error_code ec;
+  if (!std::getenv("OPAD_KEEP_CFD")) std::filesystem::remove_all(dir, ec);
+  else std::printf("  case files in %s\n", path_to_utf8(dir).c_str());
+}
+
+TEST(flow_gentle_cone_keeps_plain_schemes) {
   Fitting g = fitting(12);
   const auto q = sim::flow_settings({{"inlet", g.big}, {"outlet", g.small}, {"flow", cfm(350)}});
   CHECK_NEAR(sim::plan_flow(g.doc, resolve(g.doc), q).steepest_deg, 12, 0.3);
@@ -488,6 +564,112 @@ TEST(flow_openings_refused) {
   CHECK(plan_says(f.doc, sc2, {{"inlet", f.big}, {"outlet", end_face(f.doc, disc, f.length)}, {"flow", cfm(1)}}, "pick both ends the same way"));
 }
 
+// The circular edge at height z of radius r (a fitting's rim, its bore's end).
+Ref circle_at(const Document& doc, const std::string& body, double z, double r) {
+  const Scene sc = resolve(doc);
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(node_world_shape(doc, sc, body), TopAbs_EDGE, edges);
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    BRepAdaptor_Curve c(TopoDS::Edge(edges(i)));
+    if (c.GetType() != GeomAbs_Circle) continue;
+    if (std::fabs(c.Circle().Location().Z() - z) < 1e-6 && std::fabs(c.Circle().Radius() - r) < 1e-6) {
+      Ref ref;
+      ref.body = body, ref.kind = Ref::Kind::Edge, ref.index = i - 1;
+      return ref;
+    }
+  }
+  throw Error("no circle at z " + std::to_string(z) + " of radius " + std::to_string(r));
+}
+json refs_json(const std::vector<Ref>& refs) {
+  json out = json::array();
+  for (const auto& r : refs) out.push_back(r.to_json());
+  return out;
+}
+
+// An opening picked as the loop of edges round it: the same plan as its rim face; a click on one edge takes the whole loop;
+// OPAD proposes the bores' loops (in past a chamfer) of the bodies it is given only.
+TEST(flow_edge_loop_openings) {
+  Fitting f = fitting(35);
+  const Scene sc = resolve(f.doc);
+  const Ref big = circle_at(f.doc, f.body, 0, 4 * kIn), small = circle_at(f.doc, f.body, f.length, 3 * kIn);
+  const auto by_face = sim::plan_flow(f.doc, sc, sim::flow_settings({{"inlet", f.big}, {"outlet", f.small}, {"flow", cfm(350)}}));
+  const auto by_loop = sim::plan_flow(f.doc, sc, sim::flow_settings({{"inlet", json::array({big.to_json()})}, {"outlet", json::array({small.to_json()})}, {"flow", cfm(350)}}));
+  CHECK_EQ(by_loop.mesh, std::string("axisymmetric"));
+  CHECK_EQ(by_loop.mode, std::string("wall"));
+  CHECK_NEAR(by_loop.axis[2], 1, 1e-9);  // the inlet's way out of the fluid found from the outlet: away from it
+  CHECK_NEAR(by_loop.inlet.normal[2], -1, 1e-9);
+  CHECK_NEAR(by_loop.outlet.normal[2], 1, 1e-9);
+  CHECK_NEAR(by_loop.inlet.area_mm2, by_face.inlet.area_mm2, 1e-3);
+  CHECK_NEAR(by_loop.outlet.diameter_mm, by_face.outlet.diameter_mm, 1e-6);
+  CHECK_EQ(by_loop.profile.size(), by_face.profile.size());
+  CHECK_NEAR(by_loop.cells, double(by_face.cells), 1.0);
+  CHECK(by_loop.inlet.outline.size() >= 24);
+  // The other way round: the arrows' way follows which loop is the inlet.
+  const auto back = sim::plan_flow(f.doc, sc, sim::flow_settings({{"inlet", json::array({small.to_json()})}, {"outlet", json::array({big.to_json()})}, {"flow", cfm(350)}}));
+  CHECK_NEAR(back.axis[2], -1, 1e-9);
+  // A click on the rim's inner edge: that circle is the loop (the hole of the rim face).
+  const auto loop = sim::opening_loop(f.doc, sc, big);
+  CHECK_EQ(loop.size(), size_t(1));
+  CHECK_EQ(loop[0].index, big.index);
+  // A rectangular duct: one edge of its bore's end takes the four.
+  Document doc = Document::create();
+  const TopoDS_Shape outer = BRepPrimAPI_MakeBox(gp_Pnt(-30, -20, 0), 60, 40, 100).Shape();
+  const TopoDS_Shape hole = BRepPrimAPI_MakeBox(gp_Pnt(-27, -17, -1), 54, 34, 102).Shape();
+  const std::string duct = add_shape(doc, BRepAlgoAPI_Cut(outer, hole).Shape(), "Duct");
+  const Scene ds = resolve(doc);
+  Ref one;
+  {
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(node_world_shape(doc, ds, duct), TopAbs_EDGE, edges);
+    for (int i = 1; i <= edges.Extent() && one.body.empty(); ++i) {
+      BRepAdaptor_Curve c(TopoDS::Edge(edges(i)));
+      const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+      if (std::fabs(a.Z()) < 1e-9 && std::fabs(b.Z()) < 1e-9 && std::fabs(std::fabs(a.X()) - 27) < 1e-9 && std::fabs(a.X() - b.X()) < 1e-9)
+        one.body = duct, one.kind = Ref::Kind::Edge, one.index = i - 1;
+    }
+  }
+  CHECK(!one.body.empty());
+  const auto rect = sim::opening_loop(doc, ds, one);
+  CHECK_EQ(rect.size(), size_t(4));
+  const auto proposed_duct = sim::propose_openings(doc, ds, {duct});
+  CHECK_EQ(proposed_duct.size(), size_t(2));
+  const auto pd = sim::plan_flow(doc, ds, sim::flow_settings({{"inlet", refs_json(rect)}, {"outlet", proposed_duct[0]["edges"]}, {"flow", {{"value", 50}, {"unit", "m3/h"}}}}));
+  CHECK_NEAR(pd.inlet.area_mm2, 54 * 34, 0.5);
+  CHECK_NEAR(pd.length_mm, 100, 1e-6);
+  CHECK_EQ(pd.mesh, std::string("3d"));
+  // Refused, saying why: half a loop; edges of two loops; a loop that is not flat-closed.
+  CHECK(plan_says(doc, ds, {{"inlet", json::array({rect[0].to_json(), rect[1].to_json()})}, {"outlet", proposed_duct[0]["edges"]}, {"flow", cfm(10)}}, "do not close"));
+  CHECK(plan_says(f.doc, sc, {{"inlet", json::array({big.to_json(), small.to_json()})}, {"outlet", f.small}, {"flow", cfm(10)}}, "not one loop"));
+  CHECK(says({{"inlet", json::array({big.to_json(), f.big})}, {"outlet", f.small}, {"flow", cfm(10)}}, "one face, or the edges of one loop"));
+  CHECK(says({{"inlet", big.to_json()}, {"outlet", big.to_json()}, {"flow", cfm(10)}}, "the same loop"));
+  // Proposed: the bores of a fitting whose 8" end has a 1 mm chamfer inside its rim (the loop past it), the wider first.
+  auto b = bore(12, 60);
+  b.front() = {4 * kIn + 1, 0};
+  b.insert(b.begin() + 1, {4 * kIn, 1});
+  Fitting c = fitting_of(b);
+  const Scene cs = resolve(c.doc);
+  const json ends = sim::propose_openings(c.doc, cs, {c.body});
+  CHECK_EQ(ends.size(), size_t(2));
+  CHECK_NEAR(ends[0]["size"].get<double>(), 8 * kIn, 0.01);  // the bore, not the rim's hole (2 mm wider)
+  CHECK_NEAR(ends[0]["centre"][2].get<double>(), 1, 1e-6);
+  CHECK_NEAR(ends[1]["size"].get<double>(), 6 * kIn, 0.01);
+  const auto pc = sim::plan_flow(c.doc, cs, sim::flow_settings({{"inlet", ends[0]["edges"]}, {"outlet", ends[1]["edges"]}, {"flow", cfm(350)}}));
+  CHECK_EQ(pc.mesh, std::string("axisymmetric"));
+  CHECK_NEAR(pc.inlet.radius_mm, 4 * kIn, 1e-3);
+  // Only the bodies asked about: another (hidden or not) is never proposed from.
+  const std::string other = add_shape(c.doc, fitting_wall(bore(35, 200)), "Other");
+  const json mine = sim::propose_openings(c.doc, resolve(c.doc), {c.body});
+  CHECK(mine.size() == 2 && mine[0]["body"] == c.body && mine[1]["body"] == c.body);
+  CHECK(sim::propose_openings(c.doc, resolve(c.doc), {other}).size() == 2);
+  // A body that is the fluid: its end disc's boundary is the end itself (mode volume).
+  Fitting v = fitting(12, false);
+  const Scene vs = resolve(v.doc);
+  const auto pv = sim::plan_flow(v.doc, vs, sim::flow_settings({{"inlet", json::array({circle_at(v.doc, v.body, 0, 4 * kIn).to_json()})},
+                                                                 {"outlet", json::array({circle_at(v.doc, v.body, v.length, 3 * kIn).to_json()})}, {"flow", cfm(350)}}));
+  CHECK_EQ(pv.mode, std::string("volume"));
+  CHECK_EQ(pv.mesh, std::string("axisymmetric"));
+}
+
 TEST(flow_case_written) {
   Fitting f = fitting(35);
   const Scene sc = resolve(f.doc);
@@ -498,12 +680,10 @@ TEST(flow_case_written) {
     sim::write_flow_case(f.doc, sc, s, p, dir / "wedge");
     const std::string bm = text(dir / "wedge" / "system" / "blockMeshDict");
     CHECK(bm.find("type wedge") != std::string::npos);
-    CHECK(bm.find("inlet { type patch; faces ((0 0 2 1)); }") != std::string::npos);
+    CHECK(bm.find("inlet { type patch; faces (\n      (0 0 3 2)\n") != std::string::npos);  // a triangle at the axis
     // One block per stretch of the profile and each stub; three vertices per station (the axis, both sides of the wedge).
-    const size_t blocks = p.profile.size() + 1;
-    size_t hexes = 0;
-    for (size_t at = bm.find("hex ("); at != std::string::npos; at = bm.find("hex (", at + 1)) ++hexes;
-    CHECK_EQ(hexes, blocks);
+    CHECK_EQ(hexes_in(bm), p.profile.size() + 1);
+    CHECK_EQ(patch_faces(bm, "wall"), p.profile.size() + 1);
     // The wedge carries 5/360 of the flow.
     const std::string U = text(dir / "wedge" / "0" / "U");
     CHECK(U.find("flowRateInletVelocity") != std::string::npos);
@@ -552,6 +732,10 @@ TEST(flow_case_written) {
 // ---------------------------------------------------------------- the solves (ctest flow-solve)
 namespace {
 bool solves() { return sim::openfoam().found() && std::getenv("OPAD_TEST_FLOW"); }
+// How near the whole part's pressure drop comes to the stepped wedge's (a share of it), flow_solve_step_wedge_vs_3d: as an
+// expansion (5.5 Pa) within 2 % (v2606); as a contraction the loss is a tenth of the stub's friction taken out of it
+// (1.2 Pa against 11), and the whole part's coarser cells along the walls give 15 to 25 % less.
+constexpr double kStepAgreementExpansion = 0.05, kStepAgreementContraction = 0.25;
 void show(const char* what, const sim::StudyRun& r) {
   const json& s = r.summary;
   std::printf("%s: dp %.2f Pa (faces %.2f, static %.2f), K %.3f, Q %.4f m3/s, vmax %.2f m/s, %zu recirculation, %s, %d cells, %d iterations%s, %.0f s\n", what,
@@ -602,6 +786,45 @@ TEST(flow_solve_cone_12_blended) {
   show("12 deg R60 expansion", out);
   CHECK(in.summary["pressure_drop_pa"].get<double>() < 8);
   CHECK(out.summary["pressure_drop_pa"].get<double>() < 14);
+}
+
+// Openings given as loops of edges solve the very case their rim faces do.
+TEST(flow_solve_edge_loops) {
+  if (!solves()) return;
+  Fitting f = fitting(35);
+  const json big = json::array({circle_at(f.doc, f.body, 0, 4 * kIn).to_json()}), small = json::array({circle_at(f.doc, f.body, f.length, 3 * kIn).to_json()});
+  const sim::StudyRun faces = flow(f, {{"inlet", f.big}, {"outlet", f.small}, {"flow", cfm(350)}});
+  const sim::StudyRun loops = flow(f, {{"inlet", big}, {"outlet", small}, {"flow", cfm(350)}});
+  show("35 deg contraction, openings by their faces", faces);
+  show("35 deg contraction, openings by their edges", loops);
+  CHECK_NEAR(loops.summary["pressure_drop_pa"].get<double>(), faces.summary["pressure_drop_pa"].get<double>(), 1e-6);
+  CHECK_EQ(loops.summary["cells"].get<int>(), faces.summary["cells"].get<int>());
+  CHECK(loops.summary["converged"].get<bool>());
+}
+
+// A round part with a step (an adapter's bore: a sleeve, a step in, a 12 degree cone, the spigot) as a wedge whose
+// blocks step with it, against the same part meshed whole: the wedge in seconds, the whole part in minutes, the same
+// pressure drop (OPAD_TEST_FLOW_3D).
+TEST(flow_solve_step_wedge_vs_3d) {
+  if (!solves()) return;
+  Fitting a = fitting_of(adapter_bore());
+  for (bool expansion : {false, true}) {
+    const json ends = {{"inlet", expansion ? a.small : a.big}, {"outlet", expansion ? a.big : a.small}, {"flow", cfm(350)}};
+    json wedge = ends, whole = ends;
+    whole["mesh"] = "3d";
+    const sim::StudyRun w = flow(a, wedge);
+    const double ws = g_seconds;
+    show(expansion ? "adapter expansion, wedge" : "adapter contraction, wedge", w);
+    CHECK_EQ(w.summary["mesh"].get<std::string>(), std::string("axisymmetric"));
+    CHECK(w.summary["converged"].get<bool>());
+    CHECK(ws < 180);
+    if (!std::getenv("OPAD_TEST_FLOW_3D")) continue;
+    const sim::StudyRun d = flow(a, whole);
+    show(expansion ? "adapter expansion, 3d" : "adapter contraction, 3d", d);
+    const double dw = w.summary["pressure_drop_pa"].get<double>(), dd = d.summary["pressure_drop_pa"].get<double>();
+    std::printf("  wedge %.3f Pa, 3d %.3f Pa: %.1f %%\n", dw, dd, 100 * (dd - dw) / dw);
+    CHECK_NEAR(dd, dw, (expansion ? kStepAgreementExpansion : kStepAgreementContraction) * std::fabs(dw));
+  }
 }
 
 // The same fitting as the full part (snappyHexMesh): within a third of the wedge's answer.

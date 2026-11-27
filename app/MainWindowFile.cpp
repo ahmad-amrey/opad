@@ -38,7 +38,7 @@ void MainWindow::buildFileActions() {
     QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(),
                                              tr("Design files (%1);;OPAD document (*.opad);;CAD models (*.step *.stp *.iges *.igs *.x_t *.x_b *.brep *.brp);;"
                                                 "Meshes (*.stl *.3mf *.obj *.ply *.gltf *.glb *.wrl *.vrml);;2D drawings (*.dxf *.dwg *.svg)").arg(fileFilter(true)) +
-                                                ";;" + tr("Point clouds (*.ply *.xyz *.pts *.csv *.e57 *.las)") + ";;" + tr("KiCad boards (*.kicad_pcb)"));
+                                                ";;" + tr("Point clouds (*.ply *.xyz *.asc *.pts *.csv *.e57 *.las)") + ";;" + tr("KiCad boards (*.kicad_pcb)"));
     if (!p.isEmpty()) openPath(p);
   });
   addAction("file.import", tr("&Import…"), "import", QKeySequence("Ctrl+I"), [this] {

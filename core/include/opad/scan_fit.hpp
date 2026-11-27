@@ -59,6 +59,7 @@ struct Line {
   gp_Pnt origin;  // a cylinder: on the axis, in the middle of the inliers along it
   gp_Dir dir;
   double radius = 0;  // a cylinder's
+  double length = 0;  // a crease's: how far it runs along the two flats' rim, the origin in its middle
   Quality q;
 };
 
@@ -87,6 +88,13 @@ Line fit_cylinder_region(const FitMesh& m, const std::vector<int>& triangles);
 Line wall_direction(const FitMesh& m, const std::vector<int>& triangles);
 // Where two planes meet; throws when they are within `min_angle` of parallel.
 Line plane_intersection(const Plane& a, const Plane& b, double min_angle_rad = 5 * 3.14159265358979323846 / 180);
+// A scan's crease (the edge where two flats meet) near side `side` (0..2: nodes side and side + 1) of triangle `seed`: the
+// flat grown from the seed, the flat beyond its rim nearest that side (across the side itself when it is off the first
+// flat), each fitted, and their intersection along the stretch of rim they share (`length`, the origin in its middle).
+// Far more accurate than the ragged mesh sides along it. Throws when no second flat meets the first near there.
+Line crease_line(const FitMesh& m, int seed, int side, double angle_rad);
+// The line through mesh sides (3 t + k, as picked): a box or brush over a run of them, fitted robustly through their nodes.
+Line sides_line(const FitMesh& m, const std::vector<int>& sides);
 
 // ---------------------------------------------------------------- lining a scan up with the axes
 // A flat a scan can stand on: its normal points away from the material (the body lies on its back side).

@@ -20,6 +20,7 @@ are added to the case's.
 import argparse
 import importlib.util
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -143,6 +144,12 @@ def main():
                 continue
             log = output / f"{name}.log"
             log.write_text("", encoding="utf-8")
+            if doc in fixtures.values() and Path(doc).suffix == ".opad":
+                # A case of its own copy: some benches save (design), and the next case must open the fixture as made.
+                own = root / "cases" / name / Path(doc).name
+                own.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(doc, own)
+                doc = own
             env = {key: value for key, value in os.environ.items() if not key.startswith("OPAD_BENCH_")}
             env.update(OPAD_LANG="en", OPAD_BENCH_SETTINGS=str(root / f"{name}-settings"), OPAD_TRACE=str(log))
             env.update({key: value.format(prefix=output / name, root=root, cli=cli) for key, value in switches.items()})

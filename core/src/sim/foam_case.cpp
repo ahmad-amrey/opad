@@ -282,7 +282,7 @@ std::vector<Patch> read_boundary(const std::string& t) {
 }
 
 std::string run(const OpenFoam& foam, const std::string& app, const std::vector<std::string>& args, const fs::path& where, double at, double to,
-                int timeout_ms, const Progress& progress) {
+                int timeout_ms, const Progress& progress, const std::function<bool()>& settled) {
   if (progress && !progress(at, "OpenFOAM: " + app)) throw Error("cancelled");
   if (!foam.project.empty()) {
 #ifdef _WIN32
@@ -308,8 +308,29 @@ std::string run(const OpenFoam& foam, const std::string& app, const std::vector<
   auto read_at = std::chrono::steady_clock::now();
   double first_time = -1;
   bool stopped = false;
+  // Settled (the caller's judgement, asked every 2 s): the solver is told to write now and stop (its controlDict re-read
+  // between iterations: runTimeModifiable), and is ended if it has not within two minutes.
+  auto asked_at = std::chrono::steady_clock::now();
+  bool told = false, ended = false;
   ro.cancelled = [&] {
     const auto now = std::chrono::steady_clock::now();
+    if (settled && !told && now - asked_at > std::chrono::seconds(2)) {
+      asked_at = now;
+      if (settled()) {
+        told = true;
+        try {
+          const fs::path control = where / "system" / "controlDict";
+          std::string text = read_text_file(control);
+          if (const size_t i = text.find("stopAt endTime;"); i != std::string::npos) {
+            text.replace(i, 15, "stopAt writeNow;");
+            write_text_file(control, text);
+          }
+        } catch (...) {
+        }
+      }
+    }
+    if (told && !ended && now - asked_at > std::chrono::seconds(120)) ended = true;
+    if (ended) return true;
     if (to > at && now - read_at > std::chrono::seconds(1)) {
       read_at = now;
       std::string tail;
@@ -351,6 +372,7 @@ std::string run(const OpenFoam& foam, const std::string& app, const std::vector<
   a.push_back(where);
   const int status = detail::run_program(program, a, where, ro);
   if (stopped) throw Error("cancelled");
+  if (ended) return read_text_file(ro.output);  // ended once settled: its last complete write stands
   std::string log;
   try {
     log = read_text_file(ro.output);

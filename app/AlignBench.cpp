@@ -148,7 +148,9 @@ OPAD_BENCH(OPAD_BENCH_ALIGN, align) {
           return;
         }
         design->startSketchAlign(st->sketch);
-        require(form->activeInput() == "to_plane", "Align sketch waits for To (From is the sketch's plane): " + form->activeInput());
+        // To is the next step, shown in the panel; no picker opens by itself (it surprised): the To box opens it.
+        require(form->nextPlane() == "to_plane" && !design->planePicker()->active(), "Align sketch marks To as the next step (From is the sketch's plane): " + form->nextPlane());
+        form->activate("to_plane");
         st->clock.start();
         st->phase = 4;
         return;

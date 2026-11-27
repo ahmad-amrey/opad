@@ -1,6 +1,7 @@
 """gui_benches cases of point clouds (app/CloudBench.cpp): a scan-sized cloud of 20 million points, linked as a scan is,
 drawn, picked as a body and as a point, zoomed into (its visible part at full density), a box of its points selected,
-sliced and the slice turned into a sketch, with no UI stall over 250 ms. The cloud is made here: a wavy tube 80 mm across
+sliced and the slice turned into a sketch, with no UI stall over 250 ms; and Edit point cloud on it (app/CloudEditBench.cpp:
+brushes dragged, points added and deleted, undo and redo, Finish). The cloud is made here: a wavy tube 80 mm across
 and 120 mm tall, 5000 points round by 4000 rings, as a binary PLY of positions (240 MB)."""
 import array
 import math
@@ -35,6 +36,18 @@ def big_cloud(root, document):
     return document("big-cloud", ("import", "--file", str(ply), "--link", "true"))
 
 
+def big_cloud_embedded(root, document):
+    """The tube cloud imported into the document (a linked file's parts are read-only: Edit point cloud needs it embedded)."""
+    path = root / "big-cloud-embedded.opad"
+    if path.exists():
+        return path
+    ply = root / "big-cloud.ply"
+    if not ply.exists():
+        tube_ply(ply)
+    return document("big-cloud-embedded", ("import", "--file", str(ply)))
+
+
 CASES = [
     ("cloud-20m", big_cloud, {"OPAD_BENCH_CLOUD": "{prefix}"}),
+    ("cloud-edit-20m", big_cloud_embedded, {"OPAD_BENCH_CLOUDEDIT": "{prefix}"}),
 ]

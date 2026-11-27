@@ -27,9 +27,21 @@ including a new airflow check for ducts and fittings.
   where two planes meet. **Align scan to axes** stands a scan on XY in one step, its base flat down, a wall along X
   and centred, with *Next base*, *Next X* and *Flip* for the other ways it could stand. AI assistants get the same fits
   (`fit_reference`, `scan_axes`).
+- **Put a scan on its CAD by matching points.** Align has a new *Point pairs* way: click a point on the scan, then the
+  same point on the CAD body (or on another body, or a sketch's point), and so on in turn. From three pairs on, OPAD
+  finds the move that lines them all up best, shows it at once, and lists how far each pair is still apart. A pair
+  picked by mistake, far off the others, is left out and named; Esc takes back the last pick and Remove drops a pair.
+  It works with meshes, point clouds and solids alike, and AI assistants use it through Align (`from: point_pairs`).
+- **Align a scan step by step (3-2-1).** Align's new *3-2-1 steps* way lines a part up the way reverse engineering does:
+  a primary plane onto a plane, then a secondary line or plane, then a tertiary point or plane, each step keeping what
+  the earlier ones fixed, while the panel says what is still free ("Free: slide along X"). On a scan, rest the pointer
+  near an edge and OPAD offers the crease where its two flats meet, drawn along its whole length and far more accurate
+  than the ragged mesh edges; a box over a run of edges gives the line through them. Align no longer opens the plane
+  picker by itself: the panel shows which plane (From or To) comes next and opens the picker when you click it, and
+  *Fit to points* explains itself and says what each click did (a vertex added, one taken back, or nothing under it).
 - **Point clouds: work with the raw scan.** A scanning app's mesh rounds edges, fills small holes and smooths detail
   away; the measured points keep it. OPAD now opens and imports point clouds as bodies of their own: PLY files without
-  faces (they used to be refused), XYZ, PTS, CSV, E57 and LAS, with their colours, normals and intensity, in the right
+  faces (they used to be refused), XYZ, ASC (RealityScan, CloudCompare), PTS, CSV, E57 and LAS, with their colours, normals and intensity, in the right
   units and the right way up. Clouds of tens of millions of points stay smooth to turn and zoom: the overview is drawn
   from a sample and the part you zoom into at full density. The new *Design > Scan* tab estimates normals, removes
   stray points, thins a cloud evenly, selects points with a lasso, a box or a brush to keep or delete them, and slices
@@ -37,6 +49,14 @@ including a new airflow check for ducts and fittings.
   fit with arcs and dimensions, slice by slice. Points can be coloured by the scan's colours, their normals or their
   intensity, and clouds export as PLY, XYZ, PTS, CSV or E57. AI assistants read clouds, query regions and slice them
   too (`cloud`, `cloud_sketch`). LAZ files need converting to LAS or E57 first.
+- **Edit a point cloud by hand, as you would sculpt it.** Select a scan and choose *Edit point cloud* (or double-click
+  it): its own *Edit points* tab opens with round brushes you drag over the points. *Push/Pull* pulls them out of the
+  surface or pushes them in (Ctrl or Alt turns it round), *Smooth* settles scanner noise onto the surface, the *Delete*
+  brush wipes stray points, and *Add points* fills a hole the scanner left with points on the surface around it. When
+  the scanner bridged a hole that should be open, paint over the bridge (or box it, lasso it, or let *Grow region*
+  spread over that one surface from a click), check the highlight and press Delete. Undo goes stroke by stroke while
+  you edit, Cancel drops everything, and Finish keeps it all as one step in the timeline (only the changes are
+  stored), ready for Deviation, slices and modelling. Double-click that step to edit it again.
 - **Simulate asks what you want to find out.** The Simulate tabs are now goals (Air and fluids, Heat, Strength,
   Movement), and the start page shows each check as a plain question with a small picture of the case: "How much
   pressure does a fitting lose?", "Will my electronics box overheat?", "Will it bend or break under a load?", "Will my 3D
@@ -46,7 +66,12 @@ including a new airflow check for ducts and fittings.
   The earlier tools are all still there under *Advanced*.
 - **Airflow through ducts and fittings.** A new airflow check (and `flow` study) works out the pressure a fitting loses
   at a given airflow, or the airflow a fan really delivers through it, shows the air speed, pressure and streamlines, and
-  marks where the air swirls. Round parts are solved as a thin slice, so a run takes a minute or so.
+  marks where the air swirls. You say where the air goes in and out by clicking an edge round each opening (OPAD
+  proposes the bores, past any chamfer at the rim), and an arrow through each opening shows the air's way: click it, or
+  *Flip the air's way*, to turn it round. Round parts are solved as a thin slice, steps and ledges included, so a run
+  takes well under a minute (an 8" to 6" duct adapter with a step: 13 seconds, where it took 12 minutes as a full 3D
+  part); other parts are solved whole in about 3 to 7 minutes. A run stops once the pressure drop has settled, and the
+  check says beforehand about how long it will take on your computer.
 - **Solvers installed from inside OPAD.** The airflow and strength checks need OpenFOAM and CalculiX; when one is
   missing, *Install* downloads it (about 45 MB for OpenFOAM, 13 MB for CalculiX) from OPAD's own releases, checks it
   and sets it up for you on Windows, Linux and macOS, with no admin rights and nothing else to install. A copy you

@@ -123,13 +123,13 @@ bool same_geometry(const TopoDS_Shape& a, const TopoDS_Shape& b) {
   return close(ca.X(), cb.X()) && close(ca.Y(), cb.Y()) && close(ca.Z(), cb.Z());
 }
 
-bool input_shown(const InputSpec& in, const json& inputs) {
-  if (in.show_if.empty()) return true;
-  const size_t eq = in.show_if.find('=');
-  const std::string key = in.show_if.substr(0, eq);
+// One "key=value[|value]" of a show_if.
+bool condition_holds(const std::string& cond, const json& inputs) {
+  const size_t eq = cond.find('=');
+  const std::string key = cond.substr(0, eq);
   std::string have;
   if (inputs.contains(key)) have = inputs[key].is_string() ? inputs[key].get<std::string>() : inputs[key].dump();
-  std::string values = in.show_if.substr(eq + 1);
+  std::string values = eq == std::string::npos ? std::string() : cond.substr(eq + 1);
   size_t start = 0;
   while (start <= values.size()) {
     const size_t bar = values.find('|', start);
@@ -138,6 +138,17 @@ bool input_shown(const InputSpec& in, const json& inputs) {
     start = bar + 1;
   }
   return false;
+}
+
+bool input_shown(const InputSpec& in, const json& inputs) {
+  if (in.show_if.empty()) return true;
+  size_t start = 0;  // "a=x,b=y|z": every condition holds
+  while (true) {
+    const size_t comma = in.show_if.find(',', start);
+    if (!condition_holds(in.show_if.substr(start, comma == std::string::npos ? std::string::npos : comma - start), inputs)) return false;
+    if (comma == std::string::npos) return true;
+    start = comma + 1;
+  }
 }
 
 Dim dim_of(const std::string& type) { return type == "length" ? Dim::Length : type == "angle" ? Dim::Angle : Dim::None; }

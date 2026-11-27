@@ -830,12 +830,15 @@ jobs:
             named="${f/-$VERSION-/-$LABEL-}"
             [ "$f" = "$named" ] || mv "$f" "$named"
           done
-          # Copies under the old names without the version, which copies before 0.11.0 download when they update (their
-          # update check asks for exactly these). Drop them once nobody runs a copy that old.
-          cp "dist/OPAD-$LABEL-windows-x64-setup.exe" dist/OPAD-windows-x64-setup.exe
-          cp "dist/OPAD-$LABEL-windows-x64.exe" dist/OPAD-windows-x64.exe
-          cp "dist/OPAD-$LABEL-macos.dmg" dist/OPAD-macos.dmg
-          cp "dist/OPAD-$LABEL-linux-amd64.deb" dist/OPAD-linux-amd64.deb
+          # A release also gets copies under the old names without the version, which copies before 0.11.0 download when
+          # they update (their update check asks for exactly these). Not pre-releases: those copies have no development
+          # channel, and later ones take the versioned names. Drop them once nobody runs a copy that old.
+          if [ "$LABEL" = "$VERSION" ]; then
+            cp "dist/OPAD-$LABEL-windows-x64-setup.exe" dist/OPAD-windows-x64-setup.exe
+            cp "dist/OPAD-$LABEL-windows-x64.exe" dist/OPAD-windows-x64.exe
+            cp "dist/OPAD-$LABEL-macos.dmg" dist/OPAD-macos.dmg
+            cp "dist/OPAD-$LABEL-linux-amd64.deb" dist/OPAD-linux-amd64.deb
+          fi
           for os in windows linux macos; do
             notice=$(find "artifacts/$os" -name THIRD-PARTY-NOTICES.txt | head -1)
             cp "$notice" "dist/THIRD-PARTY-NOTICES-$os.txt"

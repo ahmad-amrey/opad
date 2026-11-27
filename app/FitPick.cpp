@@ -81,6 +81,8 @@ QString title(const opad::json& v) {
   }
   if (of == "normal") return tr("Fitted normal");
   if (of == "wall") return tr("Wall direction");
+  if (of == "crease") return fitted(v) && v["result"].contains("length") ? tr("Crease, %1 long").arg(units::format(units::Kind::Length, v["result"].value("length", 0.0))) : tr("Crease");
+  if (of == "line" && fit.contains("sides")) return tr("Line along %1 sides").arg(int(fit["sides"].size()));
   if (of == "line") return fit.contains("points") ? tr("Line through %1 points").arg(int(fit["points"].size())) : tr("Fitted line");
   if (of == "intersection") return tr("Where two planes meet");
   if (of == "auto") return tr("Fitted axis");

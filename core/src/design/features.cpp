@@ -83,6 +83,7 @@
 #include "opad/geometry.hpp"
 #include "opad/kernel_guard.hpp"
 #include "opad/mesh_solid.hpp"
+#include "opad/point_pairs.hpp"
 #include "opad/scan_fit.hpp"
 
 namespace opad::design {
@@ -112,6 +113,12 @@ InputSpec pick(const char* name, const char* label, const char* type, int min_co
   InputSpec s = in(name, label, type, nullptr, show_if, min_count == 0);
   s.min_count = min_count;
   s.max_count = max_count;
+  return s;
+}
+
+// Points picked in turn with `other`, one each: pairs by position (Align's point pairs).
+InputSpec paired(InputSpec s, const char* other) {
+  s.pairs_with = other;
   return s;
 }
 
@@ -224,6 +231,11 @@ std::vector<FeatureSpec> build_specs() {
   add("cloud_crop", "Crop points", "cloud_crop", "modify",
       "Keep or delete a region of a cloud's points (a lasso, a brush or a box picked on it).",
       {in("region", "Region", "region"), choice("keep", "Keep", {"inside", "outside"})});
+  // Edit point cloud (opad/cloud_edit.hpp, the app's mode of that name): points moved by brushes, deleted and added by hand,
+  // stored compactly (moved ordinals with their offsets, deleted ranges, the new points) against the cloud as it was.
+  add("cloud_edit", "Edit point cloud", "cloud_edit", "modify",
+      "Sculpt a scan by hand: points pushed in or pulled out under a brush, smoothed onto their surface, deleted, and new ones added on the surface where the scan left a hole.",
+      {pick("bodies", "Point cloud", "bodies", 1, 1), in("edit", "Changes", "cloud_edit", json::object())});
   add("cloud_slice", "Slice points", "cloud_slice", "create",
       "The points within a band either side of a plane, laid onto it as a 2D profile to sketch over or turn into sketch geometry; several slices step along the plane's normal.",
       {pick("bodies", "Point cloud", "bodies", 1, 1), in("plane", "Plane", "plane", xy), in("offset", "Offset", "length", "0 mm"),
@@ -275,14 +287,33 @@ std::vector<FeatureSpec> build_specs() {
   // A point, line or plane of the bodies (From) onto another (To): moved, turned, or both, as one; placed as they are, like a
   // linked file's Move (align_motion). Faces put together face each other; Flip lays them flush. Sketches take the same
   // inputs through align_sketch_plane.
+  // Point pairs: points picked on the bodies (a scan) and the matching points on the target (its CAD body, another body, a
+  // sketch), in turn; the rigid move that lines them all up best (opad/point_pairs.hpp), one stray pair left out.
   add("align", "Align", "align", "body",
-      "Put a point, line or face of bodies or components onto another point, line or plane: a face on a face, an edge along an edge, a hole on an axis.",
-      {pick("bodies", "Bodies", "bodies", 1, 0), choice("from", "Align", {"plane", "line", "point"}), in("from_plane", "From face or plane", "plane", nullptr, "from=plane"),
+      "Put a point, line or face of bodies or components onto another point, line or plane: a face on a face, an edge along an edge, a hole on an axis. "
+      "Point pairs: points on the bodies and the matching points on the target, in turn (three pairs or more); the move that lines them all up best, a stray pair left out. "
+      "3-2-1 steps: a primary plane onto a plane, a secondary line or plane that keeps it, a tertiary point or plane that keeps both.",
+      {pick("bodies", "Bodies", "bodies", 1, 0), choice("from", "Align", {"plane", "line", "point", "point_pairs", "sequence"}), in("from_plane", "From face or plane", "plane", nullptr, "from=plane"),
        in("from_line", "From edge or axis", "axis", nullptr, "from=line"), pick("from_point", "From point", "points", 1, 1, "from=point"),
-       choice("to", "Onto", {"plane", "line", "point"}), in("to_plane", "To face or plane", "plane", nullptr, "to=plane"),
-       in("to_line", "To edge or axis", "axis", nullptr, "to=line"), pick("to_point", "To point", "points", 1, 1, "to=point"),
-       choice("motion", "Motion", {"move_and_rotate", "move", "rotate"}), in("flip", "Flip", "bool", false), in("offset", "Offset", "length", "0 mm", "to=plane"),
-       in("angle", "Turn about it", "angle", "0 deg", "to=plane|line"), in("frame", "Origin and X onto the plane's too", "bool", false, "to=plane")});
+       paired(pick("from_points", "Points on the bodies", "points", 1, 0, "from=point_pairs"), "to_points"),
+       paired(pick("to_points", "Matching points on the target", "points", 1, 0, "from=point_pairs"), "from_points"),
+       in("drop_outlier", "Leave out a stray pair", "bool", true, "from=point_pairs"),
+       in("primary_from", "Primary: plane of the bodies", "plane", nullptr, "from=sequence"), in("primary_to", "Primary: onto plane", "plane", nullptr, "from=sequence"),
+       choice("secondary", "Secondary", {"line", "plane", "none"}, "from=sequence"),
+       in("secondary_from_line", "Secondary: line of the bodies", "axis", nullptr, "secondary=line,from=sequence", true),
+       in("secondary_to_line", "Secondary: onto line", "axis", nullptr, "secondary=line,from=sequence", true),
+       in("secondary_from_plane", "Secondary: plane of the bodies", "plane", nullptr, "secondary=plane,from=sequence", true),
+       in("secondary_to_plane", "Secondary: onto plane", "plane", nullptr, "secondary=plane,from=sequence", true),
+       choice("tertiary", "Tertiary", {"point", "plane", "none"}, "from=sequence"),
+       pick("tertiary_from_point", "Tertiary: point of the bodies", "points", 0, 1, "tertiary=point,from=sequence"),
+       pick("tertiary_to_point", "Tertiary: onto point", "points", 0, 1, "tertiary=point,from=sequence"),
+       in("tertiary_from_plane", "Tertiary: plane of the bodies", "plane", nullptr, "tertiary=plane,from=sequence", true),
+       in("tertiary_to_plane", "Tertiary: onto plane", "plane", nullptr, "tertiary=plane,from=sequence", true),
+       choice("to", "Onto", {"plane", "line", "point"}, "from=plane|line|point"), in("to_plane", "To face or plane", "plane", nullptr, "to=plane,from=plane|line|point"),
+       in("to_line", "To edge or axis", "axis", nullptr, "to=line,from=plane|line|point"), pick("to_point", "To point", "points", 1, 1, "to=point,from=plane|line|point"),
+       choice("motion", "Motion", {"move_and_rotate", "move", "rotate"}, "from=plane|line|point"), in("flip", "Flip", "bool", false, "from=plane|line|point|sequence"),
+       in("offset", "Offset", "length", "0 mm", "to=plane,from=plane|line|point"), in("angle", "Turn about it", "angle", "0 deg", "to=plane|line,from=plane|line|point"),
+       in("frame", "Origin and X onto the plane's too", "bool", false, "to=plane,from=plane|line|point")});
   add("remove", "Remove", "delete", "body", "Take bodies out of the design from here on (history is kept).", {pick("bodies", "Bodies", "bodies", 1, 0)});
   add("plane", "Construction plane", "plane", "construct", "A plane to sketch on or to mirror, split and draft about.",
       {choice("mode", "Type", {"offset", "angle", "midplane", "three_points", "point_normal"}), in("plane", "From plane", "plane", xy, "mode=offset|angle|midplane"),
@@ -350,6 +381,7 @@ json feature_specs_json() {
       if (!i.def.is_null()) j["default"] = i.def;
       if (!i.choices.empty()) j["choices"] = i.choices;
       if (!i.show_if.empty()) j["show_if"] = i.show_if;
+      if (!i.pairs_with.empty()) j["pairs_with"] = i.pairs_with;
       if (i.optional) j["optional"] = true;
       if (i.type == "bodies" || i.type == "faces" || i.type == "edges" || i.type == "profiles" || i.type == "points") {
         j["min"] = i.min_count;
@@ -1902,7 +1934,152 @@ gp_Pnt nearest_on(const gp_Pnt& p, const gp_Pnt& o, const gp_Dir& d) { return o.
 
 }  // namespace
 
-gp_Trsf align_motion(const Ctx& ctx, const json& in, bool facing) {
+// Point pairs: from_points[i] onto to_points[i], the least-squares rigid move; what each pair is off by after it into
+// `report` (the result's "pairs", "rms", "max_residual", "dropped_pair" 1-based, "note").
+static gp_Trsf pair_motion(const Ctx& ctx, const json& in, json* report) {
+  const Points from = resolve_points(ctx, in.value("from_points", json()));
+  const Points to = resolve_points(ctx, in.value("to_points", json()));
+  if (from.at.empty()) throw Error("pick points on the bodies and the matching points on the target, in turn");
+  const pairs::PairFit fit = pairs::fit_pairs(from.at, to.at, in.value("drop_outlier", true));
+  if (report) {
+    json list = json::array();
+    for (size_t i = 0; i < from.at.size(); ++i)
+      list.push_back({{"pair", i + 1},
+                      {"from", {from.at[i].X(), from.at[i].Y(), from.at[i].Z()}},
+                      {"to", {to.at[i].X(), to.at[i].Y(), to.at[i].Z()}},
+                      {"residual", fit.residuals[i]},
+                      {"used", int(i) != fit.dropped}});
+    (*report)["pairs"] = list;
+    (*report)["rms"] = fit.rms;
+    (*report)["max_residual"] = fit.max;
+    if (fit.dropped >= 0) {
+      (*report)["dropped_pair"] = fit.dropped + 1;
+      char text[160];
+      std::snprintf(text, sizeof text, "pair %d left out: %.3g mm off, the others %.3g mm rms", fit.dropped + 1, fit.residuals[size_t(fit.dropped)], fit.rms);
+      (*report)["note"] = text;
+    }
+  }
+  return fit.motion;
+}
+
+json point_positions(const Document& doc, const Scene& scene, const json& refs, const Cancel& cancel) {
+  std::vector<ParamDef> defs;
+  for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+  const ParamTable params(defs, scene.units);
+  const std::map<std::string, TopoDS_Shape> fresh;
+  const Ctx ctx{doc, params, scene, fresh, cancel};
+  json out = json::array();
+  if (!refs.is_array()) return out;
+  for (const auto& r : refs) {
+    ctx.check_cancel();
+    try {
+      const Points p = resolve_points(ctx, json::array({r}));
+      out.push_back(p.at.empty() ? json() : json::array({p.at[0].X(), p.at[0].Y(), p.at[0].Z()}));
+    } catch (const std::exception&) {
+      out.push_back(json());
+    }
+  }
+  return out;
+}
+
+// 3-2-1 (the reverse-engineering way): Primary, a plane onto a plane (fixes three: it is flush or facing, slides in the plane
+// and turns about its normal are free); Secondary, a line along a line or a plane onto a plane, solved with only that turn
+// and an in-plane slide (a line leaves the slide along it free; a plane the slide along the two planes' meeting); Tertiary,
+// a point onto a point or a plane onto a plane, solved with only the last slide. Each step keeps what the earlier ones fixed.
+// A step not given yet is skipped; `report` gets "free" (what is still free: slides and turns with their directions) and
+// "steps" (the steps that applied).
+static gp_Trsf sequence_motion(const Ctx& ctx, const json& in, bool facing, json* report) {
+  auto given = [&](const char* key) {
+    const json v = in.value(key, json());
+    return !(v.is_null() || (v.is_array() && v.empty()));
+  };
+  auto flat = [](const gp_Vec& v, const gp_Dir& n) { return v - gp_Vec(n) * v.Dot(gp_Vec(n)); };  // v laid into the plane square to n
+  auto signed_angle = [](const gp_Vec& a, const gp_Vec& b, const gp_Dir& about) { return std::atan2(a.Crossed(b).Dot(gp_Vec(about)), a.Dot(b)); };
+  if (!given("primary_from") || !given("primary_to")) throw Error("pick the primary planes: a plane of the bodies and the plane it goes onto");
+  const Frame pf = ctx.plane(in["primary_from"]), pt = ctx.plane(in["primary_to"]);
+  const gp_Dir na(vec(pf.normal())), nb(vec(pt.normal()));
+  const bool against = facing != in.value("flip", false);
+  gp_Trsf m = turn(pnt(pf.origin), na, against ? nb.Reversed() : nb);
+  auto shift = [&](const gp_Vec& v) {
+    gp_Trsf t;
+    t.SetTranslation(v);
+    m = t * m;
+  };
+  shift(gp_Vec(nb) * gp_Vec(pnt(pf.origin).Transformed(m), pnt(pt.origin)).Dot(gp_Vec(nb)));
+  json steps = json::array({"primary"});
+  bool turning = true;  // the turn about the primary normal is still free
+  std::optional<gp_Dir> slide;  // after the secondary: the one slide left
+  const std::string secondary = in.value("secondary", std::string("line"));
+  if (secondary == "line" && given("secondary_from_line") && given("secondary_to_line")) {
+    const gp_Ax1 from = ctx.axis(in["secondary_from_line"]), to = ctx.axis(in["secondary_to_line"]);
+    const gp_Vec d = flat(gp_Vec(from.Direction().Transformed(m)), nb);
+    gp_Vec e = flat(gp_Vec(to.Direction()), nb);
+    if (d.Magnitude() < 1e-6 || e.Magnitude() < 1e-6)
+      throw Error("the secondary line stands square to the primary plane: it cannot fix the turn; pick a line lying along the plane");
+    if (d.Dot(e) < 0) e.Reverse();  // a line along a line the nearer way round
+    gp_Trsf r;
+    r.SetRotation(gp_Ax1(from.Location().Transformed(m), nb), signed_angle(d, e, nb));
+    m = r * m;
+    const gp_Vec across = gp_Vec(nb).Crossed(e).Normalized();  // in the plane, square to the line
+    shift(across * gp_Vec(from.Location().Transformed(m), to.Location()).Dot(across));
+    turning = false;
+    slide = gp_Dir(e);
+    steps.push_back("secondary");
+  } else if (secondary == "plane" && given("secondary_from_plane") && given("secondary_to_plane")) {
+    const Frame sf = ctx.plane(in["secondary_from_plane"]), st = ctx.plane(in["secondary_to_plane"]);
+    const gp_Dir ks(vec(st.normal()));
+    const gp_Vec d = flat(gp_Vec(gp_Dir(vec(sf.normal())).Transformed(m)), nb);
+    gp_Vec e = flat(gp_Vec(ks), nb);
+    if (d.Magnitude() < 1e-6 || e.Magnitude() < 1e-6)
+      throw Error("the secondary plane lies along the primary one: it cannot fix the turn; pick a plane across it");
+    if (against) e.Reverse();  // faces put together face each other, as the primary's (Flip: flush)
+    gp_Trsf r;
+    r.SetRotation(gp_Ax1(pnt(sf.origin).Transformed(m), nb), signed_angle(d, e, nb));
+    m = r * m;
+    const gp_Vec u = e.Normalized();
+    const double reach = u.Dot(gp_Vec(ks));
+    if (std::fabs(reach) < 1e-6) throw Error("the secondary plane lies along the primary one: it cannot fix the turn; pick a plane across it");
+    shift(u * (gp_Vec(pnt(sf.origin).Transformed(m), pnt(st.origin)).Dot(gp_Vec(ks)) / reach));
+    turning = false;
+    slide = gp_Dir(gp_Vec(nb).Crossed(u));
+    steps.push_back("secondary");
+  }
+  const std::string tertiary = in.value("tertiary", std::string("point"));
+  if (slide && tertiary == "point" && given("tertiary_from_point") && given("tertiary_to_point")) {
+    const Points a = resolve_points(ctx, in["tertiary_from_point"]), b = resolve_points(ctx, in["tertiary_to_point"]);
+    if (a.at.empty() || b.at.empty()) throw Error("pick the tertiary points: one of the bodies and the one it goes onto");
+    shift(gp_Vec(*slide) * gp_Vec(a.at.front().Transformed(m), b.at.front()).Dot(gp_Vec(*slide)));
+    slide.reset();
+    steps.push_back("tertiary");
+  } else if (slide && tertiary == "plane" && given("tertiary_from_plane") && given("tertiary_to_plane")) {
+    const Frame tf = ctx.plane(in["tertiary_from_plane"]), tt = ctx.plane(in["tertiary_to_plane"]);
+    const gp_Vec k(vec(tt.normal()));
+    const double reach = gp_Vec(*slide).Dot(k);
+    if (std::fabs(reach) < 0.05) throw Error("the tertiary plane runs along the slide that is left: it cannot stop it; pick a plane across it");
+    shift(gp_Vec(*slide) * (gp_Vec(pnt(tf.origin).Transformed(m), pnt(tt.origin)).Dot(k) / reach));
+    slide.reset();
+    steps.push_back("tertiary");
+  }
+  if (report) {
+    json free = json::array();
+    auto dir = [](const gp_Dir& d) { return json::array({d.X(), d.Y(), d.Z()}); };
+    if (turning) {
+      const gp_Dir x = laid_on(gp_Dir(vec(pt.x)), nb), y = gp_Dir(gp_Vec(nb).Crossed(gp_Vec(x)));
+      free.push_back({{"slide", dir(x)}});
+      free.push_back({{"slide", dir(y)}});
+      free.push_back({{"turn", dir(nb)}});
+    } else if (slide) {
+      free.push_back({{"slide", dir(*slide)}});
+    }
+    (*report)["free"] = free;
+    (*report)["steps"] = steps;
+  }
+  return m;
+}
+
+gp_Trsf align_motion(const Ctx& ctx, const json& in, bool facing, json* report) {
+  if (in.value("from", std::string()) == "point_pairs") return pair_motion(ctx, in, report);
+  if (in.value("from", std::string()) == "sequence") return sequence_motion(ctx, in, facing, report);
   const AlignGeo from = align_geo(ctx, in, "from"), to = align_geo(ctx, in, "to");
   const std::string motion = in.value("motion", std::string("move_and_rotate"));
   if (motion != "move_and_rotate" && motion != "move" && motion != "rotate") throw Error("align: motion must be move_and_rotate, move or rotate");
@@ -2573,7 +2750,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     return out;
   }
   if (kind == "align") {
-    const gp_Trsf t = align_motion(ctx, in, true);
+    const gp_Trsf t = align_motion(ctx, in, true, &out.extra);
     for (const auto& id : placed_nodes(ctx, in.value("bodies", json()))) out.placed.push_back({id, t});
     if (out.placed.empty()) throw Error("pick the bodies or components to align");
     return out;

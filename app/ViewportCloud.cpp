@@ -4,7 +4,7 @@
 // sample whose visible part is a fraction of it gets that part drawn at full density, found and filled on a worker (level of
 // detail: an overview of tens of millions of points, every point zoomed in). The colour mode (view/cloudColor) and a
 // region of points (the region tool's selection, an overlay in Topmost) are drawn the same way, from arrays made off the
-// UI thread.
+// UI thread, and so is a cloud being edited by hand (setCloudEdit: Edit point cloud's working edit, its stroke over it).
 #include "Viewport.hpp"
 
 #include <AIS_InteractiveObject.hxx>
@@ -18,6 +18,7 @@
 #include <cmath>
 
 #include "Jobs.hpp"
+#include "opad/cloud_edit.hpp"
 #include "opad/geometry.hpp"
 
 namespace {
@@ -102,7 +103,11 @@ void Viewport::setCloudColours(const std::string& node, std::shared_ptr<const st
 }
 
 void Viewport::updateClouds() {
-  if (!m_initialised || m_cloudJob || m_doc->loading) return;
+  if (!m_initialised || m_doc->loading) return;
+  if (m_cloudJob) {
+    if (!m_cloudColourDirty.empty()) m_cloudAgain = true;  // an edit or overlay came: drawn right after this pass
+    return;
+  }
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
   if (w <= 0 || h <= 0) return;
@@ -114,13 +119,15 @@ void Viewport::updateClouds() {
   const bool moved = !(m_cloudCamera == state);
   // Point sizes: as wide as the drawn points' spacing looks now (a sample's points stand further apart). Then what to draw
   // again: a sampled cloud's visible part when the camera moved, a cloud in other colours than its base arrays (the colour
-  // mode, a node's colour overlay). An overlay is a node's own; the rest is shared by the instances of a key.
+  // mode, a node's colour overlay), a node's working edit. Overlays and edits are a node's own; the rest is shared by the
+  // instances of a key.
   bool resized = false;
   struct Want {
-    std::string node, key;  // node set: that instance alone (its overlay); else every instance of the key without one
+    std::string node, key;  // node set: that instance alone (its overlay or edit); else every instance of the key without one
     std::shared_ptr<const BodyPrs> base;
     std::array<double, 16> ndc;
     std::shared_ptr<const std::vector<uint32_t>> colours;
+    std::shared_ptr<const opad::cloud::Edit> edit;
     std::array<double, 3> own{0.8, 0.8, 0.8};
   };
   std::vector<Want> wants;
@@ -135,15 +142,21 @@ void Viewport::updateClouds() {
     const double spacing = base->cloudSpacing / std::sqrt(shown->cloudOnly ? 1.0 : fraction);
     resized = body->setPointSize(float(std::clamp(spacing / pixel * 1.1, 1.0, 6.0))) || resized;
     const bool sampled = base->cloudDrawn < total;
+    std::shared_ptr<const opad::cloud::Edit> edit;
+    if (const auto e = m_cloudEdits.find(id); e != m_cloudEdits.end()) {
+      if (e->second.base == base) edit = e->second.edit;
+      else m_cloudEdits.erase(e), m_cloudColourDirty.insert(id);  // made on arrays the body no longer has
+    }
     const auto overlay = m_cloudColours.find(id);
-    if (overlay != m_cloudColours.end()) {
+    const auto colours = overlay != m_cloudColours.end() ? overlay->second : nullptr;
+    if (colours || edit) {
       if (m_cloudColourDirty.count(id) || m_cloudRecolour.count(item.key) || (sampled && moved))
-        wants.push_back({id, item.key, base, ndcOf(camera, item.world), overlay->second, item.color});
+        wants.push_back({id, item.key, base, ndcOf(camera, item.world), colours, edit, item.color});
       continue;
     }
     if (!seen.insert(item.key).second) continue;
     const bool restyled = m_cloudRecolour.count(item.key) || m_cloudColourDirty.count(id);
-    if (restyled || (sampled && moved)) wants.push_back({{}, item.key, base, ndcOf(camera, item.world), nullptr, item.color});
+    if (restyled || (sampled && moved)) wants.push_back({{}, item.key, base, ndcOf(camera, item.world), nullptr, nullptr, item.color});
   }
   if (resized) redrawScene();
   m_cloudCamera = state;
@@ -169,7 +182,7 @@ void Viewport::updateClouds() {
         if (count > 0 && count < size_t(0.8 * double(points.size()))) only = std::make_shared<const std::vector<uint32_t>>(visible.indices());
       }
       // The base arrays already are the whole sample in its mode: nothing to make (null = draw those).
-      if (!only && !want.colours && mode == want.base->cloudMode) continue;
+      if (!only && !want.colours && !want.edit && mode == want.base->cloudMode) continue;
       auto prs = std::make_shared<BodyPrs>();
       prs->box = want.base->box;
       prs->cloudData = want.base->cloudData;
@@ -177,7 +190,9 @@ void Viewport::updateClouds() {
       prs->cloudMode = mode;
       prs->cloudOnly = only;
       prs->cloudOverlay = want.colours;
-      prs->cloudPoints = BodyPrs::cloudArray(points, only.get(), mode, BodyPrs::cloudBudget, &prs->cloudDrawn, want.colours.get(), &want.own);
+      prs->cloudEdit = want.edit;
+      prs->cloudPoints = BodyPrs::cloudArray(points, only.get(), mode, BodyPrs::cloudBudget, &prs->cloudDrawn, want.colours.get(), &want.own, want.edit.get());
+      if (prs->cloudPoints.IsNull()) prs->cloudDrawn = 0;
       (*results)[i] = std::move(prs);
     }
   }, [this, pass, results, cache, started](bool ok, const QString&) {
@@ -185,19 +200,37 @@ void Viewport::updateClouds() {
     if (!ok || cache != m_activeCache) return;
     bool changed = false;
     size_t drawn = 0;
+    auto edited = [this](const std::string& id) -> std::shared_ptr<const opad::cloud::Edit> {
+      const auto e = m_cloudEdits.find(id);
+      return e == m_cloudEdits.end() ? nullptr : e->second.edit;
+    };
+    auto coloured = [this](const std::string& id) -> std::shared_ptr<const std::vector<uint32_t>> {
+      const auto c = m_cloudColours.find(id);
+      return c == m_cloudColours.end() ? nullptr : c->second;
+    };
     for (size_t i = 0; i < pass->size(); ++i) {
       const auto& want = (*pass)[i];
       const auto& prs = (*results)[i];
       for (const auto& [id, item] : m_items) {
-        if (want.node.empty() ? item.key != want.key || m_cloudColours.count(id) : id != want.node) continue;
+        if (want.node.empty() ? item.key != want.key || coloured(id) || edited(id) : id != want.node) continue;
         const Handle(BodyShape) body = Handle(BodyShape)::DownCast(item.ais);
         if (body.IsNull() || body->prs() != want.base) continue;  // meshed anew meanwhile
-        if (!want.node.empty() && m_cloudColours[id] != want.colours) continue;  // another overlay came meanwhile: its own pass
+        if (!want.node.empty() && (coloured(id) != want.colours || edited(id) != want.edit)) continue;  // another came meanwhile: its own pass
         if (body->setDisplayPrs(prs)) {  // null: the base arrays again
           m_ctx->RecomputePrsOnly(body, Standard_False);
           changed = true;
         }
         if (prs) drawn += prs->cloudDrawn;
+        // The stroke drawn over the cloud goes once the edit it belongs to is drawn.
+        if (const auto e = m_cloudEdits.find(id); want.edit && e != m_cloudEdits.end() && e->second.clearsStroke) {
+          e->second.clearsStroke = false;
+          if (const auto stroke = m_cloudStroke.find(id); stroke != m_cloudStroke.end()) {
+            m_ctx->Remove(stroke->second, Standard_False);
+            m_cloudStroke.erase(stroke);
+            m_cloudStrokePoints.erase(id);
+            changed = true;
+          }
+        }
       }
     }
     if (changed) {
@@ -206,7 +239,82 @@ void Viewport::updateClouds() {
       m_refineTimer.start();  // the point size for what is drawn now
     }
     if (trace::enabled()) trace::log(QStringLiteral("cloud: %1 clouds drawn again in %2 ms (%3 points)").arg(pass->size()).arg(started.elapsed()).arg(drawn));
+    if (std::exchange(m_cloudAgain, false)) QTimer::singleShot(0, this, [this] { updateClouds(); });
   }, JobKind::Background);
+}
+
+void Viewport::setCloudEdit(const std::string& node, std::shared_ptr<const opad::cloud::Edit> edit, bool clearsStroke) {
+  if (edit) {
+    const auto base = cloudPrs(node);
+    if (!base) return;
+    m_cloudEdits[node] = {std::move(edit), base, clearsStroke};
+  } else if (!m_cloudEdits.erase(node)) {
+    return;
+  }
+  m_cloudColourDirty.insert(node);
+  updateClouds();  // now, or right after the pass being made
+}
+
+void Viewport::showCloudStroke(const std::string& node, Handle(Graphic3d_ArrayOfPoints) points) {
+  if (const auto old = m_cloudStroke.find(node); old != m_cloudStroke.end()) {
+    m_ctx->Remove(old->second, Standard_False);
+    m_cloudStroke.erase(old);
+  }
+  m_cloudStrokePoints.erase(node);
+  opad::Mat4 world;
+  if (points.IsNull() || !cloudPrs(node, &world)) return redrawScene();
+  m_cloudStrokePoints[node] = size_t(points->VertexNumber());
+  // In the cloud's own colours, as wide as its points, over the cloud: the part a brush is working on now.
+  Handle(CloudRegionPrs) overlay = new CloudRegionPrs(points, Quantity_Color(0.8, 0.8, 0.8, Quantity_TOC_sRGB), cloudPointSize(node));
+  if (!world.is_identity() && opad::mat_is_rigid(world)) overlay->SetLocalTransformation(opad::trsf_from_mat(world));
+  overlay->SetZLayer(Graphic3d_ZLayerId_Top);
+  m_ctx->Display(overlay, 0, -1, Standard_False);
+  m_cloudStroke[node] = overlay;
+  redrawScene();
+}
+
+float Viewport::cloudPointSize(const std::string& node) const {
+  const auto item = m_items.find(node);
+  if (item == m_items.end()) return 2.f;
+  const Handle(BodyShape) body = Handle(BodyShape)::DownCast(item->second.ais);
+  return body.IsNull() ? 2.f : std::max(1.f, body->pointSize());
+}
+
+bool Viewport::cloudBrushFrame(const QPointF&, const opad::Vec3& world, opad::Vec3& toward, double& mmPerPixel) const {
+  if (!m_initialised) return false;
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  if (w <= 0 || h <= 0) return false;
+  const auto camera = m_view->Camera();
+  const gp_Pnt eye = camera->Eye(), at(world[0], world[1], world[2]);
+  const gp_Dir dir = camera->Direction();
+  const double scale = viewScale().y();  // device pixels per widget point
+  if (camera->IsOrthographic()) {
+    toward = {-dir.X(), -dir.Y(), -dir.Z()};
+    mmPerPixel = camera->Scale() / h * scale;
+  } else {
+    gp_Vec v(at, eye);
+    const double d = v.Magnitude();
+    if (d < 1e-9) return false;
+    v /= d;
+    toward = {v.X(), v.Y(), v.Z()};
+    const double depth = std::max(1e-6, gp_Vec(eye, at).Dot(gp_Vec(dir)));
+    mmPerPixel = 2 * depth * std::tan(camera->FOVy() * M_PI / 360) / h * scale;
+  }
+  return mmPerPixel > 0 && std::isfinite(mmPerPixel);
+}
+
+size_t Viewport::benchCloudStroke(const std::string& node) const {
+  const auto it = m_cloudStrokePoints.find(node);
+  return it == m_cloudStrokePoints.end() ? 0 : it->second;
+}
+
+bool Viewport::benchCloudEdited(const std::string& node) const {
+  const auto item = m_items.find(node);
+  const auto edit = m_cloudEdits.find(node);
+  if (item == m_items.end() || edit == m_cloudEdits.end()) return false;
+  const Handle(BodyShape) body = Handle(BodyShape)::DownCast(item->second.ais);
+  return !body.IsNull() && body->displayPrs() && body->displayPrs()->cloudEdit == edit->second.edit;
 }
 
 void Viewport::showCloudRegion(const std::string& node, std::shared_ptr<const std::vector<uint32_t>> indices) {
@@ -221,8 +329,10 @@ void Viewport::showCloudRegion(const std::string& node, std::shared_ptr<const st
   auto array = std::make_shared<Handle(Graphic3d_ArrayOfPoints)>();
   const std::string id = node;
   const double spacing = prs->cloudSpacing;
-  m_jobs->async(tr("Showing the region"), [prs, indices, array](Progress) {
-    *array = BodyPrs::cloudArray(*prs->cloudData, indices.get(), 4, BodyPrs::cloudBudget);
+  std::shared_ptr<const opad::cloud::Edit> edit;  // where an edit being made left the points
+  if (const auto e = m_cloudEdits.find(node); e != m_cloudEdits.end() && e->second.base == prs) edit = e->second.edit;
+  m_jobs->async(tr("Showing the region"), [prs, indices, array, edit](Progress) {
+    *array = BodyPrs::cloudArray(*prs->cloudData, indices.get(), 4, BodyPrs::cloudBudget, nullptr, nullptr, nullptr, edit.get());
   }, [this, id, array, world, prs, spacing](bool ok, const QString&) {
     if (!ok || array->IsNull()) return;
     opad::Mat4 now;

@@ -206,6 +206,21 @@ json compute_fit(const Ctx& ctx, const json& fit, bool want_axis) {
     return r;
   }
   if (b.mesh->tri.empty() && of != "scan_axes") throw Error("a point cloud has no triangles to grow a region on: name its points with \"vertices\"");
+  if (of == "crease") {  // where the two flats either side of a picked side meet (a scan's edge)
+    if (!fit.contains("seed")) throw Error("a crease fit takes the picked side: \"seed\" (its triangle) and \"side\" (0, 1 or 2)");
+    const scanfit::Line l = scanfit::crease_line(*b.mesh, fit["seed"].get<int>(), fit.value("side", 0), tolerance_of(ctx, fit, 10));
+    line_result(l, "crease");
+    r["length"] = l.length;
+    return r;
+  }
+  if (fit.contains("sides")) {  // a box or brush over a run of mesh sides: the line through their nodes
+    std::vector<int> sides;
+    for (const auto& s : fit["sides"]) sides.push_back(s.get<int>());
+    const scanfit::Line l = scanfit::sides_line(*b.mesh, sides);
+    line_result(l, "line");
+    r["length"] = l.length;
+    return r;
+  }
   if (of == "plane" || of == "normal") {
     plane_result(scanfit::fit_plane_region(*b.mesh, region_of(ctx, b, fit, false)));
     r["region"] = r["quality"]["total"];
@@ -237,7 +252,7 @@ json compute_fit(const Ctx& ctx, const json& fit, bool want_axis) {
     r["of"] = "normal";
     return r;
   }
-  throw Error("a fit is of plane, normal, wall, cylinder, line, intersection or scan_axes, not \"" + of + "\"");
+  throw Error("a fit is of plane, normal, wall, cylinder, line, crease, intersection or scan_axes, not \"" + of + "\"");
 }
 
 bool result_current(const Ctx& ctx, const json& fit, const json& result) {

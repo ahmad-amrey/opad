@@ -5850,7 +5850,7 @@
    ],
    "steps": [
     {"to": 1.4, "caption": "Pick the question closest to yours"},
-    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 4.0, "caption": "OPAD proposes each opening's edge; an arrow shows the air's way, a click on it turns it round"},
     {"to": 6.0, "caption": "The verdict comes first, in plain words"}
    ]
   },
@@ -6146,6 +6146,247 @@
     {"to": 1.5, "caption": "Choose what the points are coloured by"},
     {"to": 3.0, "caption": "Normals, or the scan's own colours"},
     {"to": 4.8, "caption": "Intensity, or the deviation from a model"}
+   ]
+  },
+  {
+   "id": "cloud.edit", "duration": 5.0, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "cursor", "keys": [[0, {"pos": [14, -12, 2]}], [0.8, {"pos": [2, 0, 0.5]}], [1.0, {"pos": [2, 0, 0.5]}]]},
+    {"el": "cursor", "keys": [[1.0, {"pos": [2, 0, 0.5], "click": 1}], [1.25, {"pos": [2, 0, 0.5], "click": 1}], [2.2, {"pos": [-4, -2, 0.5]}], [3.4, {"pos": [4, 1, 0.5], "down": 1}], [4.2, {"pos": [6, 0, 0.5]}]], "from": 1.0},
+    {"el": "chip", "screen": [0.04, 0.08], "text": "Edit points", "from": 1.4},
+    {"el": "circle", "center": [-4, -2, 0.5], "r": 3.2, "plane": "xy", "color": "white", "width": 1.6, "from": 2.2, "keys": [[2.2, {"center": [-4, -2, 0.5]}], [3.4, {"center": [4, 1, 0.5]}], [4.2, {"center": [6, 0, 0.5]}]]},
+    {"el": "cloud", "shape": "plate", "at": [0, 0, 0], "w": 7, "d": 6, "n": 90, "color": "fg", "keys": [[3.0, {"offset": [0, 0, 0]}], [3.8, {"offset": [0, 0, 1.6]}]], "from": 2.9}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Double-click a point cloud"},
+    {"to": 3.0, "caption": "Its Edit points tab and brushes open"},
+    {"to": 5.0, "caption": "Drag a brush over the points; Finish keeps the changes"}
+   ]
+  },
+  {
+   "id": "design.cloud_edit", "duration": 4.8, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "cloud", "shape": "plate", "at": [0, 0, 0], "w": 7, "d": 6, "n": 90, "color": "amber", "keys": [[1.2, {"offset": [0, 0, 0]}], [2.2, {"offset": [0, 0, 1.6]}]], "from": 1.0},
+    {"el": "cursor", "keys": [[0, {"pos": [14, -12, 2]}], [0.6, {"pos": [0, 0, 0.5]}], [1.0, {"pos": [0, 0, 0.5]}]]},
+    {"el": "chip", "screen": [0.04, 0.08], "text": "Step EditPoints1", "from": 2.6},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Edit point cloud", "rows": [["Point cloud", "Scan"], ["Changes", "2 140 moved"]], "from": 2.6}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Select the point cloud"},
+    {"to": 2.6, "caption": "Change its points in the Edit points mode"},
+    {"to": 4.8, "caption": "One step keeps only what changed"}
+   ]
+  },
+  {
+   "id": "cloud.edit.finish", "duration": 4.0, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "cloud", "shape": "plate", "at": [1, 0, 1.4], "w": 7, "d": 6, "n": 90, "color": "fg"},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Edit point cloud", "rows": [["Moved", "2 140"], ["Added", "3"]], "from": 0.1, "to": 1.9, "button": "Finish", "press": 1.4},
+    {"el": "cursor", "keys": [[0.2, {"screen": [0.4, 0.5]}], [1.2, {"screen": [0.12, 0.26]}], [1.4, {"screen": [0.12, 0.26], "click": 1}]]},
+    {"el": "chip", "screen": [0.04, 0.08], "text": "Step EditPoints1", "from": 2.0},
+    {"el": "chip", "screen": [0.36, 0.86], "text": "Point cloud edited", "from": 2.2}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Finish the edit"},
+    {"to": 4.0, "caption": "Its strokes become one undoable step"}
+   ]
+  },
+  {
+   "id": "cloud.edit.cancel", "duration": 4.2, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "cloud", "shape": "plate", "at": [1, 0, 1.4], "w": 7, "d": 6, "n": 90, "color": "fg", "to": 2.4},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Edit point cloud", "rows": [["Moved", "2 140"]], "from": 0.1, "to": 1.6, "button": "Cancel", "press": 1.2},
+    {"el": "cursor", "keys": [[0.2, {"screen": [0.4, 0.5]}], [1.0, {"screen": [0.12, 0.26]}], [1.2, {"screen": [0.12, 0.26], "click": 1}], [2.0, {"screen": [0.5, 0.86]}], [2.3, {"screen": [0.5, 0.86], "click": 1}]]},
+    {"el": "chip", "screen": [0.36, 0.86], "text": "Discard the changes?", "from": 1.4, "to": 2.4}
+   ],
+   "steps": [
+    {"to": 1.4, "caption": "Cancel the edit"},
+    {"to": 4.2, "caption": "Discard: the points are as they were"}
+   ]
+  },
+  {
+   "id": "cloud.edit.pull", "duration": 4.8, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "circle", "center": [-6, -2, 0.5], "r": 3.2, "plane": "xy", "color": "white", "width": 1.6, "from": 0.2, "keys": [[0.3, {"center": [-6, -2, 0.5]}], [1.0, {"center": [-2, 0, 0.5]}], [1.7, {"center": [2, 1, 0.5]}], [2.3, {"center": [5, 0, 0.5]}]]},
+    {"el": "cursor", "keys": [[0.3, {"pos": [-6, -2, 0.5]}], [1.0, {"pos": [-2, 0, 0.5], "down": 1}], [1.7, {"pos": [2, 1, 0.5], "down": 1}], [2.3, {"pos": [5, 0, 0.5], "down": 1}], [3.0, {"pos": [9, -4, 1]}]]},
+    {"el": "cloud", "shape": "plate", "at": [-2, 0, 0], "w": 9, "d": 5, "n": 110, "color": "fg", "keys": [[0.4, {"offset": [0, 0, 0]}], [2.3, {"offset": [0, 0, 2.2]}], [3.2, {"offset": [0, 0, 2.2]}], [4.2, {"offset": [0, 0, -1.2]}]]},
+    {"el": "key", "fixed": "ctrl", "press": 3.3}
+   ],
+   "steps": [
+    {"to": 2.3, "caption": "Drag the brush over the points"},
+    {"to": 3.2, "caption": "They come out of the surface, most at its middle"},
+    {"to": 4.8, "caption": "{fixed:ctrl} held pushes them in"}
+   ]
+  },
+  {
+   "id": "cloud.edit.smooth", "duration": 4.4, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "cloud", "shape": "plate", "at": [-1, 0, 0.6], "w": 8, "d": 5, "n": 60, "color": "fg", "to": 2.0},
+    {"el": "cloud", "shape": "plate", "at": [-1, 0, 0], "w": 8, "d": 5, "n": 60, "color": "fg", "from": 2.0},
+    {"el": "circle", "center": [-6, -2, 0.5], "r": 3.2, "plane": "xy", "color": "white", "width": 1.6, "from": 0.2, "keys": [[0.3, {"center": [-6, -2, 0.5]}], [1.0, {"center": [-2, 0, 0.5]}], [1.7, {"center": [2, 1, 0.5]}], [2.3, {"center": [5, 0, 0.5]}]]},
+    {"el": "cursor", "keys": [[0.3, {"pos": [-6, -2, 0.5]}], [1.0, {"pos": [-2, 0, 0.5], "down": 1}], [1.7, {"pos": [2, 1, 0.5], "down": 1}], [2.3, {"pos": [5, 0, 0.5], "down": 1}], [3.0, {"pos": [9, -4, 1]}]]}
+   ],
+   "steps": [
+    {"to": 2.0, "caption": "Drag over rough points"},
+    {"to": 4.4, "caption": "They settle onto their surface"}
+   ]
+  },
+  {
+   "id": "cloud.edit.erase", "duration": 4.2, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "cloud", "shape": "plate", "at": [0, 0, 1.0], "w": 9, "d": 5, "n": 50, "color": "red", "to": 2.5},
+    {"el": "circle", "center": [-6, -2, 0.5], "r": 3.2, "plane": "xy", "color": "red", "width": 1.6, "from": 0.2, "keys": [[0.3, {"center": [-6, -2, 0.5]}], [1.0, {"center": [-2, 0, 0.5]}], [1.7, {"center": [2, 1, 0.5]}], [2.3, {"center": [5, 0, 0.5]}]]},
+    {"el": "cursor", "keys": [[0.3, {"pos": [-6, -2, 0.5]}], [1.0, {"pos": [-2, 0, 0.5], "down": 1}], [1.7, {"pos": [2, 1, 0.5], "down": 1}], [2.3, {"pos": [5, 0, 0.5], "down": 1}], [3.0, {"pos": [9, -4, 1]}]]}
+   ],
+   "steps": [
+    {"to": 2.4, "caption": "Drag the brush over stray points"},
+    {"to": 4.2, "caption": "They are gone when the stroke ends"}
+   ]
+  },
+  {
+   "id": "cloud.edit.add", "duration": 4.4, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 600, "color": "fg2"},
+    {"el": "cursor", "keys": [[0, {"pos": [12, -10, 1]}], [0.8, {"pos": [-3, 0, 0.2]}], [1.0, {"pos": [-3, 0, 0.2], "click": 1}], [1.8, {"pos": [-2, 0, 0.2], "down": 1}], [3.0, {"pos": [4, 0, 0.2], "down": 1}], [3.2, {"pos": [4, 0, 0.2]}]]},
+    {"el": "cloud", "shape": "plate", "at": [-3, 0, 0.1], "w": 0.4, "d": 0.4, "n": 1, "color": "amber", "px": 2.2, "from": 1.0},
+    {"el": "cloud", "shape": "plate", "at": [1, 0, 0.1], "w": 6, "d": 0.4, "n": 8, "color": "amber", "px": 2.2, "from": 3.0}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Click on the surface: one point there"},
+    {"to": 4.4, "caption": "Drag: a row of points closes a gap"}
+   ]
+  },
+  {
+   "id": "cloud.edit.paint", "duration": 4.6, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "cloud", "shape": "plate", "at": [-0.5, 0, 0.05], "w": 10, "d": 5, "n": 120, "color": "amber", "from": 0.6},
+    {"el": "circle", "center": [-6, -2, 0.5], "r": 3.2, "plane": "xy", "color": "amber", "width": 1.6, "from": 0.2, "keys": [[0.3, {"center": [-6, -2, 0.5]}], [1.0, {"center": [-2, 0, 0.5]}], [1.7, {"center": [2, 1, 0.5]}], [2.3, {"center": [5, 0, 0.5]}]]},
+    {"el": "cursor", "keys": [[0.3, {"pos": [-6, -2, 0.5]}], [1.0, {"pos": [-2, 0, 0.5], "down": 1}], [1.7, {"pos": [2, 1, 0.5], "down": 1}], [2.3, {"pos": [5, 0, 0.5], "down": 1}], [3.0, {"pos": [9, -4, 1]}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Edit point cloud", "rows": [["Selected", "4 812"]], "from": 2.4, "button": "Delete these", "press": 3.6},
+    {"el": "key", "command": "edit.delete", "press": 3.6}
+   ],
+   "steps": [
+    {"to": 2.4, "caption": "Paint over the points"},
+    {"to": 3.4, "caption": "They are highlighted and counted"},
+    {"to": 4.6, "caption": "Delete them, or keep only them"}
+   ]
+  },
+  {
+   "id": "cloud.edit.box", "duration": 4.2, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "poly", "points": [[-8, -6, 0.5], [6, -6, 0.5], [6, 5, 0.5], [-8, 5, 0.5]], "closed": true, "color": "amber", "dash": [3, 2], "from": 0.3, "to": 1.9, "keys": [[0.3, {"progress": 0}], [1.7, {"progress": 1}]]},
+    {"el": "cloud", "shape": "plate", "at": [-1, -0.5, 0.05], "w": 13, "d": 10, "n": 200, "color": "amber", "from": 1.9},
+    {"el": "cursor", "keys": [[0, {"pos": [-12, -8, 1]}], [0.3, {"pos": [-8, -6, 0.5], "down": 1}], [1.7, {"pos": [6, 5, 0.5], "down": 1}], [2.2, {"pos": [10, 8, 1]}]]}
+   ],
+   "steps": [
+    {"to": 1.9, "caption": "Drag a box over the points"},
+    {"to": 4.2, "caption": "The points inside are selected"}
+   ]
+  },
+  {
+   "id": "cloud.edit.lasso", "duration": 4.2, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "poly", "points": [[-8, -4, 0.5], [3, -7, 0.5], [7, 2, 0.5], [-2, 6, 0.5]], "closed": true, "color": "amber", "dash": [3, 2], "from": 0.3, "to": 2.0, "keys": [[0.3, {"progress": 0}], [1.8, {"progress": 1}]]},
+    {"el": "cloud", "shape": "plate", "at": [0, -0.5, 0.05], "w": 11, "d": 9, "n": 160, "color": "amber", "from": 2.0},
+    {"el": "cursor", "keys": [[0, {"pos": [-12, -6, 1]}], [0.3, {"pos": [-8, -4, 0.5], "down": 1}], [0.8, {"pos": [3, -7, 0.5], "down": 1}], [1.3, {"pos": [7, 2, 0.5], "down": 1}], [1.8, {"pos": [-2, 6, 0.5], "down": 1}], [2.3, {"pos": [-10, 8, 1]}]]}
+   ],
+   "steps": [
+    {"to": 2.0, "caption": "Drag a lasso round the points"},
+    {"to": 4.2, "caption": "The points inside are selected"}
+   ]
+  },
+  {
+   "id": "cloud.edit.grow", "duration": 4.6, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "cloud", "r": 3, "h": 6, "n": 160, "at": [8, 4, 0], "color": "fg2"},
+    {"el": "cloud", "shape": "plate", "at": [-4, -1, 0.05], "w": 12, "d": 12, "n": 220, "color": "amber", "pivot": [-4, -1, 0], "keys": [[1.0, {"scale": 0.15}], [2.6, {"scale": 1}]], "from": 1.0},
+    {"el": "cursor", "keys": [[0, {"pos": [12, -10, 1]}], [0.8, {"pos": [-4, -1, 0.2]}], [1.0, {"pos": [-4, -1, 0.2], "click": 1}], [2.8, {"pos": [-6, -8, 1]}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Grow region", "rows": [["Surface bends at most", "10°"], ["Off its surface at most", "0.05 mm"]], "from": 0.2}
+   ],
+   "steps": [
+    {"to": 1.0, "caption": "Click a point of the surface"},
+    {"to": 2.8, "caption": "The selection spreads over it"},
+    {"to": 4.6, "caption": "And stops at its edges"}
+   ]
+  },
+  {
+   "id": "cloud.edit.deleteSelected", "duration": 4.0, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 600, "color": "fg2"},
+    {"el": "cloud", "shape": "plate", "at": [-1, 0, 0.05], "w": 10, "d": 6, "n": 120, "color": "amber", "to": 1.6},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Edit point cloud", "rows": [["Selected", "4 812"]], "from": 0.1, "to": 1.8, "button": "Delete these", "press": 1.4},
+    {"el": "key", "command": "edit.delete", "press": 1.4},
+    {"el": "cursor", "keys": [[0.2, {"screen": [0.45, 0.55]}], [1.1, {"screen": [0.12, 0.26]}], [1.4, {"screen": [0.12, 0.26], "click": 1}], [2.6, {"screen": [0.5, 0.6]}]]}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Delete the selected points"},
+    {"to": 4.0, "caption": "One stroke: Undo brings them back"}
+   ]
+  },
+  {
+   "id": "cloud.edit.keepSelected", "duration": 4.0, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 600, "color": "fg2", "to": 1.6},
+    {"el": "cloud", "shape": "plate", "at": [-1, 0, 0.05], "w": 10, "d": 6, "n": 120, "color": "amber"},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Edit point cloud", "rows": [["Selected", "4 812"]], "from": 0.1, "to": 1.8, "button": "Keep only these", "press": 1.4},
+    {"el": "cursor", "keys": [[0.2, {"screen": [0.45, 0.55]}], [1.1, {"screen": [0.12, 0.26]}], [1.4, {"screen": [0.12, 0.26], "click": 1}], [2.6, {"screen": [0.5, 0.6]}]]}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Keep only the selected points"},
+    {"to": 4.0, "caption": "The rest of the scan is deleted"}
+   ]
+  },
+  {
+   "id": "cloud.edit.smaller", "duration": 3.6, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "circle", "center": [0, 0, 0.5], "r": 5, "plane": "xy", "color": "white", "width": 1.6, "keys": [[0.9, {"r": 5}], [1.2, {"r": 4}], [2.0, {"r": 4}], [2.3, {"r": 3.2}]]},
+    {"el": "key", "command": "cloud.edit.smaller", "press": 0.9},
+    {"el": "key", "command": "cloud.edit.smaller", "press": 2.0}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Press it: the brush gets smaller"},
+    {"to": 3.6, "caption": "A fifth smaller each time"}
+   ]
+  },
+  {
+   "id": "cloud.edit.larger", "duration": 3.6, "view": "iso", "extent": [-20, -12, 20, 18],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"el": "cloud", "shape": "plate", "w": 28, "d": 20, "n": 700, "color": "fg2"},
+    {"el": "circle", "center": [0, 0, 0.5], "r": 3.2, "plane": "xy", "color": "white", "width": 1.6, "keys": [[0.9, {"r": 3.2}], [1.2, {"r": 4}], [2.0, {"r": 4}], [2.3, {"r": 5}]]},
+    {"el": "key", "command": "cloud.edit.larger", "press": 0.9},
+    {"el": "key", "command": "cloud.edit.larger", "press": 2.0}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Press it: the brush gets larger"},
+    {"to": 3.6, "caption": "A quarter larger each time"}
    ]
   }
  ]

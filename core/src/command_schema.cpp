@@ -70,6 +70,9 @@ json input_schema(const design::InputSpec& in) {
   else if(in.type=="region"){  // a region of a point cloud's points (opad/point_cloud.hpp)
     out=object({{"body",type("string")},{"kind",choice({"region"})},{"vertices",array({{"anyOf",{type("integer"),array(type("integer"),2,2)}}},1)},{"count",type("integer")}},{"body","vertices"});
     out["description"]="Points of a cloud body by ordinal: {\"body\": <cloud>, \"kind\": \"region\", \"vertices\": [[first, last], ...]} (inclusive ranges), as the cloud command's region action returns.";}
+  else if(in.type=="cloud_edit"){  // the changes of Edit point cloud (opad/cloud_edit.hpp): written by the app's mode
+    out=object({{"base",type("integer")},{"moved",array({{"anyOf",{type("integer"),array(type("integer"),2,2)}}})},{"offsets",type("string")},{"deleted",array({{"anyOf",{type("integer"),array(type("integer"),2,2)}}})},{"added",type("object")},{"strokes",type("integer")}},{},false);
+    out["description"]="Changes made by hand against the cloud as it was (base = its number of points): moved point ranges with their offsets (base64 float32 x y z each, the cloud's frame, mm), deleted ranges, added points {count, xyz, rgb?, normals?, scalar?} (base64) numbered after the cloud's. Made by the app's Edit point cloud mode; {} changes nothing.";}
   else if(in.type=="axis"){out=object({{"base",choice({"x","y","z"})},{"edge",ref()},{"face",ref()},{"sketch",type("string")},{"entity",type("integer")},{"feature",type("string")},{"direction",vector(3)},{"origin",vector(3)},{"fit",fit_ref(true)},{"result",type("object")}},{},false);
     out["description"]="A base axis; a straight or circular edge (its line or centre axis); a face (a cylinder's, cone's or torus's axis, or a planar face's normal); a sketch line {sketch, entity}; a construction axis feature; written out {direction: [x,y,z], origin?: [x,y,z]}; or {fit, result?}: fitted on a mesh or to points (see fit_reference).";}
   else if(in.type=="path")out={{"anyOf",{object({{"sketch",type("string")},{"entities",array(type("integer"))}},{"sketch"}),object({{"edges",array(ref(),1)}},{"edges"}),array(ref(),1)}}};
@@ -83,7 +86,9 @@ json input_schema(const design::InputSpec& in) {
   else out=array(ref(),in.min_count,in.max_count);
   out["title"]=in.label;
   if(!in.def.is_null())out["default"]=in.def;
-  if(!in.show_if.empty())out["x-active-when"]=in.show_if;
+  if(!in.show_if.empty())out["x-active-when"]=in.show_if;  // "a=x,b=y|z": all of them
+  if(!in.pairs_with.empty())out["description"]=out.value("description",std::string())+" Paired by position with "+in.pairs_with+
+    ": item i and its item i are one pair (as many items in both; three pairs or more).";
   return out;
 }
 json inferred(const std::string& description) {
@@ -113,10 +118,17 @@ json feature_schema(const std::string& kind) {
   for(const auto& input:spec->inputs){out["properties"][input.name]=input_schema(input);
     if(!input.optional && input.def.is_null() && input.show_if.empty())out["required"].push_back(input.name);
     if(!input.optional && input.def.is_null() && !input.show_if.empty()){
-      const auto equal=input.show_if.find('=');const auto key=input.show_if.substr(0,equal),choices=input.show_if.substr(equal+1);json values=json::array();size_t start=0;
-      do{const auto end=choices.find('|',start);const auto value=choices.substr(start,end==std::string::npos?end:end-start);values.push_back(value=="true"?json(true):value=="false"?json(false):json(value));if(end==std::string::npos)break;start=end+1;}while(true);
+      // "a=x,b=y|z": required when every condition holds
+      json properties=json::object(),keys=json::array();size_t from=0;
+      while(true){
+        const auto comma=input.show_if.find(',',from);const auto condition=input.show_if.substr(from,comma==std::string::npos?comma:comma-from);
+        const auto equal=condition.find('=');const auto key=condition.substr(0,equal),choices=condition.substr(equal+1);json values=json::array();size_t start=0;
+        do{const auto end=choices.find('|',start);const auto value=choices.substr(start,end==std::string::npos?end:end-start);values.push_back(value=="true"?json(true):value=="false"?json(false):json(value));if(end==std::string::npos)break;start=end+1;}while(true);
+        properties[key]={{"enum",values}};keys.push_back(key);
+        if(comma==std::string::npos)break;from=comma+1;
+      }
       if(!out.contains("allOf"))out["allOf"]=json::array();
-      out["allOf"].push_back({{"if",{{"properties",{{key,{{"enum",values}}}}},{"required",{key}}}},{"then",{{"required",{input.name}}}}});
+      out["allOf"].push_back({{"if",{{"properties",properties},{"required",keys}}},{"then",{{"required",{input.name}}}}});
     }
   }
   out["description"]=spec->hint;return out;

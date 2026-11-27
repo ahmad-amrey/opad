@@ -668,6 +668,7 @@ void Simulate::ready() {
   hooks.selection = [this] { return services().selection().refs; };
   hooks.select = [this](const std::vector<opad::Ref>& refs) { services().select(refs); };
   hooks.light = [this](const std::vector<std::pair<opad::Ref, std::string>>& refs) { lightRefs(refs); };
+  hooks.openings = [this](const std::vector<json>& openings) { showCheckOpenings(openings); };
   hooks.jobs = [this] { return services().jobs(); };
   m_check = new GuidedCheck(std::move(hooks));
   m_checkPanel = new ToolPanel("simcheck", "simulate", &Tokens::sel, tr("Simulation check"), m_check, 760, services().window());
@@ -817,6 +818,12 @@ void Simulate::selectionChanged(const SelectionContext& selection) {
   // Thermal setup's box page picks the box's bodies from the selection (the view, the browser).
   if (auto* setup = services().window()->findChild<CoolingAssistant*>(); setup && setup->picking())
     setup->selectionChanged(selection.ids, selection.refs, services().viewport() ? services().viewport()->selectedCandidates() : std::vector<std::string>{});
+  if (m_check && m_checkArrows && services().viewport())  // an airflow check's arrow clicked: the air the other way
+    for (const auto& c : services().viewport()->selectedCandidates())
+      if (m_check->arrowClicked(c)) {
+        services().select({});
+        return;
+      }
   if (m_check && m_check->picking()) m_check->selectionChanged(selection.refs);  // a check's list being picked in the view
   // Rows of the Simulation folder picked in the browser, in the order picked: the joints a relation couples.
   std::vector<std::string> now;

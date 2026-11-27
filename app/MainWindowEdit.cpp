@@ -25,6 +25,7 @@ void MainWindow::buildEditActions() {
   addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] {
     if (m_annotationEditor) return m_annotationEditor->undo();  // its strokes; the document waits for Save
     if (m_design->sketchActive()) return m_design->sketch()->undo();  // a sketch has its own history until it is finished
+    if (areaHistory()) return (void)areaCommand("edit.undo");  // an area's mode (Edit point cloud's strokes)
     if (m_design->featureActive()) return (void)m_design->undoPick();  // a feature's panel: its last pick (UI-116)
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->undo();
@@ -32,6 +33,7 @@ void MainWindow::buildEditActions() {
   QAction* redo = addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] {
     if (m_annotationEditor) return m_annotationEditor->redo();
     if (m_design->sketchActive()) return m_design->sketch()->redo();
+    if (areaHistory()) return (void)areaCommand("edit.redo");
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->redo();
   });
@@ -188,11 +190,29 @@ void MainWindow::buildTimelineMenu(QMenu& menu, const std::string& requestedId) 
     if (QAction* a = action(id); a && (std::string(id) != "timeline.rollForward" || m_doc->rolledBack())) menu.addAction(a);
 }
 
+bool MainWindow::areaHistory(bool* canUndo, bool* canRedo) const {
+  if (!m_areasReady) return false;
+  bool u = false, r = false;
+  for (AreaController* area : m_areas)
+    if (area->history(u, r)) {
+      if (canUndo) *canUndo = u;
+      if (canRedo) *canRedo = r;
+      return true;
+    }
+  return false;
+}
+
 void MainWindow::updateUndoActions() {
   QAction* u = action("edit.undo");
   QAction* r = action("edit.redo");
   if (!u || !r) return;
-  if(m_design && m_design->sketchActive()) {
+  bool areaUndo = false, areaRedo = false;
+  if (areaHistory(&areaUndo, &areaRedo)) {  // an area's mode keeps its own history (Edit point cloud)
+    u->setEnabled(areaUndo);
+    r->setEnabled(areaRedo);
+    u->setText(tr("&Undo"));
+    r->setText(tr("&Redo"));
+  } else if(m_design && m_design->sketchActive()) {
     const auto* sketch=m_design->sketch();
     u->setEnabled(sketch->canUndo());r->setEnabled(sketch->canRedo());
     u->setText(tr("&Undo"));r->setText(tr("&Redo"));
@@ -218,7 +238,7 @@ QMenu* MainWindow::historyMenu(bool undo) {
   menu->setObjectName(undo ? "undoSteps" : "redoSteps");
   connect(menu, &QMenu::aboutToShow, this, [this, menu, undo] {
     menu->clear();
-    const bool document = m_doc->hasDocument && !m_annotationEditor && !m_design->sketchActive() && !m_design->ownsSelection() && !m_design->busy();
+    const bool document = m_doc->hasDocument && !m_annotationEditor && !m_design->sketchActive() && !m_design->ownsSelection() && !m_design->busy() && !areaHistory();
     const QStringList steps = document ? (undo ? m_doc->undoLabels() : m_doc->redoLabels()) : QStringList();
     if (steps.isEmpty()) {
       menu->addAction(action(undo ? "edit.undo" : "edit.redo"));
