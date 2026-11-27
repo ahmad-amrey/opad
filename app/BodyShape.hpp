@@ -6,6 +6,10 @@
 #include "opad/util.hpp"
 #include "opad/mesh.hpp"
 #include "opad/point_cloud.hpp"
+
+namespace opad::cloud {
+struct Edit;
+}
 #include <atomic>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_ArrayOfSegments.hxx>
@@ -131,6 +135,7 @@ struct BodyPrs {
   int cloudMode = 0;  // the colour mode the drawn array was made in
   std::shared_ptr<const std::vector<uint32_t>> cloudOverlay;  // the colour overlay it was made with (Viewport::setCloudColours)
   std::shared_ptr<const std::vector<uint32_t>> cloudOnly;  // the points it draws (a zoomed-in part), null: a sample of all
+  std::shared_ptr<const opad::cloud::Edit> cloudEdit;      // the working edit it was drawn with (Viewport::setCloudEdit)
   double cloudSpacing = 0;
   bool isCloud() const { return cloudData != nullptr; }
   // How clouds are coloured (view/cloudColor): 0 automatic (the scan's colours, else shaded by the normals, else the body's
@@ -140,10 +145,12 @@ struct BodyPrs {
   // Worker: the drawn array of a cloud: `only` (null: all) in the given colour mode, at most `budget` of them sampled evenly.
   static std::shared_ptr<BodyPrs> buildCloud(const TopoDS_Shape& cloud, const Bnd_Box& box, bool drawingOnly);  // worker
   // `overrides` (optional; one 0xAARRGGBB per point by ordinal, as Viewport::setCloudColours takes them): a point's colour
-  // when its alpha is not 0, else its colour in the mode; `own` the body's colour where the mode gives none.
+  // when its alpha is not 0, else its colour in the mode; `own` the body's colour where the mode gives none. `edit`
+  // (optional, opad/cloud_edit.hpp): the points as an edit left them, moved ones where they went, deleted ones left out and
+  // added ones drawn after the sample (`only` may name added ordinals too).
   static Handle(Graphic3d_ArrayOfPoints) cloudArray(const opad::cloud::Points& points, const std::vector<uint32_t>* only, int mode, size_t budget,
                                                     size_t* drawn = nullptr, const std::vector<uint32_t>* overrides = nullptr,
-                                                    const std::array<double, 3>* own = nullptr);
+                                                    const std::array<double, 3>* own = nullptr, const opad::cloud::Edit* edit = nullptr);
   void indexSubShapes(const TopoDS_Shape& meshed);  // worker, after build() from the same meshed shape
   bool indexed() const { return !faceTriangles.empty(); }
   void faceTrianglesOf(int ordinal, std::vector<gp_Pnt>& out) const;  // its triangles' corners, three a triangle
@@ -212,6 +219,7 @@ class BodyShape : public AIS_Shape {
   bool hiddenLine() const { return m_hiddenLine; }
   // A point cloud's points drawn this many pixels wide (Viewport: from its spacing and the zoom); true when it changed.
   bool setPointSize(float pixels);
+  float pointSize() const;  // the drawn points' width in pixels (1 before setPointSize)
   static int stockWireframes();  // wireframes OCCT computed from the shape on the UI thread so far (benches: none for meshed bodies)
   // The face colours of a body drawn without worker arrays (placed through a non-rigid transform: OCCT's own shaded path).
   void setFaceColors(std::shared_ptr<const opad::FaceColors> colors) { m_faceColors = std::move(colors); SetToUpdate(); }

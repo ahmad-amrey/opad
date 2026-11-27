@@ -62,6 +62,7 @@ class Editor {
   size_t size() const { return m_base->size() + m_added.size(); }  // ordinals in use, deleted ones included
   bool deleted(uint32_t i) const { return i < m_deleted.size() && m_deleted[i]; }
   Vec3 at(uint32_t i) const;          // where point i is now
+  const Points& added() const { return m_added; }  // ordinal base + k, deleted ones too
   size_t changes() const { return m_strokes; }
   void countStroke() { ++m_strokes; }
 

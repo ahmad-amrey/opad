@@ -76,6 +76,7 @@ class MainWindow : public QMainWindow {
   SelectionContext selectionContext() const;
   // An area takes this built-in command for the selection, or for a timeline marker (AreaController::command).
   bool areaCommand(const QString& id, const std::string& op = {});
+  bool areaHistory(bool* canUndo = nullptr, bool* canRedo = nullptr) const;  // an area's mode keeps its own Undo/Redo (AreaController::history)
   template <class Hook>
   void forEachArea(Hook hook) {  // the hooks that run once the window is built
     if (m_areasReady)

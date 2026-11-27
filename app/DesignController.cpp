@@ -614,6 +614,7 @@ void DesignController::editOp(const std::string& opId) {
   }
   const opad::Feature* f = m_doc->scene.feature(opId);
   if (!f) return;
+  if (const auto editor = m_kindEditors.find(f->kind); editor != m_kindEditors.end()) return editor->second(opId);  // its own mode
   const FeatureSpec* spec = feature_spec(f->kind);
   if (!spec) return;
   const opad::Feature feature = *f;
