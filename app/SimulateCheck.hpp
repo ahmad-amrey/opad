@@ -60,6 +60,9 @@ class GuidedCheck : public QWidget {
     std::function<std::vector<opad::Ref>()> selection;  // the refs selected now
     std::function<void(const std::vector<opad::Ref>&)> select;
     std::function<void(const std::vector<std::pair<opad::Ref, std::string>>&)> light;  // lit by nature ("heat", "fixed", "force", "fan")
+    // An airflow check's openings ({id: "flow:inlet" | "flow:outlet", loops, centre, vector, inward, size}): each one drawn with
+    // an arrow the air's way, the arrow clickable (arrowClicked); empty: none.
+    std::function<void(const std::vector<opad::json>&)> openings;
     std::function<JobRunner*()> jobs;
   };
   GuidedCheck(Hooks hooks, QWidget* parent = nullptr);
@@ -73,6 +76,9 @@ class GuidedCheck : public QWidget {
   void escape();  // picking stops, else the panel's owner closes it (returns false: nothing to do here)
   bool picking() const { return m_picking >= 0; }
   void selectionChanged(const std::vector<opad::Ref>& refs);  // while picking: the list being picked becomes these
+  bool arrowClicked(const std::string& candidate);  // an opening's arrow clicked in the view ("flow:inlet"): the air's way flipped
+  void flipFlow();                                  // the air the other way (the Flip button, a click on an arrow)
+  bool openingsShown() const { return m_openingsShown; }
   void runFinished(const std::string& study, std::shared_ptr<const opad::sim::StudyRun> run, const QString& error);
   void enginesChanged();  // the solvers found again: Run greyed or not
   void showStep(const QString& which);  // "run", "results", "compare"
@@ -119,6 +125,8 @@ class GuidedCheck : public QWidget {
   void stopPicking();
   void showList(int list);
   void lightLists();
+  void pickOpening(int list, const std::vector<opad::Ref>& refs);
+  void showOpenings();
   void showRunState();
   void showResults();
   void showCompare();
@@ -131,7 +139,8 @@ class GuidedCheck : public QWidget {
   void showPlan();
   opad::json m_plan;      // a flow check's mesh plan, as the core gave it
   QString m_planError;    // why the core refuses its settings or openings
-  QPointer<Job> m_validating;
+  QPointer<Job> m_validating, m_finding;
+  bool m_openingsShown = false;
   QLabel *m_planText = nullptr, *m_runPlan = nullptr;
 
   Hooks m_hooks;

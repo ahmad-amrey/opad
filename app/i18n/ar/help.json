@@ -1114,6 +1114,7 @@
  "The air goes in at the inlet and out of the outlet; the housing stays solid": "يدخل الهواء من المدخل ويخرج من المخرج؛ ويبقى الغلاف صلبًا",
  "Draw…: pick the fan's face (or a plane through it)": "«ارسم…»: اختر وجه المروحة (أو مستوى يمر بها)",
  "Project its edges, draw the opening's circle on them, Finish": "أسقط حوافه، وارسم دائرة الفتحة عليها، ثم أنهِ",
+ "OPAD proposes each opening's edge; an arrow shows the air's way, a click on it turns it round": "يقترح OPAD حافة كل فتحة؛ ويُظهر سهم اتجاه الهواء، والنقر عليه يعكسه",
  "The air goes through the opening along its normal; Flip turns it round": "يعبر الهواء الفتحة على امتداد عمودها؛ و«عكس» تقلب اتجاهه",
  "Click the line to align: its chain is picked": "انقر الخط المراد محاذاته: تُلتقط سلسلته",
  "It turns about the end nearer the click: a preview follows": "يدور حول الطرف الأقرب إلى النقرة: تتبعه معاينة",

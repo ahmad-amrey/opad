@@ -5850,7 +5850,7 @@
    ],
    "steps": [
     {"to": 1.4, "caption": "Pick the question closest to yours"},
-    {"to": 4.0, "caption": "OPAD proposes what it can; you fill in the rest"},
+    {"to": 4.0, "caption": "OPAD proposes each opening's edge; an arrow shows the air's way, a click on it turns it round"},
     {"to": 6.0, "caption": "The verdict comes first, in plain words"}
    ]
   },

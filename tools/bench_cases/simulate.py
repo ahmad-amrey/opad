@@ -23,6 +23,10 @@ CASES = [
     # (app/SimulateChecksBench.cpp); the same in Arabic.
     ("simulate-checks", "empty", {"OPAD_BENCH_SIMCHECKS": "{prefix}", "OPAD_BENCH_UISHOT": "{prefix}.window.png"}),
     ("simulate-checks-rtl", "empty", {"OPAD_BENCH_SIMCHECKS": "{prefix}", "OPAD_LANG": "ar"}),
+    # An airflow check's openings picked as loops of edges on a duct adapter with a step: proposed past the chamfers on the
+    # check's own part only, one click takes a loop in place of the last, the arrows drawn and flipped by a click on one or the
+    # Flip button (app/SimulateOpeningsBench.cpp).
+    ("simulate-openings", "empty", {"OPAD_BENCH_FLOWOPENINGS": "{prefix}"}),
     # Thermal setup (the cooling assistant): its example built, the pages filled, the case written (app/CoolingBench.cpp).
     ("cooling", "empty", {"OPAD_BENCH_COOLING": "{prefix}"}),
     ("cooling-rtl", "empty", {"OPAD_BENCH_COOLING": "{prefix}", "OPAD_LANG": "ar"}),
