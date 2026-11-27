@@ -98,7 +98,7 @@ void put_int(std::string& out, int v) { out += std::to_string(v); }
 
 // ---------------------------------------------------------------- extensions
 const std::vector<std::string>& cloud_extensions() {
-  static const std::vector<std::string> list = {".xyz", ".pts", ".csv", ".e57", ".las", ".laz"};
+  static const std::vector<std::string> list = {".xyz", ".asc", ".pts", ".csv", ".e57", ".las", ".laz"};
   return list;
 }
 

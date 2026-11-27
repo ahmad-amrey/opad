@@ -29,7 +29,7 @@ including a new airflow check for ducts and fittings.
   (`fit_reference`, `scan_axes`).
 - **Point clouds: work with the raw scan.** A scanning app's mesh rounds edges, fills small holes and smooths detail
   away; the measured points keep it. OPAD now opens and imports point clouds as bodies of their own: PLY files without
-  faces (they used to be refused), XYZ, PTS, CSV, E57 and LAS, with their colours, normals and intensity, in the right
+  faces (they used to be refused), XYZ, ASC (RealityScan, CloudCompare), PTS, CSV, E57 and LAS, with their colours, normals and intensity, in the right
   units and the right way up. Clouds of tens of millions of points stay smooth to turn and zoom: the overview is drawn
   from a sample and the part you zoom into at full density. The new *Design > Scan* tab estimates normals, removes
   stray points, thins a cloud evenly, selects points with a lasso, a box or a brush to keep or delete them, and slices

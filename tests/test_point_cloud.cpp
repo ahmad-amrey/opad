@@ -191,6 +191,20 @@ TEST(text_clouds_xyz_pts_csv) {
   CHECK_EQ(int(a.rgb[1]), 128);
   CHECK(a.has_scalar());
   CHECK_NEAR(a.scalar[1], 8, 1e-6);
+  // ASC (RealityScan, CloudCompare): the same columns as XYZ, here x y z r g b nx ny nz and x y z nx ny nz r g b.
+  write_text_file(f.dir / "r.asc", "0.5 -1.25 2 200 100 50 0 0 1\n1.5 -1.25 2 10 20 30 0 1 0\n");
+  a = cloud_of(open(f.dir / "r.asc", true));
+  CHECK_EQ(a.size(), 2u);
+  CHECK(a.colored());
+  CHECK(a.has_normals());
+  CHECK_EQ(int(a.rgb[0]), 200);
+  CHECK_NEAR(a.normals[4], 1, 1e-6);
+  write_text_file(f.dir / "n.asc", "1 2 3 0 0 1 255 0 128\n4 5 6 0.6 0.8 0 1 2 3\n");
+  a = cloud_of(open(f.dir / "n.asc", true));
+  CHECK(a.colored());
+  CHECK(a.has_normals());
+  CHECK_EQ(int(a.rgb[2]), 128);
+  CHECK_NEAR(a.normals[4], 0.8, 1e-6);
   // A bad line is reported.
   write_text_file(f.dir / "bad.xyz", "1 2 3\n4 5\n");
   CHECK_THROWS(open(f.dir / "bad.xyz", true));

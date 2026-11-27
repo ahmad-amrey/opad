@@ -136,7 +136,7 @@ So it rides the shape cache, BinTools (viewer cache), make_editable and linked a
 `cloud::to_brep` (BREP format 3, precision 9: normals kept, floats exact) in `store_body`, `persist_body` and the engine's
 `materialize`; never `brep_from_shape` (no triangulation). Far scans: readers keep points near zero (`Points::offset`, the
 first point rounded to a metre beyond 10 m) and the import puts the offset into the body's `transform`. Readers
-(`cloud/io.cpp`, `e57.cpp`): PLY (the mesh reader's parser too, `read_ply_data`), XYZ/PTS/CSV (columns by header or by
+(`cloud/io.cpp`, `e57.cpp`): PLY (the mesh reader's parser too, `read_ply_data`), XYZ/ASC/PTS/CSV (columns by header or by
 value ranges, parsed in parallel blocks), LAS 0-10 (LAZ refused: LASzip is LGPL), E57 without a library (pages + CRC-32C,
 XML, bit-packed streams joined per field, pose, invalid points; a writer too). Tools (`cloud/tools.cpp`): `Grid` (kNN,
 radius), `spacing` (sampled above 400k points), `slice` + `profile` (chained polylines, Douglas-Peucker), `outliers`,
