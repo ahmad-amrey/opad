@@ -552,3 +552,83 @@ TEST(point_pairs_from_a_cloud_onto_a_sketch) {
 }
 
 CHECK_MAIN()
+
+// ---- 3-2-1
+namespace {
+// The block 100 x 60 x 40 placed by the known move (its corner at the move's origin, its sides along the moved axes).
+std::string moved_block(Document& doc) {
+  const gp_Trsf m = known_move();
+  const gp_Pnt o = gp_Pnt(0, 0, 0).Transformed(m);
+  const gp_Dir z = gp_Dir(0, 0, 1).Transformed(m), x = gp_Dir(1, 0, 0).Transformed(m);
+  return feature_cmd(doc, "box", {{"plane", {{"origin", {o.X(), o.Y(), o.Z()}}, {"normal", {z.X(), z.Y(), z.Z()}}, {"x", {x.X(), x.Y(), x.Z()}}}},
+                                  {"length", "100 mm"}, {"width", "60 mm"}, {"height", "40 mm"}, {"centered", false}})["body_ids"][0];
+}
+gp_Dir moved(const gp_Dir& d) { return d.Transformed(known_move()); }
+gp_Pnt moved(const gp_Pnt& p) { return p.Transformed(known_move()); }
+}  // namespace
+
+TEST(sequence_321_planes_line_and_point) {
+  Document doc = Document::create();
+  const std::string block = box(doc, 0, 0, 0, 100, 60, 40);
+  // Primary only: the moved copy's bottom flush onto the block's bottom; three freedoms stay (two slides, one turn).
+  std::string copy = moved_block(doc);
+  json inputs = {{"from", "sequence"}, {"flip", true},
+                 {"primary_from", {{"face", face(doc, copy, moved(gp_Dir(0, 0, -1)))}}}, {"primary_to", {{"face", face(doc, block, gp_Dir(0, 0, -1))}}},
+                 {"secondary", "plane"}, {"tertiary", "plane"}};
+  align(doc, {body_ref(copy)}, inputs);
+  json result = doc.ops.back().data.at("result");
+  CHECK_EQ(result.at("free").size(), 3u);
+  CHECK(result["free"][2].contains("turn") && std::fabs(result["free"][2]["turn"][2].get<double>()) > 1 - 1e-9);
+  Box b = bounds(doc, copy);
+  CHECK_NEAR(b.z0, 0, 1e-6);  // flush on the bottom plane
+  CHECK_NEAR(b.z1, 40, 1e-6);
+  // Primary, secondary (front onto front), tertiary (left onto left), planes all: the copy lands on the block.
+  copy = moved_block(doc);
+  inputs["primary_from"] = {{"face", face(doc, copy, moved(gp_Dir(0, 0, -1)))}};
+  inputs["secondary_from_plane"] = {{"face", face(doc, copy, moved(gp_Dir(0, -1, 0)))}};
+  inputs["secondary_to_plane"] = {{"face", face(doc, block, gp_Dir(0, -1, 0))}};
+  inputs["tertiary_from_plane"] = {{"face", face(doc, copy, moved(gp_Dir(-1, 0, 0)))}};
+  inputs["tertiary_to_plane"] = {{"face", face(doc, block, gp_Dir(-1, 0, 0))}};
+  align(doc, {body_ref(copy)}, inputs);
+  result = doc.ops.back().data.at("result");
+  CHECK(result.at("free").empty());
+  CHECK_EQ(result.at("steps").size(), 3u);
+  b = bounds(doc, copy);
+  for (const double off : {b.x0, b.y0, b.z0, b.x1 - 100, b.y1 - 60, b.z1 - 40}) CHECK(std::fabs(off) < 1e-6);
+  // Without the tertiary: one slide left, along the front plane's meeting with the bottom (X).
+  copy = moved_block(doc);
+  inputs["primary_from"] = {{"face", face(doc, copy, moved(gp_Dir(0, 0, -1)))}};
+  inputs["secondary_from_plane"] = {{"face", face(doc, copy, moved(gp_Dir(0, -1, 0)))}};
+  inputs["tertiary"] = "none";
+  align(doc, {body_ref(copy)}, inputs);
+  result = doc.ops.back().data.at("result");
+  CHECK_EQ(result.at("free").size(), 1u);
+  CHECK(std::fabs(result["free"][0]["slide"][0].get<double>()) > 1 - 1e-9);
+  b = bounds(doc, copy);
+  CHECK(std::fabs(b.y0) < 1e-6 && std::fabs(b.z0) < 1e-6 && std::fabs(b.x1 - b.x0 - 100) < 1e-6);
+  // Secondary line (the bottom front edge along the block's) and tertiary point (the corner onto the corner).
+  copy = moved_block(doc);
+  json lines = {{"from", "sequence"}, {"flip", true},
+                {"primary_from", {{"face", face(doc, copy, moved(gp_Dir(0, 0, -1)))}}}, {"primary_to", {{"face", face(doc, block, gp_Dir(0, 0, -1))}}},
+                {"secondary", "line"}, {"secondary_from_line", {{"edge", edge(doc, copy, moved(gp_Pnt(0, 0, 0)), moved(gp_Pnt(100, 0, 0)))}}},
+                {"secondary_to_line", {{"edge", edge(doc, block, gp_Pnt(0, 0, 0), gp_Pnt(100, 0, 0))}}},
+                {"tertiary", "point"}, {"tertiary_from_point", {vertex(doc, copy, moved(gp_Pnt(0, 0, 0)))}}, {"tertiary_to_point", {vertex(doc, block, gp_Pnt(0, 0, 0))}}};
+  align(doc, {body_ref(copy)}, lines);
+  CHECK(doc.ops.back().data.at("result").at("free").empty());
+  b = bounds(doc, copy);
+  for (const double off : {b.x0, b.y0, b.z0, b.x1 - 100, b.y1 - 60, b.z1 - 40}) CHECK(std::fabs(off) < 1e-6);
+  // A secondary line square to the primary plane cannot fix the turn; a tertiary plane along the slide cannot stop it.
+  copy = moved_block(doc);
+  lines["primary_from"] = {{"face", face(doc, copy, moved(gp_Dir(0, 0, -1)))}};
+  lines["secondary_from_line"] = {{"edge", edge(doc, copy, moved(gp_Pnt(0, 0, 0)), moved(gp_Pnt(0, 0, 40)))}};
+  CHECK(error_of([&] { align(doc, {body_ref(copy)}, lines); }).find("square to the primary plane") != std::string::npos);
+  lines["secondary_from_line"] = {{"edge", edge(doc, copy, moved(gp_Pnt(0, 0, 0)), moved(gp_Pnt(100, 0, 0)))}};
+  lines["tertiary"] = "plane";
+  lines["tertiary_from_plane"] = {{"face", face(doc, copy, moved(gp_Dir(0, -1, 0)))}};
+  lines["tertiary_to_plane"] = {{"face", face(doc, block, gp_Dir(0, -1, 0))}};
+  CHECK(error_of([&] { align(doc, {body_ref(copy)}, lines); }).find("runs along the slide") != std::string::npos);
+  // No primary: refused with what to pick.
+  const std::string none = error_of([&] { align(doc, {body_ref(copy)}, json{{"from", "sequence"}}); });
+  std::printf("    no primary: %s\n", none.c_str());
+  CHECK(none.find("primary") != std::string::npos);  // the schema check names the field, the feature the planes
+}

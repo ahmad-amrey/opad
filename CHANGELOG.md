@@ -32,6 +32,13 @@ including a new airflow check for ducts and fittings.
   finds the move that lines them all up best, shows it at once, and lists how far each pair is still apart. A pair
   picked by mistake, far off the others, is left out and named; Esc takes back the last pick and Remove drops a pair.
   It works with meshes, point clouds and solids alike, and AI assistants use it through Align (`from: point_pairs`).
+- **Align a scan step by step (3-2-1).** Align's new *3-2-1 steps* way lines a part up the way reverse engineering does:
+  a primary plane onto a plane, then a secondary line or plane, then a tertiary point or plane, each step keeping what
+  the earlier ones fixed, while the panel says what is still free ("Free: slide along X"). On a scan, rest the pointer
+  near an edge and OPAD offers the crease where its two flats meet, drawn along its whole length and far more accurate
+  than the ragged mesh edges; a box over a run of edges gives the line through them. Align no longer opens the plane
+  picker by itself: the panel shows which plane (From or To) comes next and opens the picker when you click it, and
+  *Fit to points* explains itself and says what each click did (a vertex added, one taken back, or nothing under it).
 - **Point clouds: work with the raw scan.** A scanning app's mesh rounds edges, fills small holes and smooths detail
   away; the measured points keep it. OPAD now opens and imports point clouds as bodies of their own: PLY files without
   faces (they used to be refused), XYZ, PTS, CSV, E57 and LAS, with their colours, normals and intensity, in the right

@@ -113,6 +113,7 @@ CASES = [
     ("align-pairs", pairs_parts, {"OPAD_BENCH_ALIGN_PAIRS": "{prefix}"}),
     ("align-steps", pairs_parts, {"OPAD_BENCH_ALIGN_STEPS": "{prefix}"}),
     ("align-crease", pairs_parts, {"OPAD_BENCH_ALIGN_CREASE": "{prefix}"}),
+    ("align-321", pairs_parts, {"OPAD_BENCH_ALIGN_SEQUENCE": "{prefix}"}),
     ("align", align_parts, {"OPAD_BENCH_ALIGN": "{prefix}"}),
     ("align-ar", lambda root, document: align_parts(root, document), {"OPAD_BENCH_ALIGN": "{prefix}", "OPAD_LANG": "ar"}),
     ("move-perf-engine", lambda root, document: engine(), {"OPAD_BENCH_MOVEPERF": "{prefix}"}),

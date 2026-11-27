@@ -241,7 +241,8 @@ class DesignController : public QObject {
   bool stepBackPair();         // Esc: the last pick of the pairs; false when there is none
   void refreshPairMarkers();   // the picks changed: resolve their points again
   void drawPairMarkers();      // the resolved points, the preview's move and the stray pair
-  void pairPreviewed(const opad::json& result);  // a preview's fit (after its motion is drawn); null: none
+  void pairPreviewed(const opad::json& result);
+  static QString freedomText(const opad::json& free);  // Align 3-2-1's result "free" in words  // a preview's fit (after its motion is drawn); null: none
   bool pairsWaiting(opad::json& inputs);  // fewer than three whole pairs: true (and says so); else the uneven tail trimmed
   // Creases (DesignPairs section "creases"): the hovered side's crease fitted on a worker, drawn as a guide line, taken by a
   // click on that side; a box over sides gives the line through them.

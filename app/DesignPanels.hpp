@@ -121,6 +121,9 @@ class FeaturePanel : public QWidget {
   // says which side) without opening the plane picker: that opens when the box is clicked. Empty: none waiting.
   QString nextPlane() const { return m_nextPlane; }
   QString planeStepText(const QString& input) const;  // the line under a plane box (benches)
+  // A line about what the preview found, above the status (Align 3-2-1: which freedoms are still open). Empty: hidden.
+  void setResultNote(const QString& text);
+  QString resultNote() const;
  signals:
   void pairsEdited();  // a pair removed in the list: the view's picks and the markers follow
   void inputsChanged();                 // anything that changes the result
@@ -186,6 +189,7 @@ class FeaturePanel : public QWidget {
     QCheckBox* fitCentre = nullptr;
   };
   QString m_nextPlane;
+  QLabel* m_resultNote = nullptr;
   std::map<QString, QLabel*> m_planeSteps;  // Align's plane rows: the line saying which side and what to do
   bool stepsPlanes() const { return m_spec && m_spec->kind == "align"; }
   void buildPairList();

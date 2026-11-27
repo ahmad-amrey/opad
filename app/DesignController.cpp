@@ -1710,6 +1710,7 @@ void DesignController::runPreview(bool commit, bool keep) {
         }
       if (error != "cancelled") m_form->setStatus(i18n::t(error), picked || !picks);
       if (error != "cancelled") pairPreviewed(opad::json());
+      if (error != "cancelled") m_form->setResultNote(QString());
       return;
     }
     m_readyPlan = plan;
@@ -1778,6 +1779,12 @@ void DesignController::runPreview(bool commit, bool keep) {
     parts.insert(parts.end(), construction->begin(), construction->end());
     m_viewport->setPreviewBodies(parts, hidden);
     m_viewport->setPreviewMotion(*motions);  // moved as they are (Move, Align): their own objects drawn elsewhere
+    {  // Align 3-2-1: what is still free after the steps given (slides along, turns about), or fully fixed
+      QString note;
+      for (const auto& result : resultsFor(*plan, target, editResult))
+        if (result.is_object() && result.contains("free")) note = freedomText(result["free"]);
+      m_form->setResultNote(note);
+    }
     if (!m_form->pairInputs().first.isEmpty()) {  // point pairs: the residuals in the list, the markers moved with the bodies
       opad::json fit;
       for (const auto& result : resultsFor(*plan, target, editResult))
@@ -2391,4 +2398,23 @@ void DesignController::creaseHover() {
     }
     emit status(tr("Crease: %1 · click to take it").arg(fitpick::quality(m_crease)));
   });
+}
+
+// What a 3-2-1 Align leaves free, in words: "Free: slide along X, turn about Z" (a direction named by its world axis when it
+// is one, else by its components), or that nothing is.
+QString DesignController::freedomText(const opad::json& free) {
+  if (!free.is_array()) return {};
+  if (free.empty()) return tr("Fully fixed: nothing is left free.");
+  auto name = [](const opad::json& d) {
+    const double v[3] = {d[0].get<double>(), d[1].get<double>(), d[2].get<double>()};
+    for (int k = 0; k < 3; ++k)
+      if (std::fabs(std::fabs(v[k]) - 1) < 1e-4) return QString("XYZ"[k]);
+    return QString("(%1, %2, %3)").arg(v[0], 0, 'f', 2).arg(v[1], 0, 'f', 2).arg(v[2], 0, 'f', 2);
+  };
+  QStringList parts;
+  for (const auto& f : free) {
+    if (f.contains("slide")) parts << tr("slide along %1").arg(name(f["slide"]));
+    else if (f.contains("turn")) parts << tr("turn about %1").arg(name(f["turn"]));
+  }
+  return tr("Free: %1").arg(parts.join(", "));
 }

@@ -35,6 +35,7 @@ opad::design::ParamTable paramTable(const opad::Scene& scene) {
 
 // "three_points" -> "Three points": choice keys are identifiers in the op, words in the UI.
 QString choiceLabel(const std::string& key) {
+  if (key == "sequence") return i18n::t("3-2-1 steps");  // Align's primary, secondary and tertiary steps
   QString s = QString::fromStdString(key).replace('_', ' ');
   if (!s.isEmpty()) s[0] = s[0].toUpper();
   return i18n::t(s);
@@ -244,6 +245,11 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     if (chosen.isValid()) setBodyColour(chosen);
   });
   connect(m_bodyColourReset, &QPushButton::clicked, this, [this] { setBodyColour(QColor()); });
+  m_resultNote = new QLabel(this);
+  m_resultNote->setObjectName("resultNote");
+  m_resultNote->setWordWrap(true);
+  m_resultNote->setVisible(false);
+  v->addWidget(m_resultNote);
   m_status = new QLabel(this);
   m_status->setObjectName("tertiary");
   m_status->setWordWrap(true);
@@ -279,6 +285,8 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
   m_suggested.clear();
   m_guideStep = m_guideCount = 0;
   m_nextPlane.clear();
+  m_resultNote->clear();
+  m_resultNote->setVisible(false);
   m_planeSteps.clear();  // deleted with the rows
   m_pairList = nullptr;  // deleted with the rows
   m_pairRows = nullptr;
@@ -595,7 +603,7 @@ void FeaturePanel::refreshVisibility() {
       if (shownNote.isEmpty() && m_nextPlane == it->first && n == 0) shownNote = tr("Click to choose the plane");
       it->second.pick->setNote(shownNote);
       if (const auto step = m_planeSteps.find(it->first); step != m_planeSteps.end()) {
-        const bool from = in.name.rfind("from", 0) == 0;
+        const bool from = in.name.find("from") != std::string::npos;  // from_plane, primary_from, secondary_from_plane
         QString text;
         if (n > 0 && !fitpick::isFit(p)) text = from ? tr("From: done. Click the box to choose another plane.") : tr("To: done. Click the box to choose another plane.");
         else if (n > 0) text = from ? tr("From: done (fitted, its quality below).") : tr("To: done (fitted, its quality below).");
@@ -836,6 +844,16 @@ QString FeaturePanel::problem(const QString& input) const {
 }
 
 QString FeaturePanel::statusText() const { return m_status->text(); }
+
+void FeaturePanel::setResultNote(const QString& text) {
+  if (m_resultNote->text() == text && m_resultNote->isVisible() == !text.isEmpty()) return;
+  m_resultNote->setText(text);
+  m_resultNote->setStyleSheet(QString("color: %1;").arg(theme::css(theme::current().fg2)));
+  m_resultNote->setVisible(!text.isEmpty());
+  emit contentResized();
+}
+
+QString FeaturePanel::resultNote() const { return m_resultNote->isVisible() ? m_resultNote->text() : QString(); }
 
 void FeaturePanel::setStatus(const QString& text, bool error) {
   const Tokens& t = theme::current();
