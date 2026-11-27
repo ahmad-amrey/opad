@@ -106,6 +106,13 @@ gp_Pnt fit_point(const Ctx& ctx, const json& r) {
 }
 
 json quality_json(const scanfit::Quality& q) { return q.to_json(); }
+// A base's outline squared (in the base plane, so no frame to change): its rectangle's size, the turn from the unsquared X
+// and the box the unsquared X gives (rounded to 0.01 mm / 0.01 deg: a report, not a measure to compute with).
+json outline_json(const scanfit::ScanOutline& o) {
+  auto r2 = [](double v) { return std::round(v * 100) / 100; };
+  return {{"size_mm", json::array({r2(o.length), r2(o.width)})}, {"turn_deg", r2(o.turn_deg)},
+          {"unsquared_mm", json::array({r2(o.unsquared_length), r2(o.unsquared_width)})}};
+}
 
 // The fit computed now: a result in the body's coordinates when there is a body, else in world coordinates.
 json compute_fit(const Ctx& ctx, const json& fit, bool want_axis) {
@@ -175,7 +182,8 @@ json compute_fit(const Ctx& ctx, const json& fit, bool want_axis) {
   if (of.empty()) of = want_axis ? "auto" : "plane";
   if (of == "scan_axes") {
     const scanfit::ScanAxes axes = scanfit::scan_axes(*b.mesh, ctx.cancel);
-    const scanfit::ScanFrame f = scanfit::scan_frame(*b.mesh, axes, fit.value("base", 0), fit.value("turn", 0), fit.value("origin", std::string("auto")));
+    const scanfit::ScanFrame f = scanfit::scan_frame(*b.mesh, axes, fit.value("base", 0), fit.value("turn", 0), fit.value("origin", std::string("auto")),
+                                                     fit.value("x", std::string("outline")));
     r["of"] = "scan_axes";
     r["origin"] = j3(f.origin.XYZ());
     r["normal"] = j3(f.normal.XYZ());
@@ -184,6 +192,8 @@ json compute_fit(const Ctx& ctx, const json& fit, bool want_axis) {
     r["bases"] = f.bases;
     r["turns"] = f.turns;
     r["share"] = f.share;
+    r["kind"] = f.kind;
+    r["outline"] = outline_json(f.outline);
     r["quality"] = quality_json(f.q);
     return r;
   }
@@ -367,7 +377,7 @@ json fit_reference(const Document& doc, const Scene& scene, json ref, const std:
   return out;
 }
 
-json scan_axes_report(const Document& doc, const Scene& scene, const std::string& body, const Cancel& cancel) {
+json scan_axes_report(const Document& doc, const Scene& scene, const std::string& body, const Cancel& cancel, const std::string& x) {
   const ParamTable params = params_of(scene);
   const std::map<std::string, TopoDS_Shape> fresh;
   const Ctx ctx = plain_ctx(doc, scene, params, fresh, cancel);
@@ -377,19 +387,22 @@ json scan_axes_report(const Document& doc, const Scene& scene, const std::string
   for (size_t i = 0; i < axes.bases.size(); ++i) {
     ctx.check_cancel();
     const auto& s = axes.bases[i];
-    const auto turns = scanfit::scan_turns(*b.mesh, axes, int(i));
+    const auto turns = scanfit::scan_turns(*b.mesh, axes, int(i), x);
     json t = json::array();
     for (const auto& d : turns) t.push_back(j3(d.Transformed(b.trsf).XYZ()));
     bases.push_back({{"base", i},
+                     {"kind", s.kind},
                      {"normal", j3(s.normal.Transformed(b.trsf).XYZ())},
                      {"origin", j3(s.origin.Transformed(b.trsf).XYZ())},
                      {"share", s.share},
                      {"quality", s.q.to_json()},
+                     {"outline", outline_json(scanfit::scan_outline(*b.mesh, axes, int(i)))},
                      {"turns", t}});
   }
-  const json from = {{"fit", {{"body", body}, {"of", "scan_axes"}, {"base", 0}, {"turn", 0}, {"origin", "auto"}}}};
+  const json from = {{"fit", {{"body", body}, {"of", "scan_axes"}, {"base", 0}, {"turn", 0}, {"origin", "auto"}, {"x", x}}}};
   return {{"body", body},
           {"method", axes.method},
+          {"x", x},
           {"bases", bases},
           {"align_inputs",
            {{"bodies", json::array({{{"body", body}, {"kind", "body"}}})},
@@ -399,7 +412,9 @@ json scan_axes_report(const Document& doc, const Scene& scene, const std::string
             {"to_plane", {{"base", "xy"}}},
             {"frame", true}}},
           {"note", "Align with these inputs stands the scan on XY with base 0 and turn 0; change fit.base / fit.turn to try the others "
-                   "(\"bases\" lists them; each base's \"turns\" are its X directions), flip to stand it the other way up."}};
+                   "(\"bases\" lists them; each base's \"turns\" are its X directions), flip to stand it the other way up. With x "
+                   "\"outline\" turn 0 is the long side of the outline's minimum-area rectangle (\"outline\": its size and the turn "
+                   "from the unsquared X); x \"walls\" takes the walls' directions instead."}};
 }
 
 }  // namespace opad::design
