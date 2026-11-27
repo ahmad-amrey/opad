@@ -89,8 +89,10 @@ std::vector<Patch> read_boundary(const std::string& t);
 // Runs one of OpenFOAM's programs on the case `where` (-case where), its log in where/log.<app>. `at`: where the study is
 // when the program starts; `to`: where it is once it is done (its share of the bar, followed through its log: the mesher's
 // phases, a solver's iterations against its controlDict's endTime); a program of seconds keeps `at`. Throws Error with the
-// log's FOAM FATAL text when it fails, "cancelled" when progress says stop. Returns the log.
+// log's FOAM FATAL text when it fails, "cancelled" when progress says stop. Returns the log. `settled` (a solver): asked every
+// 2 s while it runs; once true the case's controlDict says stopAt writeNow (it needs runTimeModifiable true), so the solver
+// writes the iteration it is on and ends.
 std::string run(const OpenFoam& foam, const std::string& app, const std::vector<std::string>& args, const fs::path& where, double at, double to,
-                int timeout_ms, const Progress& progress);
+                int timeout_ms, const Progress& progress, const std::function<bool()>& settled = {});
 
 }  // namespace opad::sim::foam
