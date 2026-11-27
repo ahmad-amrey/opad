@@ -15,6 +15,7 @@
 #include <IntCurvesFace_ShapeIntersector.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <Standard_Failure.hxx>
 #include <TopoDS.hxx>
@@ -26,8 +27,10 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 
+#include "opad/design/provenance.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/mass.hpp"
@@ -64,6 +67,13 @@ size_t arg_size(const json& args, const char* key, size_t fallback, size_t most)
   if (!args.contains(key)) return fallback;
   const long long v = args[key].get<long long>();
   return static_cast<size_t>(std::clamp<long long>(v, 0, static_cast<long long>(most)));
+}
+
+// A thickness ray that left the body through a side meeting its own along an edge (`adjacent`) at more than 10 degrees
+// measured the wedge of that edge (a pocket coming out of a slanted face, a chamfer's end), not a wall: two sides of a wall
+// face away from each other. A convex edge of 90 degrees or more is never crossed this way, so only sharp ones are left out.
+bool knife_edge(const gp_Vec& outward, const gp_Vec& exit_outward, bool adjacent) {
+  return adjacent && -outward.Dot(exit_outward) < std::cos(10 * M_PI / 180);
 }
 
 // The print check of a mesh body: the questions of the B-rep check asked per triangle. A mesh has no faces to name,
@@ -164,6 +174,7 @@ json print_mesh(const TopoDS_Shape& shape, const gp_Vec& up, double steep, doubl
   for (auto& [area, item] : found) overhangs.push_back(std::move(item));
 
   json thin = json::array();
+  size_t knives = 0;
   if (min_wall > 0 && !tris.empty()) {
     // A uniform grid of the triangles, cells sized for a few dozen triangles each, laid out as offsets + indices.
     const gp_Pnt lo = box.CornerMin(), hi = box.CornerMax();
@@ -200,8 +211,21 @@ json print_mesh(const TopoDS_Shape& shape, const gp_Vec& up, double steep, doubl
         slots.resize(start[cells]);
       }
     }
+    // Smooth patches (neighbours across an edge that turns less than 30 degrees) and the patches meeting along a crease:
+    // a ray leaving through a patch that meets its own one at a sharp angle measures that edge's wedge, not a wall.
+    std::vector<int> patch(tris.size());
+    for (size_t i = 0; i < patch.size(); ++i) patch[i] = int(i);
+    std::function<int(int)> top = [&](int i) { return patch[size_t(i)] == i ? i : patch[size_t(i)] = top(patch[size_t(i)]); };
+    for (const auto& [edge, list] : edges)
+      if (list.size() == 2 && tris[size_t(list[0])].n.Dot(tris[size_t(list[1])].n) > std::cos(30 * M_PI / 180)) patch[size_t(top(list[1]))] = top(list[0]);
+    std::set<std::pair<int, int>> creases;
+    for (const auto& [edge, list] : edges)
+      for (size_t a = 0; a < list.size(); ++a)
+        for (size_t b = a + 1; b < list.size(); ++b)
+          if (top(list[a]) != top(list[b])) creases.insert(std::minmax(top(list[a]), top(list[b])));
     std::vector<char> thinMark(tris.size(), 0);
     std::vector<double> thickness(tris.size(), 1e300);
+    std::vector<int> opposite(tris.size(), -1);
     std::vector<uint32_t> seen(tris.size(), 0);
     uint32_t stamp = 0;
     const size_t stride = std::max<size_t>(1, tris.size() / 200000);  // a ray per triangle up to 200k of them
@@ -216,6 +240,7 @@ json print_mesh(const TopoDS_Shape& shape, const gp_Vec& up, double steep, doubl
       range(s, e, r);
       ++stamp;
       double nearest = 1e300;
+      int hit = -1;
       for (int z = r[4]; z <= r[5]; ++z)
         for (int y = r[2]; y <= r[3]; ++y)
           for (int x = r[0]; x <= r[1]; ++x) {
@@ -241,12 +266,17 @@ json print_mesh(const TopoDS_Shape& shape, const gp_Vec& up, double steep, doubl
               const double v = d.Dot(qv) / det;
               if (v < 0 || u + v > 1) continue;
               const double h = e2.Dot(qv) / det + 1e-4;
-              if (h > 1e-4 && h < nearest) nearest = h;
+              if (h > 1e-4 && h < nearest) nearest = h, hit = int(j);
             }
           }
       if (nearest < min_wall) {
+        if (knife_edge(t.n, tris[size_t(hit)].n, creases.count(std::minmax(top(int(i)), top(hit))) > 0)) {
+          ++knives;
+          continue;
+        }
         thinMark[i] = 1;
         thickness[i] = nearest;
+        opposite[i] = hit;
       }
     }
     std::vector<std::pair<double, json>> walls;
@@ -256,8 +286,10 @@ json print_mesh(const TopoDS_Shape& shape, const gp_Vec& up, double steep, doubl
         if (thickness[size_t(i)] < thickness[size_t(worst)]) worst = i;
       const Tri& t = tris[size_t(worst)];
       const gp_Pnt at((t.p[0].XYZ() + t.p[1].XYZ() + t.p[2].XYZ()) / 3);
+      const gp_Pnt across = at.Translated(-t.n * thickness[size_t(worst)]);
       walls.push_back({thickness[size_t(worst)], {{"face", worst}, {"faces", ordinals(members)}, {"triangles", members.size()},
-                                                  {"thickness_mm", thickness[size_t(worst)]}, {"point", {at.X(), at.Y(), at.Z()}}}});
+                                                  {"thickness_mm", thickness[size_t(worst)]}, {"point", {at.X(), at.Y(), at.Z()}},
+                                                  {"opposite_face", opposite[size_t(worst)]}, {"opposite_point", {across.X(), across.Y(), across.Z()}}}});
     }
     std::sort(walls.begin(), walls.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     for (auto& [value, item] : walls) thin.push_back(std::move(item));
@@ -268,7 +300,7 @@ json print_mesh(const TopoDS_Shape& shape, const gp_Vec& up, double steep, doubl
   for (size_t k = 0; k < thin.size() && k < 50; ++k) shownThin.push_back(thin[k]);
   findings += overhangs.size() + thin.size();
   json out = {{"contact_area_mm2", contact}, {"overhangs", shownOverhangs}, {"thin_walls", shownThin}, {"thin_features", json::array()},
-              {"mesh", true}, {"triangles", tris.size()}};
+              {"mesh", true}, {"triangles", tris.size()}, {"knife_edges", knives}};
   if (overhangs.size() > shownOverhangs.size()) out["more_overhangs"] = overhangs.size() - shownOverhangs.size();
   if (thin.size() > shownThin.size()) out["more_thin_walls"] = thin.size() - shownThin.size();
   return out;
@@ -533,23 +565,83 @@ json check_clearance(const Document& doc, const Scene& scene, const json& args, 
   return out;
 }
 
+Vec3 parse_build_direction(const json& d) {
+  Vec3 up{0, 0, 1};
+  if (d.is_null()) return up;
+  if (d.is_string()) {
+    const std::string s = d.get<std::string>();
+    if (s.size() != 2 || (s[0] != '+' && s[0] != '-') || s[1] < 'x' || s[1] > 'z') throw Error("build_direction is +x, -x, +y, -y, +z, -z or [x, y, z]");
+    const double s1 = s[0] == '-' ? -1.0 : 1.0;
+    up = {s[1] == 'x' ? s1 : 0.0, s[1] == 'y' ? s1 : 0.0, s[1] == 'z' ? s1 : 0.0};
+  } else {
+    if (!d.is_array() || d.size() != 3 || !d[0].is_number() || !d[1].is_number() || !d[2].is_number())
+      throw Error("build_direction is +x, -x, +y, -y, +z, -z or [x, y, z]");
+    up = {d[0].get<double>(), d[1].get<double>(), d[2].get<double>()};
+  }
+  const double len = std::sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
+  if (!(len > 1e-12) || !std::isfinite(len)) throw Error("build_direction must not be zero");
+  return {up[0] / len, up[1] / len, up[2] / len};
+}
+
+Vec3 face_outward_normal(const Document& doc, const Scene& scene, const Ref& ref) {
+  if (ref.kind != Ref::Kind::Face) throw Error("bed_face takes a face reference");
+  const Node* n = scene.node(ref.body);
+  if (!n || n->kind != Node::Kind::Body || n->body_missing) throw Error("bed_face: unknown body " + ref.body);
+  const TopoDS_Shape shape = node_world_shape(doc, scene, ref.body);
+  gp_Vec sum(0, 0, 0);
+  if (n->representation == "mesh") {  // a triangle, numbered as print_mesh numbers them
+    int at = 0;
+    for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
+      TopLoc_Location loc;
+      const auto mesh = BRep_Tool::Triangulation(TopoDS::Face(f.Current()), loc);
+      if (mesh.IsNull()) continue;
+      if (ref.index >= at + mesh->NbTriangles()) {
+        at += mesh->NbTriangles();
+        continue;
+      }
+      int a, b, c;
+      mesh->Triangle(ref.index - at + 1).Get(a, b, c);
+      if (f.Current().Orientation() == TopAbs_REVERSED) std::swap(b, c);
+      const gp_Pnt p = mesh->Node(a).Transformed(loc.Transformation()), q = mesh->Node(b).Transformed(loc.Transformation()),
+                   r = mesh->Node(c).Transformed(loc.Transformation());
+      sum = gp_Vec(p, q).Crossed(gp_Vec(p, r));
+      break;
+    }
+  } else {
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(shape, TopAbs_FACE, faces);
+    if (ref.index < 0 || ref.index >= faces.Extent()) throw Error("bed_face: the body has no face " + std::to_string(ref.index));
+    const TopoDS_Face& face = TopoDS::Face(faces(ref.index + 1));
+    double u0, u1, v0, v1;
+    BRepTools::UVBounds(face, u0, u1, v0, v1);
+    BRepGProp_Face props(face);
+    BRepClass_FaceClassifier inside;
+    const int k = 6;
+    for (int pass = 0; pass < 2 && sum.Magnitude() < 1e-12; ++pass)  // samples inside the face, else any (an annulus' middle)
+      for (int i = 0; i < k; ++i)
+        for (int j = 0; j < k; ++j) {
+          const double u = u0 + (u1 - u0) * (i + 0.5) / k, v = v0 + (v1 - v0) * (j + 0.5) / k;
+          if (pass == 0) {
+            inside.Perform(face, gp_Pnt2d(u, v), 1e-9);
+            if (inside.State() != TopAbs_IN) continue;
+          }
+          gp_Pnt p;
+          gp_Vec normal;
+          props.Normal(u, v, p, normal);  // outward, face orientation included
+          if (normal.Magnitude() > 1e-12) sum += normal.Normalized();
+        }
+  }
+  if (sum.Magnitude() < 1e-12) throw Error("bed_face: the face has no normal to lie on (a degenerate face, or a curved one that faces every way)");
+  sum.Normalize();
+  return {sum.X(), sum.Y(), sum.Z()};
+}
+
 json check_print(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled) {
   // The build direction: which way layers stack.
-  gp_Vec up(0, 0, 1);
-  if (args.contains("build_direction")) {
-    const json& d = args["build_direction"];
-    if (d.is_string()) {
-      const std::string s = d.get<std::string>();
-      if (s.size() != 2 || (s[0] != '+' && s[0] != '-') || s[1] < 'x' || s[1] > 'z') throw Error("build_direction is +x, -x, +y, -y, +z, -z or [x, y, z]");
-      // Not SetCoord(index, value): OCCT writes (&x)[index - 1], which clang may assume only reaches x.
-      const double s1 = s[0] == '-' ? -1.0 : 1.0;
-      up = gp_Vec(s[1] == 'x' ? s1 : 0.0, s[1] == 'y' ? s1 : 0.0, s[1] == 'z' ? s1 : 0.0);
-    } else {
-      up = gp_Vec(d.at(0).get<double>(), d.at(1).get<double>(), d.at(2).get<double>());
-    }
-  }
-  if (up.Magnitude() < 1e-12) throw Error("build_direction must not be zero");
-  up.Normalize();
+  const Vec3 dir = parse_build_direction(args.contains("build_direction") ? args["build_direction"] : json());
+  const gp_Vec up(dir[0], dir[1], dir[2]);
+  // Who made each side of a thin wall: found once, for the bodies that have one.
+  std::unique_ptr<design::Provenance> provenance;
   const double overhang = args.value("overhang_deg", 45.0), min_wall = args.value("min_wall_mm", 0.8);
   if (!(overhang >= 0 && overhang < 90)) throw Error("overhang_deg is from 0 up to 90");
   if (!(min_wall >= 0)) throw Error("min_wall_mm must be zero or more");
@@ -578,7 +670,20 @@ json check_print(const Document& doc, const Scene& scene, const json& args, cons
     rays.Load(shape, 1e-7);
     json overhangs = json::array(), thin_walls = json::array(), thin_features = json::array();
     double contact = 0;
-    size_t samples_left = 4000;
+    size_t samples_left = 4000, knives = 0;
+    // Faces sharing an edge, for the knife-edge test.
+    std::vector<std::set<int>> neighbours(size_t(faces.Extent()) + 1);
+    if (min_wall > 0) {
+      TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+      TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+      for (int e = 1; e <= edgeFaces.Extent(); ++e) {
+        std::vector<int> around;
+        for (const auto& f : edgeFaces(e)) around.push_back(faces.FindIndex(f));
+        for (int a : around)
+          for (int b : around)
+            if (a != b && a > 0 && b > 0) neighbours[size_t(a)].insert(b);
+      }
+    }
     for (int fi = 1; fi <= faces.Extent(); ++fi) {
       if (cancelled && cancelled()) throw Error("cancelled");
       const TopoDS_Face& face = TopoDS::Face(faces(fi));
@@ -590,7 +695,8 @@ json check_print(const Document& doc, const Scene& scene, const json& args, cons
       BRepGProp_Face props(face);
       BRepClass_FaceClassifier inside;
       double worst = 0, lowest = 1e300, thinnest = 1e300;
-      gp_Pnt thin_at;
+      gp_Pnt thin_at, thin_exit;
+      int thin_across = 0;
       int down = 0, total = 0;
       const int n = 6;
       for (int i = 0; i < n; ++i)
@@ -617,7 +723,18 @@ json check_print(const Document& doc, const Scene& scene, const json& args, cons
             rays.PerformNearest(gp_Lin(start, gp_Dir(-normal)), 0, 1e6);
             if (rays.IsDone() && rays.NbPnt() > 0) {
               const double t = rays.WParameter(1) + 1e-4;
-              if (t < thinnest) thinnest = t, thin_at = p;
+              const TopoDS_Face& exit = rays.Face(1);
+              const int across = faces.FindIndex(exit);
+              if (t < min_wall && t < thinnest) {
+                gp_Pnt q;
+                gp_Vec exitNormal;
+                BRepGProp_Face(exit).Normal(rays.UParameter(1), rays.VParameter(1), q, exitNormal);
+                if (exitNormal.Magnitude() > 1e-12 && knife_edge(normal, exitNormal.Normalized(), neighbours[size_t(fi)].count(across) > 0)) {
+                  ++knives;
+                  continue;
+                }
+              }
+              if (t < thinnest) thinnest = t, thin_at = p, thin_exit = rays.Pnt(1), thin_across = across;
             }
           }
         }
@@ -629,16 +746,40 @@ json check_print(const Document& doc, const Scene& scene, const json& args, cons
       } else if (down > 0) {
         overhangs.push_back({{"face", fi - 1}, {"overhang_deg", std::asin(std::min(1.0, worst)) * 180.0 / M_PI}, {"area_mm2", area * down / total}});
       }
-      if (thinnest < min_wall) thin_walls.push_back({{"face", fi - 1}, {"thickness_mm", thinnest}, {"point", {thin_at.X(), thin_at.Y(), thin_at.Z()}}});
+      if (thinnest < min_wall)
+        thin_walls.push_back({{"face", fi - 1}, {"thickness_mm", thinnest}, {"point", {thin_at.X(), thin_at.Y(), thin_at.Z()}},
+                              {"opposite_face", thin_across - 1}, {"opposite_point", {thin_exit.X(), thin_exit.Y(), thin_exit.Z()}}});
       // A narrow face (a rib's top, a fin): twice its area over its boundary length is about its width.
       GProp_GProps edges;
       BRepGProp::LinearProperties(face, edges);
       const double width = edges.Mass() > 0 ? 2 * area / edges.Mass() : 1e300;
       if (min_wall > 0 && width < min_wall) thin_features.push_back({{"face", fi - 1}, {"width_mm", width}});
     }
+    // What made each side: the feature (or import) that owns each face, as entity_details' created_by says it.
+    if (!thin_walls.empty()) try {
+      if (!provenance) provenance = std::make_unique<design::Provenance>(doc, cancelled);
+      const auto& owners = provenance->face_owners(id);
+      for (auto& wall : thin_walls) {
+        json between = json::array(), names = json::array();
+        for (const int f : {wall["face"].get<int>(), wall["opposite_face"].get<int>()}) {
+          json side = {{"face", f}};
+          if (f >= 0 && size_t(f) < owners.size()) {
+            side["created_by"] = provenance->describe(owners[size_t(f)]);
+            const std::string name = side["created_by"].is_object() ? side["created_by"].value("name", "") : "";
+            if (!name.empty() && std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
+          }
+          between.push_back(std::move(side));
+        }
+        wall["between"] = std::move(between);
+        if (!names.empty()) wall["features"] = std::move(names);
+      }
+    } catch (const Error& e) {
+      if (std::string(e.what()) == "cancelled") throw;
+    } catch (...) {  // optional evidence: the walls stand without it
+    }
     findings += overhangs.size() + thin_walls.size() + thin_features.size();
     items.push_back({{"id", id}, {"name", scene.node(id)->name}, {"contact_area_mm2", contact}, {"overhangs", overhangs}, {"thin_walls", thin_walls},
-                     {"thin_features", thin_features}});
+                     {"thin_features", thin_features}, {"knife_edges", knives}});
   }
   json out = {{"check", "print"}, {"build_direction", {up.X(), up.Y(), up.Z()}}, {"overhang_deg", overhang}, {"min_wall_mm", min_wall},
               {"bodies", bodies.size()}, {"offset", offset}, {"items", items}, {"findings", findings}, {"status", findings ? "findings" : "clear"}};

@@ -40,6 +40,17 @@ json check_clearance(const Document& doc, const Scene& scene, const json& args, 
 // against build_direction ("+z" default, or [x, y, z]), the contact area on the build plate, walls thinner than
 // min_wall_mm (default 0.8) where sampled rays cross the body, and thin features (faces narrower than min_wall_mm).
 // args: select, offset/limit over the bodies. Bounded: at most 36 samples per face and 4000 per body.
+// A thin wall names both sides: `face` and `opposite_face` (where the ray left the body; `opposite_point`), and `between`,
+// each side's face with the feature that made it (`created_by` as entity_details gives it; solids of a design only). A ray
+// that leaves through a face meeting its own along an edge at a sharp angle (a pocket coming out of a slanted face) measures
+// the wedge of that edge, not a wall: such samples are left out and counted per body in `knife_edges`.
 json check_print(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled = {});
+
+// build_direction as check_print and the export's print placement take it: "+x", "-x", "+y", "-y", "+z", "-z" or
+// [x, y, z] (up from the bed), unit length. Throws on anything else or on zero.
+Vec3 parse_build_direction(const json& direction);
+// The outward normal of a face reference in world coordinates, averaged over the face when it is curved (a mesh body: of
+// that triangle, numbered as the print check numbers them). The face to lie on the bed points along -build_direction.
+Vec3 face_outward_normal(const Document& doc, const Scene& scene, const Ref& face);
 
 }  // namespace opad
