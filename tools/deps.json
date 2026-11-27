@@ -55,6 +55,24 @@
       "note": "fetched at configure when the system has no Eigen 3"
     },
     {
+      "name": "Manifold",
+      "file": "cmake/mesh_libs.cmake",
+      "version": "^set\\(OPAD_MANIFOLD_VERSION (\\S+)\\)$",
+      "upstream": {"kind": "github-release", "repo": "elalish/manifold"},
+      "git": "https://github.com/elalish/manifold", "tag": "v{v}",
+      "page": "https://github.com/elalish/manifold/releases",
+      "note": "fetched at configure, built static (mesh Booleans); bump OPAD_MANIFOLD_SHA256 with it"
+    },
+    {
+      "name": "meshoptimizer",
+      "file": "cmake/mesh_libs.cmake",
+      "version": "^set\\(OPAD_MESHOPT_VERSION (\\S+)\\)$",
+      "upstream": {"kind": "github-release", "repo": "zeux/meshoptimizer"},
+      "git": "https://github.com/zeux/meshoptimizer", "tag": "v{v}",
+      "page": "https://github.com/zeux/meshoptimizer/releases",
+      "note": "fetched at configure, built static (mesh simplify); bump OPAD_MESHOPT_SHA256 with it"
+    },
+    {
       "name": "Project Chrono",
       "file": "cmake/sim_engines.cmake",
       "version": "^set\\(OPAD_CHRONO_VERSION (\\S+)\\)$",

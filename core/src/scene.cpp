@@ -462,6 +462,8 @@ struct SceneBuilder::Impl {
             continue;
           }
           set_key(it->second, key, id, "feature");
+          // A solid a mesh Boolean made into a mesh says so (older results have no field and keep theirs).
+          if (b.contains("representation") && b["representation"].is_string()) it->second.representation = b["representation"].get<std::string>();
           it->second.modified_by.push_back(id);
           continue;
         }

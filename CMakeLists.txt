@@ -48,6 +48,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 include(cmake/occt.cmake)
 include(cmake/sim_engines.cmake)  # Eigen, Project Chrono and Netgen for joints, dynamics and structural studies
+include(cmake/mesh_libs.cmake)  # Manifold and meshoptimizer for mesh editing (core/src/mesh)
 find_package(ZLIB REQUIRED)  # 3MF parts are deflated zip entries (core) and its tests write some
 find_package(zstd CONFIG QUIET)  # optional: models embedded in KiCad boards are zstd-compressed (core)
 

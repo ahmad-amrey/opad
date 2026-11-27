@@ -41,6 +41,10 @@ struct Ctx {
   void check_cancel() const;
   TopoDS_Shape key_shape(const std::string& key) const;
   TopoDS_Shape node_shape(const std::string& node) const;  // body node, world coordinates
+  // Mesh bodies (STL, OBJ, 3MF, PLY), which node_shape refuses: whether a body is one, and its shape in world coordinates
+  // (a mesh's or a solid's; point clouds refused) for the features that take meshes (mesh_features.cpp).
+  bool is_mesh(const std::string& node) const;
+  TopoDS_Shape any_shape(const std::string& node) const;
   gp_Trsf node_trsf(const std::string& node) const;        // node -> world (identity for "")
   ResolvedRef resolve(const json& ref) const;               // body / face / edge / vertex reference, hint-aware
   std::vector<ResolvedRef> resolve_all(const json& refs) const;  // a rule selector ({.., "select"}) gives every match

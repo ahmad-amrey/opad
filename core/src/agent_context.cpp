@@ -5,6 +5,7 @@
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/mass.hpp"
+#include "opad/mesh_edit.hpp"
 #include "opad/recognize.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/provenance.hpp"
@@ -343,6 +344,10 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
      {"max_distance",{{"type","number"},{"minimum",0}}},{"region",region},{"sample",{{"type","integer"},{"minimum",100},{"default",500000}}},{"worst",{{"type","integer"},{"minimum",0},{"default",8}}},
      {"bins",{{"type","integer"},{"minimum",2}}},{"range",{{"type","number"},{"minimum",0}}},{"align",{{"type","boolean"}}},{"exact",{{"type","boolean"}}}},false},
     run([](const Document& d,const Scene& s,const json& a){return deviation::command(d,s,a);}));
+  // Mesh bodies for printing (opad/mesh_edit.hpp): what keeps each from printing; the fixes are features (mesh_repair ...).
+  add({"mesh_check","Read-only check of mesh bodies (STL, OBJ, 3MF, PLY) before printing: per body triangles, shells, open edges and holes, non-manifold and flipped edges, degenerate and duplicate triangles, self-intersections (counted up to limit), volume, closed and printable. bodies: ids (default every mesh). Fix with feature mesh_repair; mesh_simplify reduces triangles.",
+    {{"doc",{{"type","string"}}},{"bodies",group},{"self_intersections",{{"type","boolean"},{"default",true}}},{"limit",{{"type","integer"},{"minimum",1},{"default",1000}}}},false},
+    run([](const Document& d,const Scene& s,const json& a){return meshops::check_command(d,s,a);}));
   // Fitted references (design/fit_refs.cpp): what a scan has instead of exact faces and edges, fitted on the worker that
   // runs the command, so an agent needs no offline maths to align a mesh.
   add({"fit_reference","Fit a plane, line or axis to a mesh body (a scan or STL has no exact face or edge) or to points. ref {fit: {body, seed (triangle index as in body/face/N), tolerance (deg)} | {body, triangles: [N | [first, last]]} | {points: [[x,y,z] | vertex refs]} | {of: intersection, planes: [p, p]}; of: plane, normal, cylinder, wall, line, auto, scan_axes}; as plane|axis. Returns the ref with its result (pass it to plane/axis inputs as it is: no refit), world (now, mm) and quality (rms_mm, used/total, grade good|fair|poor: poor = not that shape, e.g. a curved region as a plane).",

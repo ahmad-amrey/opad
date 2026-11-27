@@ -118,6 +118,7 @@ target_link_libraries(opad_core
 target_compile_definitions(opad_core PUBLIC _USE_MATH_DEFINES)
 target_link_libraries(opad_core PRIVATE Eigen3::Eigen)
 target_compile_definitions(opad_core PRIVATE EIGEN_MPL2_ONLY)  # Eigen's MPL-2.0 parts only (its notice says so)
+target_link_libraries(opad_core PRIVATE opad::manifold opad::meshopt)  # mesh editing (cmake/mesh_libs.cmake)
 if(OPAD_HAVE_CHRONO)
   target_link_libraries(opad_core PRIVATE opad::chrono)
   target_compile_definitions(opad_core PRIVATE OPAD_HAVE_CHRONO=1)

@@ -52,6 +52,7 @@
 #include <Bnd_Box.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
 #include <GProp_GProps.hxx>
+#include <gp_GTrsf.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
@@ -80,6 +81,7 @@
 #include "opad/assets.hpp"
 #include "opad/design/sketch_reference.hpp"
 #include "opad/checks.hpp"
+#include "opad/mesh_edit.hpp"
 #include "opad/geometry.hpp"
 #include "opad/kernel_guard.hpp"
 #include "opad/mesh_solid.hpp"
@@ -260,10 +262,42 @@ std::vector<FeatureSpec> build_specs() {
   // TODO 11 UI-97: deleting a detail of an imported or dumb body is an op in the timeline.
   add("remove_faces", "Remove faces", "removeFaces", "modify",
       "Delete faces and close the gap by extending the faces around them (holes, fillets, chamfers, bosses, imported details).", {pick("faces", "Faces", "faces", 1, 0)});
-  add("scale", "Scale", "scale", "modify", "Resize bodies uniformly.", {pick("bodies", "Bodies", "bodies", 1, 0), in("factor", "Factor", "number", "2"), choice("about", "About", {"origin", "centre"})});
-  add("combine", "Combine", "combine", "combine", "Join, cut or intersect bodies.",
-      {advancing(pick("target", "Target bodies", "bodies", 1, 0)), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
-  add("split", "Split body", "split", "combine", "Cut bodies in two along a plane.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Splitting plane", "plane")});
+  // Scale (meshes too, mesh_features.cpp): by one factor, a percentage, a factor per axis, or to a size (the picked bodies'
+  // box together; Lock proportions scales all three axes by the first size given). An older op has no mode: a factor
+  // ("mode=|factor" holds while mode is missing).
+  add("scale", "Scale", "scale", "modify",
+      "Resize bodies and meshes: by a factor, a percentage, a factor per axis, or to a size in millimetres (0 keeps an axis as it is). "
+      "About the origin, each body's centre, or the middle of its bottom (it stays on the bed).",
+      {pick("bodies", "Bodies", "bodies", 1, 0), choice("mode", "Scale by", {"factor", "percent", "axes", "size"}), in("factor", "Factor", "number", "2", "mode=|factor"),
+       in("percent", "Percent", "number", "100", "mode=percent"), in("factor_x", "X factor", "number", "1", "mode=axes"),
+       in("factor_y", "Y factor", "number", "1", "mode=axes"), in("factor_z", "Z factor", "number", "1", "mode=axes"),
+       in("size_x", "X size", "length", "0 mm", "mode=size"), in("size_y", "Y size", "length", "0 mm", "mode=size"),
+       in("size_z", "Z size", "length", "0 mm", "mode=size"), in("lock", "Lock proportions", "bool", true, "mode=size"),
+       choice("about", "About", {"origin", "centre", "bed"})});
+  // Combine takes meshes (mesh_features.cpp): when any body is a mesh the Boolean is a mesh Boolean (Manifold), solids
+  // meshed on a copy at the tolerance (0: automatic), and the result is a mesh.
+  add("combine", "Combine", "combine", "combine", "Join, cut or intersect bodies; with a mesh among them the result is a mesh (solids are meshed at the tolerance).",
+      {advancing(pick("target", "Target bodies", "bodies", 1, 0)), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false),
+       in("tolerance", "Mesh tolerance (solids)", "length", "0 mm")});
+  add("split", "Split body", "split", "combine", "Cut bodies in two along a plane; a closed mesh's cut faces are capped. Keep both halves or one side.",
+      {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Splitting plane", "plane"), choice("keep", "Keep", {"both", "above", "below"})});
+  add("split_parts", "Split into parts", "splitParts", "combine",
+      "Make each separate piece of a body its own body: a mesh's disconnected shells, a body's separate solids.", {pick("bodies", "Bodies", "bodies", 1, 0)});
+  // Print prep on meshes (mesh_features.cpp, opad/mesh_edit.hpp). Drop to bed places bodies as they are (Out::placed).
+  add("drop_to_bed", "Drop to bed", "dropToBed", "body",
+      "Move bodies straight down (or up) until their lowest point is on the bed (Z = 0), each by itself; optionally centred on the bed's origin too.",
+      {pick("bodies", "Bodies", "bodies", 1, 0), in("center", "Centre on the bed", "bool", false)});
+  add("mesh_repair", "Repair mesh", "meshRepair", "modify",
+      "Make meshes printable: weld vertices, drop degenerate and duplicate triangles, turn every triangle outward and close holes. "
+      "The result reports what was found before and what is left (open and non-manifold edges, self-intersections).",
+      {pick("bodies", "Meshes", "bodies", 1, 0), in("weld", "Weld within", "length", "0 mm"), in("fill_holes", "Close holes", "bool", true),
+       in("max_hole_edges", "Largest hole (edges, 0: any)", "count", "0", "fill_holes=true"), in("orient", "Fix orientation", "bool", true),
+       in("clean", "Remove degenerate and duplicate triangles", "bool", true)});
+  add("mesh_simplify", "Simplify mesh", "meshSimplify", "modify",
+      "Fewer triangles with the same shape: to a share of the triangles, to a count, or as far as a tolerance allows (edges collapsed by least error).",
+      {pick("bodies", "Meshes", "bodies", 1, 0), choice("mode", "Reduce to", {"ratio", "count", "tolerance"}), in("ratio", "Percent of triangles", "number", "50", "mode=ratio"),
+       in("count", "Triangles", "count", "100000", "mode=count"), in("tolerance", "Tolerance", "length", "0.05 mm", "mode=tolerance"),
+       in("keep_borders", "Keep open edges", "bool", true)});
   // name_map: words swapped in the copies' names ("R=L, Right=Left", or {"R": "L"} from an agent), and the component a copy
   // goes into, when its source's has a sibling of the swapped name (engine.cpp materialize). Used when the copies are made.
   add("mirror", "Mirror", "mirror", "pattern",
@@ -1840,11 +1874,11 @@ std::optional<TopoDS_Shape> blend_one_by_one(const Ctx& ctx, const TopoDS_Shape&
   return current;
 }
 
-std::vector<TopoDS_Shape> world_bodies(const Ctx& ctx, const json& refs, std::vector<std::string>* ids = nullptr) {
+std::vector<TopoDS_Shape> world_bodies(const Ctx& ctx, const json& refs, std::vector<std::string>* ids = nullptr, bool meshes = false) {
   std::vector<TopoDS_Shape> out;
   const std::vector<std::string> nodes = body_ids(ctx, refs);
   if (nodes.empty()) throw Error("pick at least one body");
-  for (const auto& id : nodes) out.push_back(ctx.node_shape(id));
+  for (const auto& id : nodes) out.push_back(meshes ? ctx.any_shape(id) : ctx.node_shape(id));
   if (ids) *ids = nodes;
   return out;
 }
@@ -2140,9 +2174,14 @@ TopoDS_Shape make_gear(const std::string& type, int z, double m, double alpha, d
                        double rack_height);  // gear.cpp
 
 Out compute_cloud_feature(const Ctx& ctx, const std::string& kind, const json& in);  // cloud_features.cpp
+std::optional<Out> compute_mesh_feature(const Ctx& ctx, const std::string& kind, const json& in);  // mesh_features.cpp
+
+std::vector<std::string> feature_body_nodes(const Ctx& ctx, const json& refs) { return body_ids(ctx, refs); }
+std::vector<std::string> feature_placed_nodes(const Ctx& ctx, const json& refs) { return placed_nodes(ctx, refs); }
 
 Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
   if (kind.rfind("cloud_", 0) == 0) return compute_cloud_feature(ctx, kind, in);
+  if (std::optional<Out> mesh = compute_mesh_feature(ctx, kind, in)) return std::move(*mesh);
   const FeatureSpec* spec = feature_spec(kind);
   if (!spec) throw Error("unknown feature kind: " + kind);
   Out out;
@@ -2584,25 +2623,6 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     }
     return out;
   }
-  if (kind == "scale") {
-    const double k = ctx.number(in, "factor");
-    if (k <= 0) throw Error("the scale factor must be positive");
-    std::vector<std::string> ids;
-    const auto bodies = world_bodies(ctx, in.value("bodies", json()), &ids);
-    for (size_t i = 0; i < ids.size(); ++i) {
-      gp_Pnt about(0, 0, 0);
-      if (in.value("about", "origin") == "centre") {
-        GProp_GProps g;
-        BRepGProp::VolumeProperties(bodies[i], g);
-        about = g.CentreOfMass();
-      }
-      gp_Trsf t;
-      t.SetScale(about, k);
-      out.bodies.push_back({ids[i], moved(bodies[i], t)});
-    }
-    return out;
-  }
-
   // ---- combine
   if (kind == "combine") {
     const std::vector<std::string> targets = body_ids(ctx, in.value("target", json()));
@@ -2642,6 +2662,8 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
   }
   if (kind == "split") {
     const Frame frame = ctx.plane(in.value("plane", json()));
+    const std::string keep = in.value("keep", "both");
+    if (keep != "both" && keep != "above" && keep != "below") throw Error("split: keep must be both, above or below");
     std::vector<std::string> ids;
     const auto bodies = world_bodies(ctx, in.value("bodies", json()), &ids);
     bool any = false;
@@ -2661,6 +2683,20 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       if (!split.IsDone() || split.HasErrors()) throw Error("the split failed");
       const auto pieces = solids_of(split.Shape());
       if (pieces.size() < 2) continue;
+      // Keep one side: the pieces whose middle lies on it (along the plane's normal), as one body.
+      if (keep != "both") {
+        const gp_Vec normal = vec(frame.normal());
+        std::vector<TopoDS_Shape> side;
+        for (const auto& p : pieces) {
+          GProp_GProps g;
+          BRepGProp::VolumeProperties(p, g);
+          if ((gp_Vec(pnt(frame.origin), g.CentreOfMass()).Dot(normal) >= 0) == (keep == "above")) side.push_back(p);
+        }
+        if (side.empty()) continue;
+        any = true;
+        out.bodies.push_back({ids[i], bundle(side)});
+        continue;
+      }
       any = true;
       out.bodies.push_back({ids[i], pieces.front()});
       for (size_t k = 1; k < pieces.size(); ++k) out.bodies.push_back({"", pieces[k], ids[i]});
@@ -2672,7 +2708,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
   // ---- copies
   if (kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ" || kind == "pattern_points") {
     std::vector<std::string> ids;
-    const auto bodies = world_bodies(ctx, in.value("bodies", json()), &ids);
+    const auto bodies = world_bodies(ctx, in.value("bodies", json()), &ids, true);
     std::vector<gp_Trsf> places;
     if (kind == "mirror") {
       const Frame frame = ctx.plane(in.value("plane", json()));
@@ -2725,8 +2761,10 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
         places.push_back(t);
       }
     }
-    // Mirrored solids come out inside out: turn each one outward, keeping a body of several solids as one.
+    // Mirrored solids come out inside out: turn each one outward, keeping a body of several solids as one. A mesh's
+    // triangles are mapped (and turned round when mirrored: meshops::transform).
     auto copy = [](const TopoDS_Shape& body, const gp_Trsf& t) {
+      if (is_mesh_shape(body)) return meshops::transformed(body, gp_GTrsf(t));
       std::vector<TopoDS_Shape> solids;
       for (const auto& s : solids_of(moved(body, t))) solids.push_back(outward(s));
       return bundle(solids);
@@ -2740,6 +2778,8 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
         }
       return out;
     }
+    for (const auto& b : bodies)
+      if (is_mesh_shape(b)) throw Error("Copies of a mesh are new bodies: set Operation to New body, then Combine them");
     std::vector<TopoDS_Shape> copies;
     for (const auto& t : places)
       for (const auto& b : bodies) {
@@ -2790,7 +2830,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
         for (const auto& top : linked_tops(ctx.scene, id)) tops.push_back(top);
     }
     std::vector<TopoDS_Shape> bodies;
-    for (const auto& id : ids) bodies.push_back(ctx.node_shape(id));
+    for (const auto& id : ids) bodies.push_back(ctx.any_shape(id));  // meshes are copied too
     gp_Trsf t;
     t.SetTranslation(gp_Vec(ctx.length(in, "dx"), ctx.length(in, "dy"), ctx.length(in, "dz")));
     if (in.value("rotate", false)) {
@@ -2799,7 +2839,9 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       t = t * r;
     }
     if (t.Form() == gp_Identity) throw Error("the move does nothing");
-    for (size_t i = 0; i < ids.size(); ++i) out.bodies.push_back({copying ? std::string() : ids[i], moved(bodies[i], t), copying ? ids[i] : std::string()});
+    for (size_t i = 0; i < ids.size(); ++i)
+      out.bodies.push_back({copying ? std::string() : ids[i], is_mesh_shape(bodies[i]) ? meshops::transformed(bodies[i], gp_GTrsf(t)) : moved(bodies[i], t),
+                            copying ? ids[i] : std::string()});
     for (const auto& top : tops) out.placed.push_back({top, t});
     return out;
   }
