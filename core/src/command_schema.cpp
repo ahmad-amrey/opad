@@ -179,7 +179,11 @@ json command_schema(const commands::CommandInfo& command,bool live) {
     json kinds=json::array();for(const auto& spec:design::feature_specs())kinds.push_back(spec.kind);
     properties["kind"]=choice(kinds);properties["inputs"]={{"type","object"},{"description","Request feature_schema for this kind before supplying inputs. Unknown input names are rejected."}};
   }
-  if(name=="export")properties["format"]=choice(commands::exporter_formats());
+  if(name=="export"){properties["format"]=choice(commands::exporter_formats());
+    // As validate print takes it (the print check's build_direction).
+    properties["build_direction"]={{"anyOf",{{{"type","string"},{"enum",{"+x","-x","+y","-y","+z","-z"}}},{{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}}}},
+                                   {"description",command.args.at("build_direction")}};
+    properties["bed_face"]={{"type",{"string","object"}},{"description",command.args.at("bed_face")}};}
   if(name.starts_with("sheet")){for(const char* key:{"at","place"})if(properties.contains(key)){auto d=properties[key]["description"];properties[key]=vector(2);properties[key]["description"]=d;}
     if(properties.contains("aspects"))properties["aspects"]=array(choice({"start","end","mid","center"}));
     if(name=="sheet_item")properties["refs"]={{"type","array"},{"items",{{"type",{"string","object"}}}},{"maxItems",2},{"description",command.args.at("refs")}};}

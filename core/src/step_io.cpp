@@ -55,6 +55,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cfloat>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -68,6 +69,7 @@
 #include "opad/mesh.hpp"
 #include "import_common.hpp"
 #include "opad/point_cloud.hpp"
+#include "zip.hpp"
 
 namespace opad {
 
@@ -1027,6 +1029,164 @@ void write_stl_file(const std::filesystem::path& out, const std::vector<const Pl
     }
 }
 
+// ---------------------------------------------------------------- print placement
+// The turn taking `up` (unit) onto +Z by the shortest way, row-major; straight down turns half round X.
+std::array<double, 9> turn_up(const Vec3& u) {
+  const double c = u[2], vx = u[1], vy = -u[0];  // v = u x z
+  const double s2 = vx * vx + vy * vy;
+  if (s2 < 1e-24) return c > 0 ? std::array<double, 9>{1, 0, 0, 0, 1, 0, 0, 0, 1} : std::array<double, 9>{1, 0, 0, 0, -1, 0, 0, 0, -1};
+  const double k = (1 - c) / s2;
+  // R = I + [v]x + k [v]x^2, v = (vx, vy, 0)
+  return {1 - k * vy * vy, k * vx * vy, vy, k * vx * vy, 1 - k * vx * vx, -vx, -vy, vx, 1 - k * (vx * vx + vy * vy)};
+}
+
+void turn_meshes(std::vector<PlacedMesh>& meshes, const std::array<double, 9>& r) {
+  for (auto& pm : meshes)
+    for (auto* values : {&pm.mesh.positions, &pm.mesh.normals})
+      for (size_t i = 0; i + 2 < values->size(); i += 3) {
+        const double x = (*values)[i], y = (*values)[i + 1], z = (*values)[i + 2];
+        for (int k = 0; k < 3; ++k) (*values)[i + size_t(k)] = static_cast<float>(r[size_t(3 * k)] * x + r[size_t(3 * k + 1)] * y + r[size_t(3 * k + 2)] * z);
+      }
+}
+
+// Moves the meshes together: the lowest point to Z = 0 (drop), the box's middle to X = Y = 0 (center). The move and the
+// box written, as the result reports them.
+json settle_meshes(const std::vector<PlacedMesh*>& meshes, bool drop, bool center) {
+  float lo[3] = {FLT_MAX, FLT_MAX, FLT_MAX}, hi[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+  auto measure = [&] {
+    for (int k = 0; k < 3; ++k) lo[k] = FLT_MAX, hi[k] = -FLT_MAX;
+    for (const auto* pm : meshes)
+      for (size_t i = 0; i + 2 < pm->mesh.positions.size(); i += 3)
+        for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], pm->mesh.positions[i + size_t(k)]), hi[k] = std::max(hi[k], pm->mesh.positions[i + size_t(k)]);
+  };
+  measure();
+  if (lo[0] > hi[0]) return json::object();
+  float move[3] = {0, 0, 0};
+  if (center) move[0] = -(lo[0] + hi[0]) / 2, move[1] = -(lo[1] + hi[1]) / 2;
+  if (drop) move[2] = -lo[2];
+  if (move[0] != 0 || move[1] != 0 || move[2] != 0) {
+    for (auto* pm : meshes)
+      for (size_t i = 0; i + 2 < pm->mesh.positions.size(); i += 3)
+        for (int k = 0; k < 3; ++k) pm->mesh.positions[i + size_t(k)] += move[k];
+    measure();
+    if (drop) {  // float rounding: the lowest point lands exactly on the bed
+      const float under = lo[2];
+      for (auto* pm : meshes)
+        for (size_t i = 2; i < pm->mesh.positions.size(); i += 3)
+          if (pm->mesh.positions[i] == under) pm->mesh.positions[i] = 0;
+      lo[2] = 0;
+    }
+  }
+  return {{"translation", {move[0], move[1], move[2]}}, {"bbox", {{"min", {lo[0], lo[1], lo[2]}}, {"max", {hi[0], hi[1], hi[2]}}}}};
+}
+
+// ---------------------------------------------------------------- 3MF and PLY meshes
+// A mesh with its vertices welded (a body's faces are meshed apart, so their rims repeat): slicers want triangles that
+// share vertices. Triangles that collapse when welded are left out.
+struct Welded {
+  std::vector<float> xyz;
+  std::vector<uint32_t> tris;
+};
+Welded weld(const Mesh& m) {
+  Welded w;
+  std::map<std::array<float, 3>, uint32_t> at;
+  std::vector<uint32_t> map(m.positions.size() / 3);
+  for (size_t i = 0; i < map.size(); ++i) {
+    const std::array<float, 3> p{m.positions[3 * i], m.positions[3 * i + 1], m.positions[3 * i + 2]};
+    auto [it, fresh] = at.emplace(p, uint32_t(w.xyz.size() / 3));
+    if (fresh) w.xyz.insert(w.xyz.end(), p.begin(), p.end());
+    map[i] = it->second;
+  }
+  for (size_t i = 0; i + 2 < m.indices.size(); i += 3) {
+    const uint32_t a = map[m.indices[i]], b = map[m.indices[i + 1]], c = map[m.indices[i + 2]];
+    if (a == b || b == c || a == c) continue;
+    w.tris.insert(w.tris.end(), {a, b, c});
+  }
+  return w;
+}
+
+std::string xml_text(const std::string& s) {
+  std::string out;
+  for (char c : s) {
+    if (c == '&') out += "&amp;";
+    else if (c == '<') out += "&lt;";
+    else if (c == '>') out += "&gt;";
+    else if (c == '"') out += "&quot;";
+    else out += c;
+  }
+  return out;
+}
+
+// 3MF core: one object per body (named, coloured through one base material each), each a build item; millimetres.
+void write_3mf(const std::filesystem::path& out, const std::vector<PlacedMesh>& meshes) {
+  std::string model = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                      "<model unit=\"millimeter\" xml:lang=\"en-US\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\">\n"
+                      " <metadata name=\"Application\">OPAD " + version_string() + "</metadata>\n <resources>\n  <basematerials id=\"1\">\n";
+  char buf[160];
+  for (const auto& pm : meshes) {
+    const auto c = pm.has_color ? pm.color : std::array<double, 3>{0.8, 0.8, 0.8};
+    auto byte = [](double v) { return std::clamp(int(std::lround(v * 255)), 0, 255); };
+    std::snprintf(buf, sizeof buf, "#%02X%02X%02X", byte(c[0]), byte(c[1]), byte(c[2]));
+    model += "   <base name=\"" + xml_text(pm.name) + "\" displaycolor=\"" + buf + "\"/>\n";
+  }
+  model += "  </basematerials>\n";
+  std::string build = " <build>\n";
+  for (size_t i = 0; i < meshes.size(); ++i) {
+    const Welded w = weld(meshes[i].mesh);
+    const std::string id = std::to_string(i + 2);
+    model += "  <object id=\"" + id + "\" type=\"model\" name=\"" + xml_text(meshes[i].name) + "\" pid=\"1\" pindex=\"" + std::to_string(i) +
+             "\">\n   <mesh>\n    <vertices>\n";
+    for (size_t v = 0; v + 2 < w.xyz.size(); v += 3) {
+      std::snprintf(buf, sizeof buf, "     <vertex x=\"%.9g\" y=\"%.9g\" z=\"%.9g\"/>\n", w.xyz[v], w.xyz[v + 1], w.xyz[v + 2]);
+      model += buf;
+    }
+    model += "    </vertices>\n    <triangles>\n";
+    for (size_t t = 0; t + 2 < w.tris.size(); t += 3) {
+      std::snprintf(buf, sizeof buf, "     <triangle v1=\"%u\" v2=\"%u\" v3=\"%u\"/>\n", w.tris[t], w.tris[t + 1], w.tris[t + 2]);
+      model += buf;
+    }
+    model += "    </triangles>\n   </mesh>\n  </object>\n";
+    build += "  <item objectid=\"" + id + "\"/>\n";
+  }
+  model += " </resources>\n" + build + " </build>\n</model>\n";
+  const std::string types =
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+      "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+      "<Default Extension=\"model\" ContentType=\"application/vnd.ms-package.3dmanufacturing-3dmodel+xml\"/></Types>\n";
+  const std::string rels =
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+      "<Relationship Target=\"/3D/3dmodel.model\" Id=\"rel0\" Type=\"http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel\"/></Relationships>\n";
+  const std::string zip = detail::zip_archive({{"[Content_Types].xml", types}, {"_rels/.rels", rels}, {"3D/3dmodel.model", model}});
+  std::ofstream f(out, std::ios::binary);
+  if (!f) throw Error("cannot write " + out.string());
+  f.write(zip.data(), std::streamsize(zip.size()));
+  if (!f) throw Error("cannot write " + out.string());
+}
+
+// PLY of the meshes as one: binary little-endian, welded vertices (float x y z) and triangles, millimetres.
+void write_ply_mesh(const std::filesystem::path& out, const std::vector<PlacedMesh>& meshes) {
+  std::vector<float> xyz;
+  std::vector<uint32_t> tris;
+  for (const auto& pm : meshes) {
+    const Welded w = weld(pm.mesh);
+    const uint32_t base = uint32_t(xyz.size() / 3);
+    xyz.insert(xyz.end(), w.xyz.begin(), w.xyz.end());
+    for (uint32_t t : w.tris) tris.push_back(base + t);
+  }
+  std::ofstream f(out, std::ios::binary);
+  if (!f) throw Error("cannot write " + out.string());
+  f << "ply\nformat binary_little_endian 1.0\ncomment OPAD " << version_string() << ", units mm\nelement vertex " << xyz.size() / 3
+    << "\nproperty float x\nproperty float y\nproperty float z\nelement face " << tris.size() / 3 << "\nproperty list uchar int vertex_indices\nend_header\n";
+  f.write(reinterpret_cast<const char*>(xyz.data()), std::streamsize(xyz.size() * sizeof(float)));
+  for (size_t t = 0; t + 2 < tris.size(); t += 3) {
+    const char three = 3;
+    const int32_t v[3] = {int32_t(tris[t]), int32_t(tris[t + 1]), int32_t(tris[t + 2])};
+    f.write(&three, 1);
+    f.write(reinterpret_cast<const char*>(v), 12);
+  }
+  if (!f) throw Error("cannot write " + out.string());
+}
+
 // Builds an XCAF document mirroring the selected part of the scene (names, colours and face colours, placements).
 // `with_mesh` (glTF): the bodies meshed, and colours handed over as sRGB, which the writer stores linear as glTF wants;
 // STEP keeps OPAD's values as they are, which is how STEP files hold colours.
@@ -1157,6 +1317,9 @@ ExportResult export_selection(const Document& doc, const Scene& scene, const std
   std::string fmt = opt.format;
   std::transform(fmt.begin(), fmt.end(), fmt.begin(), [](unsigned char c) { return std::tolower(c); });
 
+  const bool turned = opt.print_up != Vec3{0, 0, 0}, placed = turned || opt.drop_to_bed || opt.center_xy;
+  const bool meshFormat = fmt == "obj" || fmt == "stl" || fmt == "3mf" || fmt == "ply";
+  if (placed && !meshFormat) throw Error("print placement (build_direction, bed_face, drop_to_bed, center_xy) is for STL, 3MF, OBJ and PLY");
   if (fmt == "step" || fmt == "stp") {
     Handle(TDocStd_Document) xdoc = build_xcaf(doc, scene, bodies, false, opt.tolerance);
     // Set the writer parameters before constructing the writer: OCCT 7.6 stamps FILE_SCHEMA when the writer's
@@ -1195,22 +1358,59 @@ ExportResult export_selection(const Document& doc, const Scene& scene, const std
     res.files.push_back(out);
     return res;
   }
+  std::vector<PlacedMesh> meshes;
+  json placement;
+  if (meshFormat) {
+    meshes = gather_meshes(doc, scene, bodies, opt.tolerance);
+    if (placed) {
+      const auto turn = turn_up(opt.print_up == Vec3{0, 0, 0} ? Vec3{0, 0, 1} : opt.print_up);
+      if (turned) turn_meshes(meshes, turn);
+      placement = {{"up", turned ? json(opt.print_up) : json({0, 0, 1})},
+                   {"rotation", {{turn[0], turn[1], turn[2]}, {turn[3], turn[4], turn[5]}, {turn[6], turn[7], turn[8]}}},
+                   {"drop_to_bed", opt.drop_to_bed}, {"center_xy", opt.center_xy}};
+      if (!(fmt == "stl" && opt.per_body && meshes.size() > 1)) {
+        std::vector<PlacedMesh*> all;
+        for (auto& pm : meshes) all.push_back(&pm);
+        placement.update(settle_meshes(all, opt.drop_to_bed, opt.center_xy));
+      }
+      res.details["placement"] = placement;
+    }
+  }
   if (fmt == "obj") {
-    write_obj(out, gather_meshes(doc, scene, bodies, opt.tolerance), opt.mtl, res);
+    write_obj(out, meshes, opt.mtl, res);
+    return res;
+  }
+  if (fmt == "3mf") {
+    write_3mf(out, meshes);
+    res.files.push_back(out);
+    return res;
+  }
+  if (fmt == "ply") {
+    write_ply_mesh(out, meshes);
+    res.files.push_back(out);
     return res;
   }
   if (fmt == "stl") {
-    auto meshes = gather_meshes(doc, scene, bodies, opt.tolerance);
     if (opt.per_body && meshes.size() > 1) {
+      json files = json::array();
       std::set<std::string> used;
-      for (const auto& pm : meshes) {
+      for (auto& pm : meshes) {
         std::string base = safe_name(pm.name);
         std::string name = base;
         for (int i = 2; used.count(name); ++i) name = base + "_" + std::to_string(i);
         used.insert(name);
         std::filesystem::path p = out.parent_path() / (out.stem().string() + "_" + name + out.extension().string());
+        if (placed) {  // each part on the bed by itself
+          json one = settle_meshes({&pm}, opt.drop_to_bed, opt.center_xy);
+          one["file"] = path_to_utf8(p);
+          files.push_back(std::move(one));
+        }
         write_stl_file(p, {&pm}, opt.ascii, pm.name);
         res.files.push_back(p);
+      }
+      if (placed) {
+        placement["files"] = std::move(files);
+        res.details["placement"] = placement;
       }
     } else {
       std::vector<const PlacedMesh*> ptrs;
