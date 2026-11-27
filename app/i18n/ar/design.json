@@ -37,7 +37,7 @@
   "%1 linked files, each as one": "%1 ملفات مرتبطة، كل منها كوحدة واحدة",
   "%1 selected · %2": "%1 محدد · %2",
   "A linked file cannot be copied: a copy would store its parts in the document. Link the file again for another copy, or embed it first.": "لا يمكن نسخ ملف مرتبط: فالنسخة ستخزّن أجزاءه في المستند. اربط الملف مرة أخرى للحصول على نسخة أخرى، أو ضمّنه أولاً.",
-  "Put a point, line or face of bodies or components onto another point, line or plane: a face on a face, an edge along an edge, a hole on an axis.": "يضع نقطة أو خطًا أو وجهًا من الأجسام أو المكونات على نقطة أو خط أو مستوى آخر: وجه على وجه، أو حافة على امتداد حافة، أو ثقب على محور.",
+  "Put a point, line or face of bodies or components onto another point, line or plane: a face on a face, an edge along an edge, a hole on an axis. Point pairs: points on the bodies and the matching points on the target, in turn (three pairs or more); the move that lines them all up best, a stray pair left out. 3-2-1 steps: a primary plane onto a plane, a secondary line or plane that keeps it, a tertiary point or plane that keeps both.": "يضع نقطة أو خطًا أو وجهًا من الأجسام أو المكونات على نقطة أو خط أو مستوى آخر: وجه على وجه، أو حافة على امتداد حافة، أو ثقب على محور. أزواج النقاط: نقاط على الأجسام والنقاط المقابلة لها على الهدف، بالتناوب (ثلاثة أزواج أو أكثر)؛ والحركة التي تطابق بينها كلها على أفضل وجه، مع استبعاد زوج شارد. خطوات 3-2-1: مستوى أول على مستوى، ثم خط أو مستوى ثانٍ يحافظ عليه، ثم نقطة أو مستوى ثالث يحافظ عليهما.",
   "Onto": "إلى",
   "From face or plane": "من وجه أو مستوى",
   "From edge or axis": "من حافة أو محور",

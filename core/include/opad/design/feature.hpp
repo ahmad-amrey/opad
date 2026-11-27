@@ -35,12 +35,15 @@ struct InputSpec {
   std::string type;
   json def;                          // default value
   std::vector<std::string> choices;  // for "choice"
-  std::string show_if;               // "other=value[|value]": only shown (and used) then
+  std::string show_if;               // "other=value[|value]": only shown (and used) then; "a=x,b=y|z": all of them hold
   bool optional = false;
   int min_count = 1;                 // selections: how many picks at least (0 with optional)
   int max_count = 0;                 // 0 = any number
   bool advance = false;              // selections: the first pick moves on to the next input (more: its box again)
   bool planes = false;               // faces: origin and construction planes are offered beside them (To face)
+  // points: picked in turn with this input, one each, as pairs by position (Align's point pairs: from_points[i] goes onto
+  // to_points[i]); the panel lists the pairs.
+  std::string pairs_with;
 };
 
 struct FeatureSpec {
@@ -178,6 +181,9 @@ json plane_as_made(const SketchItem& sketch, json plane);
 // inputs say, all but "bodies" (from/to point, line or plane, motion, flip, offset, angle). Two planes lie flush (Flip:
 // facing). It stays linked to the plane or face it was aligned onto, or to its own support when it moved within it;
 // otherwise it is fixed in the world.
+// Where each point reference is in the world (vertices, mesh and cloud nodes, sketch points, points written out), as Align's
+// point pairs take them; null for one that does not resolve. Reads meshes: workers only.
+json point_positions(const Document& doc, const Scene& scene, const json& refs, const Cancel& cancel = {});
 json align_sketch_plane(const Document& doc, const Scene& scene, const std::string& sketch, const json& inputs, Frame* world = nullptr);  // world: the frame it takes
 // Whether an input is in use for these inputs (its show_if holds).
 bool input_active(const InputSpec& in, const json& inputs);

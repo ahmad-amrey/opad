@@ -80,7 +80,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& inputs)
 
 // Align (features.cpp): the world motion taking the inputs' From point, line or plane onto their To one (motion, flip, offset,
 // angle as the align feature has them). `facing`: two planes put together face each other (bodies), else lie flush (sketches).
-gp_Trsf align_motion(const Ctx& ctx, const json& inputs, bool facing);
+gp_Trsf align_motion(const Ctx& ctx, const json& inputs, bool facing, json* report = nullptr);  // report: point pairs' residuals
 
 // Whether a reference names a linked part (or a component of them) that is not loaded (its file missing, not trusted yet):
 // nothing is known of it, so a sketch keeps its projection as last computed instead of saving an error (compute_sketch).

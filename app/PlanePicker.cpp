@@ -71,6 +71,9 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
    m_pointsMode->setToolTip(tr("Pick three or more vertices (a mesh's too) and fit a plane through them; a stray one is left out"));
    m_usePoints=new QPushButton(tr("Use points"),body);m_usePoints->setObjectName("usePoints");m_usePoints->setVisible(false);
    row->addWidget(m_pointsMode);row->addWidget(m_usePoints);row->addStretch();layout->addLayout(row);
+   // What Fit to points does, in the panel while it is on (it was not clear from the button alone).
+   m_pointsHint=new QLabel(tr("Click vertices of the mesh, three or more, spread over the flat you mean: the plane is fitted through them, a stray one left out. A click on a picked vertex takes it back."),body);
+   m_pointsHint->setObjectName("pointsHint");m_pointsHint->setWordWrap(true);m_pointsHint->setVisible(false);layout->addWidget(m_pointsHint);
    connect(m_pointsMode,&QPushButton::toggled,this,[this](bool on){setPointsMode(on);});connect(m_usePoints,&QPushButton::clicked,this,[this]{usePoints();});}
   connect(m_construction,&QCheckBox::toggled,this,[this]{constructionPlanes();});
   m_originControls=new QWidget(body);auto* form=new QFormLayout(m_originControls);form->setContentsMargins(0,0,0,0);
@@ -129,7 +132,7 @@ void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open
   }
 }
 void PlanePicker::stop(bool restoreCamera) {
-  if(m_points){const QSignalBlocker quiet(m_pointsMode);m_pointsMode->setChecked(false);m_points=false;m_view->setPickAccumulate(m_accumulateBefore);m_usePoints->hide();}
+  if(m_points){const QSignalBlocker quiet(m_pointsMode);m_pointsMode->setChecked(false);m_points=false;m_view->setPickAccumulate(m_accumulateBefore);m_usePoints->hide();m_pointsHint->hide();}
   const bool wasActive=m_active;m_active=false;m_originStage=false;m_drag=false;m_mouseDown=false;++m_serial;++m_candidateSerial;m_values->reset();
   if(m_job)m_job->cancel();m_job=nullptr;preview(nullptr);m_tiles->hide();m_panel->hide();
   if(wasActive){if(restoreCamera)m_view->setCameraJson(m_cameraBefore);m_view->clearCandidates();m_view->clearSelection();m_view->setSelectionFilter(m_oldFilter);}
@@ -161,7 +164,13 @@ QString PlanePicker::candidateName(const opad::json& support) const {
 }
 void PlanePicker::selectionChanged() {
   if(!m_active||m_originStage)return;const auto candidates=m_view->selectedCandidates();const auto refs=m_view->selection();
-  if(m_points){refreshPoints();return;}
+  if(m_points){
+    // Every click says what it did: a vertex added, a picked one taken back (picks toggle, and the vertex under the pointer
+    // is still drawn hovered, in the lighter blue, though it is no longer picked), or nothing found under it.
+    int n=0;for(const auto& r:refs)n+=r.kind==opad::Ref::Kind::Vertex;
+    const QString what=n>m_pointCount?tr("Vertex added."):n<m_pointCount?tr("That vertex was picked already: taken back."):!m_view->lastClickHit()?tr("No vertex under that click: click on the mesh, on one of its vertices."):QString();
+    m_pointCount=n;refreshPoints(what);return;
+  }
   if(!candidates.empty())choose(opad::json::parse(candidates.back()));
   else if(!refs.empty()&&refs.back().kind==opad::Ref::Kind::Face){
     // A mesh: a box's triangles (several taken at once), else the flat grown from the clicked triangle.
@@ -175,12 +184,15 @@ void PlanePicker::setPointsMode(bool on){
   m_points=on;m_view->clearSelection();
   if(on){m_accumulateBefore=m_view->pickAccumulate();m_view->setPickAccumulate(true);m_view->setSelectionFilter(Viewport::SelFilter::Vertex);}
   else {m_view->setPickAccumulate(m_accumulateBefore);m_view->setSelectionFilter(Viewport::SelFilter::Face);m_status->clear();}
-  m_usePoints->setVisible(on);refreshPoints();
+  m_usePoints->setVisible(on);m_pointsHint->setVisible(on);refreshPoints();
 }
-void PlanePicker::refreshPoints(){
-  if(!m_points)return;int n=0;for(const auto& r:m_view->selection())n+=r.kind==opad::Ref::Kind::Vertex;
+QString PlanePicker::statusText() const{return m_status->text();}
+QString PlanePicker::pointsHint() const{return m_pointsHint->isVisible()||m_points?m_pointsHint->text():QString();}
+void PlanePicker::refreshPoints(const QString& last){
+  if(!m_points)return;int n=0;for(const auto& r:m_view->selection())n+=r.kind==opad::Ref::Kind::Vertex;m_pointCount=n;
   m_usePoints->setEnabled(n>=3&&!m_job);m_usePoints->setText(n>=3?tr("Use %1 points").arg(n):tr("Use points"));
-  m_status->setText(n<3?tr("Pick %1 more vertices (three or more)").arg(3-n):tr("%1 points picked: Use fits the plane through them").arg(n));
+  const QString count=n<3?tr("Pick %1 more vertices (three or more)").arg(3-n):tr("%1 points picked: Use fits the plane through them").arg(n);
+  m_status->setText(last.isEmpty()?count:last+" "+count);
 }
 void PlanePicker::usePoints(){
   if(!m_points)return;std::vector<opad::Ref> pts;for(const auto& r:m_view->selection())if(r.kind==opad::Ref::Kind::Vertex)pts.push_back(r);

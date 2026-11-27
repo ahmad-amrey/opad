@@ -36,6 +36,8 @@ class PlanePicker : public QObject {
   opad::Frame frame() const { return m_frame; }
   QList<ToolStep> steps() const;  // the plane chosen (named), then the origin
   bool pointsMode() const { return m_points; }
+  QString statusText() const;  // what the picker says under its rows (benches)
+  QString pointsHint() const;  // Fit to points' explanation, shown while it is on (empty when not shown)
   void usePoints();  // the picked vertices' best-fit plane (Fit to points)
   ToolValues* values() const { return m_values; }  // the origin's X and Y typed over the view (UI-122)
   std::function<void(const opad::json&,const opad::Frame&)> accepted;
@@ -59,8 +61,10 @@ class PlanePicker : public QObject {
   ToolValues* m_values;
   // Fit to points: vertices picked (a scan's nodes too), then a plane fitted through them (FitPick).
   void setPointsMode(bool on);
-  void refreshPoints();
+  void refreshPoints(const QString& last = {});  // last: what the click just did
+  int m_pointCount=0;
   QPushButton *m_pointsMode,*m_usePoints;
+  QLabel* m_pointsHint;
   bool m_points=false,m_accumulateBefore=false;
   bool m_active=false,m_positionOrigin=false,m_originStage=false,m_drag=false,m_mouseDown=false,m_refreshing=false;
   int m_serial=0,m_candidateSerial=0;
