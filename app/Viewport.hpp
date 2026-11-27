@@ -400,6 +400,20 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showCloudRegion(const std::string& node, std::shared_ptr<const std::vector<uint32_t>> indices);
   bool pickCloudPoint(const QPointF& widget, opad::Vec3& point);  // the drawn surface (or point) under a widget point
   void setCloudLasso(const QPolygonF& widget, bool closed);  // the region tool's lasso or box over the view; under two points: none
+  // Edit point cloud (CloudEditArea.cpp): one cloud node drawn as a working edit (opad/cloud_edit.hpp) left it, over the
+  // base arrays it was given with, through every level-of-detail pass as a colour overlay is (display only); dropped by
+  // itself once the body is drawn from other arrays (the edit committed, or undone). Null clears. A stroke under way is
+  // drawn over it (an array its caller made on a worker, in the cloud's frame; null: none) until the next edit's pass lands
+  // (`clearsStroke`) or it is cleared. The brush frame at a widget point and the surface point under it: the direction from
+  // it toward the eye and how many mm a widget pixel spans there.
+  void setCloudEdit(const std::string& node, std::shared_ptr<const opad::cloud::Edit> edit, bool clearsStroke = false);
+  void showCloudStroke(const std::string& node, Handle(Graphic3d_ArrayOfPoints) points);
+  float cloudPointSize(const std::string& node) const;
+  bool cloudBrushFrame(const QPointF& widget, const opad::Vec3& world, opad::Vec3& toward, double& mmPerPixel) const;
+  bool benchCloudEdited(const std::string& node) const;  // drawn now with the edit it was given last
+  size_t benchCloudStroke(const std::string& node) const;  // points of the stroke drawn over it now (0: none)
+  void benchRedraw() { if (m_initialised) m_view->Redraw(); }  // a hidden bench window: the picker's z range from one frame
+  bool cloudDrawing() const { return m_cloudJob != nullptr; }  // a level-of-detail pass is being made
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
   void benchClickAt(int x, int y);  // a left click at this device pixel through the mouse handlers, then the frame's flush
@@ -1205,6 +1219,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::set<std::string> m_cloudRecolour, m_cloudShown;  // cloud keys to draw again in the colour mode
   Graphic3d_WorldViewProjState m_cloudCamera;
   std::map<std::string, Handle(AIS_InteractiveObject)> m_cloudRegion;  // region overlays by node
+  struct CloudEditView {
+    std::shared_ptr<const opad::cloud::Edit> edit;
+    std::shared_ptr<const BodyPrs> base;  // the arrays it applies to
+    bool clearsStroke = false;
+  };
+  std::map<std::string, CloudEditView> m_cloudEdits;               // working edits by node (setCloudEdit)
+  std::map<std::string, Handle(AIS_InteractiveObject)> m_cloudStroke;  // strokes under way by node
+  std::map<std::string, size_t> m_cloudStrokePoints;
+  bool m_cloudAgain = false;  // an edit or overlay came while a pass was being made: another pass right after it
   qint64 m_refineClock = 0;
   void scheduleRefinement();
   void refineVisible();

@@ -78,7 +78,8 @@ std::set<QString> registeredIds() {
                                                    {"AssetsArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
                                                    {"CanvasArea.cpp", QRegularExpression(R"(\bcommand\(")" + name + "\"")},
                                                    {"KicadArea.cpp", QRegularExpression(R"(\badd\(")" + name + "\"")},
-                                                   {"SimulateArea.cpp", QRegularExpression(R"(\badd\(")" + name + R"(",\s*tr\()")}};
+                                                   {"SimulateArea.cpp", QRegularExpression(R"(\badd\(")" + name + R"(",\s*tr\()")},
+                                                   {"CloudEditArea.cpp", QRegularExpression(R"(\{CloudEditArea::Tool::\w+,\s*")" + name + "\"")}};  // its tool table
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*.cpp"}, QDir::Files, QDir::Name)) {
     if (file.contains("Bench")) continue;
     const QString text = source("app/" + file);

@@ -5,6 +5,7 @@
 #include <TopLoc_Location.hxx>
 
 #include "engine.hpp"
+#include "opad/cloud_edit.hpp"
 #include "opad/geometry.hpp"
 #include "opad/point_cloud.hpp"
 
@@ -84,6 +85,17 @@ Out compute_cloud_feature(const Ctx& ctx, const std::string& kind, const json& i
     if (r.empty()) throw Error("the region has no points");
     const bool inside = in.value("keep", std::string("inside")) != "outside";
     keep(b, inside ? cloud::subset(b.points, r) : cloud::without(b.points, r), inside ? "the region has no points" : "the region holds every point");
+  } else if (kind == "cloud_edit") {
+    const auto ids = body_nodes(in.value("bodies", json()));
+    CloudBody b = cloud_body(ctx, ids.front());
+    const cloud::Edit edit = cloud::Edit::from_json(in.value("edit", json::object()));
+    if (edit.empty()) {
+      keep(b, b.points, "the cloud has no points");
+    } else {
+      cloud::Points edited = cloud::apply(b.points, edit);
+      keep(b, std::move(edited), "the edit deletes every point of the cloud");
+    }
+    out.extra["edit"] = edit.summary();
   } else if (kind == "cloud_slice") {
     const auto ids = body_nodes(in.value("bodies", json()));
     CloudBody b = cloud_body(ctx, ids.front());

@@ -94,6 +94,7 @@ class AreaServices {
                      bool checkable = false);
   const CommandRegistry& commands() const;  // every command's record, the built-in ones and the areas'
   void updateCommands();                    // re-asks every enabledWhen (it is asked on document, selection and workspace changes)
+  void updateUndo();                        // Undo and Redo follow AreaController::history again
   void addPanel(ToolPanel* panel);   // a floating panel of the window: anchored to the viewport, closed by openPanel and Esc
   void openPanel(ToolPanel* panel);  // shows it over the viewport; the other unpinned panels close
   bool requireEditable(std::function<void()> resume = {});  // viewer mode: offers to save as OPAD first; false until then
@@ -180,6 +181,10 @@ class AreaController : public QObject {
   // area did it, the window does nothing more (smart selection takes Del on picked faces and grows them to their
   // feature, selects the faces a clicked feature made). Asked in area order; the first true wins.
   virtual bool command(const QString& id, const SelectionContext& selection) { return false; }
+  // A history of the area's own while a mode of it runs (Edit point cloud's strokes, as a sketch keeps its own): true, with
+  // what can be undone and redone in it, makes Edit > Undo and Redo (and their keys) the area's, through command("edit.undo")
+  // and command("edit.redo"); the document's steps wait until the mode ends. AreaServices::updateUndo after it changed.
+  virtual bool history(bool& canUndo, bool& canRedo) const { return false; }
 
  private:
   AreaServices& m_services;

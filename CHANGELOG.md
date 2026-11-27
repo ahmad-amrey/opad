@@ -49,6 +49,14 @@ including a new airflow check for ducts and fittings.
   fit with arcs and dimensions, slice by slice. Points can be coloured by the scan's colours, their normals or their
   intensity, and clouds export as PLY, XYZ, PTS, CSV or E57. AI assistants read clouds, query regions and slice them
   too (`cloud`, `cloud_sketch`). LAZ files need converting to LAS or E57 first.
+- **Edit a point cloud by hand, as you would sculpt it.** Select a scan and choose *Edit point cloud* (or double-click
+  it): its own *Edit points* tab opens with round brushes you drag over the points. *Push/Pull* pulls them out of the
+  surface or pushes them in (Ctrl or Alt turns it round), *Smooth* settles scanner noise onto the surface, the *Delete*
+  brush wipes stray points, and *Add points* fills a hole the scanner left with points on the surface around it. When
+  the scanner bridged a hole that should be open, paint over the bridge (or box it, lasso it, or let *Grow region*
+  spread over that one surface from a click), check the highlight and press Delete. Undo goes stroke by stroke while
+  you edit, Cancel drops everything, and Finish keeps it all as one step in the timeline (only the changes are
+  stored), ready for Deviation, slices and modelling. Double-click that step to edit it again.
 - **Simulate asks what you want to find out.** The Simulate tabs are now goals (Air and fluids, Heat, Strength,
   Movement), and the start page shows each check as a plain question with a small picture of the case: "How much
   pressure does a fitting lose?", "Will my electronics box overheat?", "Will it bend or break under a load?", "Will my 3D

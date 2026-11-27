@@ -49,6 +49,9 @@ class DesignController : public QObject {
   // A new feature with inputs given (picks as their JSON array, values and flags as typed): Paste's Move / copy (UI-129).
   void startFeature(const QString& kind, const std::vector<std::pair<QString, opad::json>>& given);
   void editOp(const std::string& opId);  // a feature or a sketch, rolled back to when it was made
+  // A feature kind edited in a mode of its own instead of the feature panel (Edit point cloud's cloud_edit): editOp hands
+  // such a step to it.
+  void setKindEditor(const std::string& kind, std::function<void(const std::string& opId)> edit) { m_kindEditors[kind] = std::move(edit); }
   // Align for a sketch: the Align form without its bodies, From the sketch's own plane; committed as an edit of the sketch's
   // plane, so the features built on it regenerate. An open sketch is finished first.
   void startSketchAlign(const std::string& sketchId);
@@ -176,6 +179,7 @@ class DesignController : public QObject {
   ParametersDialog* m_params = nullptr;
   ToolPanel* m_parametersPanel = nullptr;
 
+  std::map<std::string, std::function<void(const std::string&)>> m_kindEditors;
   bool m_featureOn = false;
   std::string m_editing;        // feature op being edited (empty: a new one)
   opad::json m_editResult;      // what that feature made when editing began: the preview until an input changes it

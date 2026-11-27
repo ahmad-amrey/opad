@@ -44,6 +44,8 @@ void MainWindow::buildDesignActions() {
                              if (kind == "mesh_solid") meshToSolid();  // its own panel: the preview measured against the mesh
                              else if (kind == "cloud_crop") {  // its region is picked with Select points (CloudArea.cpp)
                                if (QAction* region = action("cloud.region")) region->trigger();
+                             } else if (kind == "cloud_edit") {  // a mode of its own (CloudEditArea.cpp)
+                               if (QAction* edit = action("cloud.edit")) edit->trigger();
                              } else m_design->startFeature(kind);
                            });
     a->setProperty("shortcutHint",i18n::t(QString::fromStdString(spec.hint)));

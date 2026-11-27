@@ -3634,6 +3634,134 @@
    "summary": "Chooses what point clouds are coloured by: the scan's colours, their normals, a scalar such as intensity or deviation, or the body's colour.",
    "details": "Automatic uses the scan's own colours, else shading by the normals, else the body's colour. The command steps to the next choice; its menu lists them all. The choice is kept for the next time.",
    "keywords": ["point cloud", "scan", "colours", "normals", "intensity", "deviation", "heat map"]
+  },
+  {
+   "id": "cloud.edit",
+   "title": "Edit point cloud",
+   "summary": "Opens a mode to sculpt a scan by hand: push or pull its points, smooth them, delete them or add a few.",
+   "details": "Select the cloud and choose Edit point cloud on Design › Scan or its menu, or double-click it. Its Edit points tab comes first in Design with the brushes, the selection tools and Finish; the panel holds each tool's settings. Every drag is one stroke that Undo takes back while the mode is open; Finish ({key:cloud.edit.finish}) writes them as one step, Cancel drops them. Double-click that step on the timeline to edit it again.",
+   "keywords": ["sculpt", "push pull", "brush", "clean scan", "reverse engineering", "point cloud", "scan", "edit points"],
+   "requires": "Open or import a point cloud first; a cloud opened for viewing is saved as an OPAD document first."
+  },
+  {
+   "id": "design.cloud_edit",
+   "title": "Edit point cloud",
+   "summary": "The step an Edit point cloud session writes: the points it moved, deleted and added, against the cloud as it was.",
+   "details": "Only the changes are stored, not a copy of the scan, and replaying the step gives the same points. Choosing it opens the Edit point cloud mode; double-clicking the step on the timeline edits it again with the timeline rolled back to it, and what came after regenerates once it is finished.",
+   "keywords": ["sculpt", "edit points", "changes", "point cloud", "scan", "edit points"],
+   "requires": "Open or import a point cloud first; a cloud opened for viewing is saved as an OPAD document first."
+  },
+  {
+   "id": "cloud.edit.finish",
+   "title": "Finish point cloud edit",
+   "summary": "Ends Edit point cloud and writes its strokes to the document as one step.",
+   "details": "The step is named EditPoints and stores only what changed. The document's Undo takes the whole edit back at once; the cloud stays drawn as edited while its new points are prepared.",
+   "keywords": ["done", "commit", "leave", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.cancel",
+   "title": "Cancel point cloud edit",
+   "summary": "Ends Edit point cloud without changing the cloud.",
+   "details": "With strokes made it asks first, in a toast over the view: Discard or Keep editing. Nothing is written to the document, so there is nothing to undo afterwards. {fixed:esc} never leaves the mode: it lets go of a drag, then clears the selection.",
+   "keywords": ["discard", "leave", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.pull",
+   "title": "Push/Pull brush",
+   "summary": "Pulls the points under a round brush out of the surface, or pushes them in.",
+   "details": "Drag over the cloud: each point moves along its normal, turned to face you (toward you when the scan has no normals), by the Brush strength times the falloff, all of it at the middle and nothing at the rim. Pull out or Push in sets the way, and {fixed:ctrl} or {fixed:alt} held turns it round. Smooth, Sharp and Flat shape the falloff; Front surface only leaves the far wall of a thin part alone.",
+   "keywords": ["push", "pull", "sculpt", "inflate", "dent", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.smooth",
+   "title": "Smooth brush",
+   "summary": "Settles the points under a round brush onto their surface, taking out scanner noise.",
+   "details": "Each point moves part of the way onto the plane through its ten nearest neighbours, more at the brush's middle. Small spikes and noise settle, edges a brush away stay sharp; stroke again to settle more. Brush strength and the falloff work as for Push/Pull.",
+   "keywords": ["relax", "flatten", "noise", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.erase",
+   "title": "Delete brush",
+   "summary": "Deletes the points a round brush passes over.",
+   "details": "The points under the brush show red while the stroke runs and are gone when it ends, one stroke that Undo brings back. Quick for stray points and fixtures; to look before deleting, use Paint select and then Delete selected.",
+   "keywords": ["erase", "remove points", "clean", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.add",
+   "title": "Add points",
+   "summary": "Adds points on the scan's surface where it left a hole.",
+   "details": "A click puts one point where the pointer's ray meets the plane fitted to the nearest points, with that plane's normal and their colour. A drag lays a row of them twice the scan's spacing apart, to close a gap before a slice is traced.",
+   "keywords": ["fill hole", "new point", "patch", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.paint",
+   "title": "Paint select",
+   "summary": "Selects the points you paint over with a round brush.",
+   "details": "The painted points are highlighted and counted in the panel; nothing changes until Delete selected ({key:edit.delete}) or Keep only selected. {fixed:shift} with the drag adds to the selection, {fixed:ctrl} with the drag takes points away; {fixed:esc} clears it.",
+   "keywords": ["select points", "brush", "region", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.box",
+   "title": "Box select",
+   "summary": "Selects the points inside a box you drag over the view.",
+   "details": "The points are found where they are now, through the whole depth of the view, and highlighted. {fixed:shift} with the drag adds, {fixed:ctrl} with the drag takes away; then Delete selected or Keep only selected.",
+   "keywords": ["select points", "region", "rectangle", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.lasso",
+   "title": "Lasso select",
+   "summary": "Selects the points inside a shape you draw round them.",
+   "details": "Drag round the points with the left button; the shape closes itself when you let go, and the points inside it, through the whole depth of the view, are highlighted. {fixed:shift} with the drag adds, {fixed:ctrl} with the drag takes away.",
+   "keywords": ["select points", "lasso", "region", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.grow",
+   "title": "Grow region",
+   "summary": "Selects the surface around a clicked point: it spreads over its neighbours and stops at edges.",
+   "details": "A neighbour joins while its surface bends at most the angle set in the panel and it lies at most the distance set off the surface it was reached from, so a flat patch, a fillet or a bridge the scanner made over a bore is taken as one. Lower the limits when it spills over an edge. {fixed:shift} adds, {fixed:ctrl} takes away.",
+   "keywords": ["flood fill", "auto select", "surface", "select points", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.deleteSelected",
+   "title": "Delete selected points",
+   "summary": "Deletes the points selected in Edit point cloud.",
+   "details": "One stroke: Undo brings them back while the mode is open, and Cancel drops every stroke. {key:edit.delete} does the same while points are selected.",
+   "keywords": ["erase", "remove points", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.keepSelected",
+   "title": "Keep only selected points",
+   "summary": "Deletes every point of the cloud but the selected ones.",
+   "details": "Useful to cut a part out of a scan of its fixture or table. One stroke, which Undo takes back while the mode is open.",
+   "keywords": ["crop", "keep points", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.smaller",
+   "title": "Smaller brush",
+   "summary": "Makes the brush of Edit point cloud smaller.",
+   "details": "Each press takes a fifth off its size on screen; the panel says what it spans on the cloud. {key:cloud.edit.larger} makes it larger again.",
+   "keywords": ["brush size", "radius", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "cloud.edit.larger",
+   "title": "Larger brush",
+   "summary": "Makes the brush of Edit point cloud larger.",
+   "details": "Each press adds a quarter to its size on screen; the panel says what it spans on the cloud. {key:cloud.edit.smaller} makes it smaller again.",
+   "keywords": ["brush size", "radius", "point cloud", "scan", "edit points"],
+   "requires": "Only while Edit point cloud is open."
   }
  ]
 }

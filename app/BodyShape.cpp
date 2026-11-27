@@ -1,6 +1,7 @@
 #include "CurveSamples.hpp"
 #include <Prs3d_PointAspect.hxx>
 #include "BodyShape.hpp"
+#include "opad/cloud_edit.hpp"
 #include <OSD_Parallel.hxx>
 #include <chrono>
 #include <string>
@@ -1649,9 +1650,11 @@ Graphic3d_Vec4ub ramp(float v, float lo, float hi) {
 }  // namespace
 
 Handle(Graphic3d_ArrayOfPoints) BodyPrs::cloudArray(const opad::cloud::Points& p, const std::vector<uint32_t>* only, int mode, size_t budget, size_t* drawn,
-                                                    const std::vector<uint32_t>* overrides, const std::array<double, 3>* own) {
-  const size_t n = only ? only->size() : p.size();
-  if (n == 0) return nullptr;
+                                                    const std::vector<uint32_t>* overrides, const std::array<double, 3>* own, const opad::cloud::Edit* edit) {
+  const size_t base = p.size();
+  const opad::cloud::Points* added = edit && !edit->added.empty() ? &edit->added : nullptr;
+  const size_t n = only ? only->size() : base;
+  if (n == 0 && !added) return nullptr;
   // Which colour: the scan's own, shaded by the normals (grey), the scalar's ramp, or none (the body's colour).
   if (mode == 0) mode = p.colored() ? 1 : p.has_normals() ? 2 : 4;
   if (mode == 1 && !p.colored()) mode = 4;
@@ -1665,36 +1668,64 @@ Handle(Graphic3d_ArrayOfPoints) BodyPrs::cloudArray(const opad::cloud::Points& p
     const size_t j = m == n ? k : size_t((uint64_t(k) * 2654435761ull) % n);
     return only ? (*only)[j] : j;
   };
+  // An edit's points: moved ones found by a bit, then their offset by search; deleted ones by a bit.
+  std::vector<uint64_t> movedBits, deletedBits;
+  if (edit) {
+    const size_t all = base + (added ? added->size() : 0);
+    movedBits.assign(base / 64 + 1, 0);
+    for (uint32_t i : edit->moved)
+      if (i < base) movedBits[i / 64] |= uint64_t(1) << (i % 64);
+    deletedBits.assign(all / 64 + 1, 0);
+    for (const auto& r : edit->deleted.ranges)
+      for (uint64_t i = r[0]; i <= r[1] && i < all; ++i) deletedBits[size_t(i / 64)] |= uint64_t(1) << (i % 64);
+  }
+  auto gone = [&](size_t i) { return !deletedBits.empty() && (deletedBits[i / 64] >> (i % 64) & 1); };
   float lo = 0, hi = 1;
   if (mode == 3) {
     std::vector<float> s;
-    for (size_t k = 0; k < std::min<size_t>(m, 20000); ++k) s.push_back(p.scalar[pick(k * std::max<size_t>(1, m / 20000))]);
+    for (size_t k = 0; k < std::min<size_t>(m, 20000); ++k)
+      if (const size_t i = pick(k * std::max<size_t>(1, m / 20000)); i < base) s.push_back(p.scalar[i]);
     std::sort(s.begin(), s.end());
     if (!s.empty()) lo = s[s.size() / 50], hi = s[s.size() - 1 - s.size() / 50];
   }
-  Handle(Graphic3d_ArrayOfPoints) a = new Graphic3d_ArrayOfPoints(int(m), colours ? Graphic3d_ArrayFlags_VertexColor : Graphic3d_ArrayFlags_None);
+  // Added points are drawn after the sample, all of them (a few, by hand), unless `only` names its own.
+  const size_t extra = added && !only ? added->size() : 0;
+  if (m + extra == 0) return nullptr;
+  Handle(Graphic3d_ArrayOfPoints) a = new Graphic3d_ArrayOfPoints(int(m + extra), colours ? Graphic3d_ArrayFlags_VertexColor : Graphic3d_ArrayFlags_None);
   const double light[3] = {0.32, 0.45, 0.83};
-  for (size_t k = 0; k < m; ++k) {
-    const size_t i = pick(k);
-    const int v = a->AddVertex(p.xyz[3 * i], p.xyz[3 * i + 1], p.xyz[3 * i + 2]);
-    if (!colours) continue;
+  auto put = [&](size_t i) {
+    if (gone(i)) return;
+    const opad::cloud::Points& from = i < base ? p : *added;
+    const size_t j = i < base ? i : i - base;
+    if (i >= base && (!added || j >= added->size())) return;
+    float x = from.xyz[3 * j], y = from.xyz[3 * j + 1], z = from.xyz[3 * j + 2];
+    if (i < base && !movedBits.empty() && (movedBits[i / 64] >> (i % 64) & 1)) {
+      const auto at = std::lower_bound(edit->moved.begin(), edit->moved.end(), uint32_t(i));
+      const float* o = &edit->offsets[3 * size_t(at - edit->moved.begin())];
+      x += o[0], y += o[1], z += o[2];
+    }
+    const int v = a->AddVertex(x, y, z);
+    if (!colours) return;
     Graphic3d_Vec4ub c;
     if (overrides && i < overrides->size() && ((*overrides)[i] >> 24) != 0) {
       const uint32_t o = (*overrides)[i];
       c = Graphic3d_Vec4ub(uint8_t(o >> 16), uint8_t(o >> 8), uint8_t(o), 255);
-    } else if (mode == 4) c = body;
-    else if (mode == 1) c = Graphic3d_Vec4ub(p.rgb[3 * i], p.rgb[3 * i + 1], p.rgb[3 * i + 2], 255);
+    } else if (mode == 4 || (mode == 1 && !from.colored()) || (mode == 2 && !from.has_normals()) || (mode == 3 && !from.has_scalar())) c = body;
+    else if (mode == 1) c = Graphic3d_Vec4ub(from.rgb[3 * j], from.rgb[3 * j + 1], from.rgb[3 * j + 2], 255);
     else if (mode == 2) {
-      const float* nn = &p.normals[3 * i];
+      const float* nn = &from.normals[3 * j];
       const double d = std::abs(nn[0] * light[0] + nn[1] * light[1] + nn[2] * light[2]);
       const uint8_t g = uint8_t(std::clamp(70.0 + 175.0 * d, 0.0, 255.0));
       c = Graphic3d_Vec4ub(g, g, uint8_t(std::min(255, g + 10)), 255);
     } else {
-      c = ramp(p.scalar[i], lo, hi);
+      c = ramp(from.scalar[j], lo, hi);
     }
     a->SetVertexColor(v, c);
-  }
-  if (drawn) *drawn = m;
+  };
+  for (size_t k = 0; k < m; ++k) put(pick(k));
+  for (size_t k = 0; k < extra; ++k) put(base + k);
+  if (a->VertexNumber() == 0) return nullptr;
+  if (drawn) *drawn = size_t(a->VertexNumber());
   return a;
 }
 
@@ -1720,6 +1751,10 @@ std::shared_ptr<BodyPrs> BodyPrs::buildCloud(const TopoDS_Shape& shape, const Bn
     log("cloud prs: " + std::to_string(points->size()) + " points, " + std::to_string(p->cloudDrawn) + " drawn, " +
         std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count()) + " ms");
   return p;
+}
+
+float BodyShape::pointSize() const {
+  return myDrawer->HasOwnPointAspect() ? float(myDrawer->PointAspect()->Aspect()->Scale()) : 1.f;
 }
 
 bool BodyShape::setPointSize(float pixels) {

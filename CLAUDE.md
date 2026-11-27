@@ -155,6 +155,26 @@ polygon, `cloud::in_polygon` on a worker), brush (spheres at navigation picks), 
 `cloud_crop`. Known limit: a non-linked 20M cloud is ~700 MB of BREP text, and `applyOps` copies the Document on the UI
 thread: big scans are best linked (`import --link`). `ctest -R point-cloud`; gui case `cloud-20m` (OPAD_BENCH_CLOUD,
 tools/bench_cases/cloud.py makes a 20M-point PLY).
+Edit point cloud (`app/CloudEditArea.*`, core `opad/cloud_edit.hpp` + `cloud/edit.cpp`, feature `cloud_edit`): a mode like
+sketch mode, entered by `cloud.edit` (Scan tab, context menu, double-click a cloud; `DesignController::setKindEditor`
+routes Edit feature of a cloud_edit step here, rolled back to it; a new edit goes at the end, refused while rolled back; a
+linked file's cloud is refused at once with "embed it first": linked parts are read-only, `check_read_only`),
+left only by Finish (one `cloud_edit` op, or an `edit` of the step's whole `inputs`, made and planned on a worker that
+reads the document in place, `AppDocument::readAsync` + `commitPlanned`: `applyOps` copies the Document on the UI thread,
+272 ms with an embedded 20M scan; the editor is freed on a worker too) or Cancel (a toast asks when strokes were made); Esc lets go of a drag, then the selection. Contextual tab
+`design.cloudEdit`; Undo/Redo inside it through `AreaController::history` + `command("edit.undo")` (stroke snapshots, the
+core `Edit`). The stored `Edit` = moved base ordinals + float offsets (base64), deleted ranges, added points (ordinal
+base + k, attributes as the base's), `base` = the cloud's count it was made on (another count: the feature fails);
+`cloud::apply` replays it bit for bit. `cloud::Editor` (worker only, one task at a time): a Grid over the base, offsets in
+a hash map (grid queries reach `m_reach` further), brushes = cylinders along the view through the picked point (Falloff
+Smooth/Sharp/Flat, `front`: half the radius deep, else 4 radii), push/pull along normals turned to the eye, smooth onto
+the 10-NN plane, erase, add on the plane fitted at the pick (ray met), `inPolygon` on working positions, `grow` (BFS over
+12-NN, normal angle + plane offset, 2M cap, cancellable). App: dabs (a quarter radius apart, filled in along the stroke)
+queue as tasks, coalescing while one runs (`quiet` jobs; Grow a shown one); the stroke's points are drawn over the cloud
+(`Viewport::showCloudStroke`, built by `BodyPrs::cloudArray(..., edit)` on the worker) and at the stroke's end the
+snapshot goes to `Viewport::setCloudEdit(node, edit, clearsStroke)`: kept per node through the LOD passes like a colour
+overlay, dropped by itself once the body's base arrays change (the commit). Brush size keys Ctrl+[ / Ctrl+] (`[`/`]` are
+Compare's). `ctest -R point-cloud` (cloud_edit cases); gui case `cloud-edit-20m` (OPAD_BENCH_CLOUDEDIT, app/CloudEditBench.cpp).
 
 ## Parasolid X_T / X_B (`core/src/xt/`, no dependency)
 
