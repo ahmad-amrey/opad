@@ -4,6 +4,8 @@
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <gp_Ax2.hxx>
 #include <TopoDS_Edge.hxx>
 
 #include <QBitmap>
@@ -306,6 +308,32 @@ void Simulate::showFanGlyphs(const std::vector<json>& fans) {
     glyphs.push_back(g);
   }
   view->showSimGlyphs(glyphs);
+}
+
+void Simulate::showCheckOpenings(const std::vector<json>& openings) {
+  Viewport* view = services().viewport();
+  if (!view) return;
+  std::vector<json> fans;
+  std::vector<Viewport::Candidate> arrows;
+  for (const json& o : openings) {
+    fans.push_back({{"loops", o.value("loops", json::array())}, {"centre", o["centre"]}, {"vector", o["vector"]}, {"inward", o.value("inward", false)}});
+    // The arrow as the glyph draws it (twice the opening's size, coming to an inlet, leaving an outlet), a rod to click.
+    const opad::Vec3 c = o["centre"], v = o["vector"];
+    gp_Vec n(v[0], v[1], v[2]);
+    const double size = std::max(1.0, o.value("size", 0.0));
+    if (n.Magnitude() < 1e-9) continue;
+    n.Normalize();
+    const gp_Pnt centre(c[0], c[1], c[2]);
+    const gp_Pnt from = o.value("inward", false) ? centre.Translated(n * (-2 * size)) : centre;
+    try {
+      arrows.push_back({o.value("id", std::string()), BRepPrimAPI_MakeCylinder(gp_Ax2(from, gp_Dir(n)), 0.06 * size, 2 * size).Shape()});
+    } catch (const Standard_Failure&) {
+    }
+  }
+  showFanGlyphs(fans);
+  if (!arrows.empty()) view->showCandidates(arrows);
+  else if (m_checkArrows) view->clearCandidates();
+  m_checkArrows = arrows.size();
 }
 
 // A fan's openings are picked among the sketches' closed regions (found on a worker, as a feature's profiles input finds

@@ -24,7 +24,7 @@ const QList<Check>& all() {
     using T = SimChecksText;
     QList<Check> c;
     c.push_back({"fitting", Goal::Air, T::tr("How much pressure does a fitting lose?"),
-                 T::tr("Ducts, reducers, elbows, adapters. Shows where the air slows down or swirls."), T::tr("About 3 min"), "flow", "openfoam",
+                 T::tr("Ducts, reducers, elbows, adapters. Shows where the air slows down or swirls."), T::tr("1 to 5 min"), "flow", "openfoam",
                  {T::tr("duct"), T::tr("pipe"), T::tr("reducer"), T::tr("adapter"), T::tr("elbow"), T::tr("narrow"), T::tr("pressure"), T::tr("loss"),
                   T::tr("air"), T::tr("water"), T::tr("flow"), T::tr("hose"), T::tr("nozzle"), "CFD", "Pa"}});
     c.push_back({"fan", Goal::Air, T::tr("How much air will my fan really push?"),

@@ -84,6 +84,10 @@ class Simulate : public AreaController {
   void lightRefs(const std::vector<std::pair<opad::Ref, std::string>>& refs);  // those (a nature each) lit; none: nothing lit
   // Fans as loads have them ({refs, vector, outlet}): each one's plane and the air's way drawn (Viewport::showSimGlyphs).
   void showFanGlyphs(const std::vector<opad::json>& fans);
+  // An airflow check's openings (GuidedCheck::Hooks::openings): drawn as the fans' glyphs are, each arrow also a candidate of
+  // the view ("flow:inlet", "flow:outlet"), so a click on it reaches the check (it flips the air's way).
+  void showCheckOpenings(const std::vector<opad::json>& openings);
+  size_t checkArrowsShown() const { return m_checkArrows; }
   size_t fanGlyphsShown() const;
 
  private:
@@ -124,6 +128,7 @@ class Simulate : public AreaController {
   std::vector<Lit> m_lit;
   std::vector<std::pair<opad::Ref, std::string>> m_litRefs;  // what Thermal setup's rows lit last (empty: the browser's rows)
   std::vector<opad::json> m_glyphFans;                       // the fans drawn with their plane and way
+  size_t m_checkArrows = 0;                                   // the airflow check's arrows shown as the view's candidates
   class Job* m_profileJob = nullptr;                         // the sketches' regions found for a fan's opening
   std::map<std::string, opad::json> m_openings;              // a drawn opening's outline, centre and normal, by its reference (read on a worker)
   std::set<std::string> m_reading;                           // openings being read
