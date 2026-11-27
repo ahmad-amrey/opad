@@ -914,7 +914,7 @@ requests elsewhere (bench `updates`; `ctest -R update-check` runs a fake GitHub 
 plugin: the static build imports `Qt6::QSchannelBackendPlugin`, the portable stage copies `tls/qschannelbackend.dll`.
 Assets carry their release's tag without the v (`OPAD-0.11.0-windows-x64-setup.exe`, `-rc.N`, `-dev.N`: the Collect
 step's LABEL, which is also the tag); the update check takes `OPAD-*-<installerAssetName's system part>`; version-free
-copies of the four installers stay for copies before 0.11.0. The README links to the latest release's page. The
+copies of the four installers stay on releases (not pre-releases) for copies before 0.11.0. The README links to the latest release's page. The
 installer moves a running opad-cli.exe aside (`opad-cli.exe.<n>.old`, `PrepareToInstall`) instead of asking to close it:
 every open AI session (Claude Code, Desktop, Codex) runs its own `opad-cli mcp` for as long as it is open. OPAD's start
 removes the free ones (`appdata::removeMovedAside`). Release notes list the solver packs (`tools/solver_packs_notes.sh`).

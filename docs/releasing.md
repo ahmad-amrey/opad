@@ -174,7 +174,7 @@ Each package names the release it belongs to, its tag without the `v`: `OPAD-0.1
 `OPAD-0.11.1-dev.80-...`. The README's Download section links to the latest release's page. OPAD's update check takes the
 asset `OPAD-<anything>-<system part>` of the release it offers (`installerAssetName` names the system part), else
 `releases/download/<tag>/OPAD-<tag without v>-<system part>`. Copies before 0.11.0 ask for the names without the version,
-so the release job also uploads `OPAD-windows-x64-setup.exe`, `OPAD-windows-x64.exe`, `OPAD-macos.dmg` and
+so the release job also uploads, to a release only (they never look at pre-releases), `OPAD-windows-x64-setup.exe`, `OPAD-windows-x64.exe`, `OPAD-macos.dmg` and
 `OPAD-linux-amd64.deb`; drop those once nobody runs a copy that old. Renaming a package means the release job's checks,
 `app/UpdateCheck.cpp` and `tools/release_downloads.md` too.
 
