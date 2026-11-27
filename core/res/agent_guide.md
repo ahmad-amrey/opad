@@ -103,6 +103,10 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   `points`, `entities` and `constraints` it made (and for outline text the `profiles`: a point inside each letter).
 - Any point, entity or constraint without an `id` gets the next free one; `first_id` makes a shape's ids run
   consecutively from that number, so constraints in the same call can refer to them.
+- A pick's u or v, and the length options (`radius`, `diameter`, `width`, `height`, `distance`, `fillet`, `fillets`),
+  may be parameter expressions (`[["-w / 2", 0], ["w / 2", "h"]]`, `"radius": "r + 1 mm"`) as dimensions are. They are
+  evaluated once, when the sketch is made or edited: the curves keep the values, so add a dimension with `expr` where
+  the shape must follow a parameter later.
 - Kinds (picks, then options):
   - `point` [p]; `line` [a, b]; `circle` [centre] with `radius` or `diameter` (or [centre, point on it]);
   - `rect2` [corner, corner] and `rect_center` [centre, corner], axis-aligned; `rect3` [a, b, height point], turned;
@@ -160,14 +164,24 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   feature given face/edge indices answers with a warning that points to it.
 - Rule values that are lengths (`radius_min/max`, `length_min/max`, `at_plane`'s value, `bounds` coordinates) may be
   expressions of the parameters: `{"at_plane": {"axis": "z", "value": "height"}}` follows `height` when it changes.
-  `bounds_mode` "intersects" takes what reaches into the box, "outside" what stays out of it (default "inside": wholly
-  in it); a `null` coordinate leaves that side open (`"min": [null, null, 100]`). `length_min/max` (edges) and
+  `bounds_mode` "intersects" takes what reaches into the box, "outside" what stays wholly out of it (an arc that reaches
+  into the box is not outside, even when most of it is out), "not_inside" whatever is not wholly in it (default
+  "inside": wholly in it); the test is the entity's tight box. A `null` coordinate leaves that side open (`"min": [null,
+  null, 100]`). `length_min/max` (edges) and
   `area_min/max` (faces, mm²) tell the outer and inner rim of a ring apart by size; `"loop": "inner"` picks the edges on
   a hole of a face (a ring face's inner rim, a pocket's rim), `"outer"` every other edge.
+- `of_face` keeps the edges of the faces it names: a face index, or face filters (`{"normal": "+z", "at_plane":
+  {"axis": "z", "value": "height"}}`). With it, `loop` is those faces' own: `{"of_face": {"normal": "+z"}, "loop":
+  "outer"}` is the top face's outer rim (arcs and lines alike), `"inner"` the rims of its holes. Prefer it to a box
+  around the outline.
 - Recognised details as a rule (faces only): `"select": {"recognized": "hole", "diameter": 6, "through": true}` is
   every face of the body's holes of that size; also `fillet` (`radius`), `chamfer` (`distance`), `wall`
   (`thickness`), `boss`, `pocket`; hole `type` simple|counterbore|countersink, `depth`, `cb_diameter`,
   `cs_diameter`. `query_entities` takes the same keys in `filters`.
+- `query_entities` with `detail: "compact"` answers each item as its `ref` and a few rounded numbers (`curve` or
+  `surface`, `length` or `area`, `radius`, `start`/`end`, `center`, `normal`, `direction`, `point`: about a tenth of a full
+  item); the page's `reference` holds the body's `geometry` and `placement` once, the token of every item with its ref.
+  The live server counts those refs as given.
 - Live server: a face/edge/vertex input is accepted when the connection was given that reference (by
   `entity_details`, `query_entities`, the selection or a change list) and its body still has the same key and
   placement; otherwise put its token in the call's `references`. A token needs only `ref`, `geometry` and
@@ -290,6 +304,11 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   and the error); inputs and backward references are checked before anything runs. Every step's new and changed solids
   must pass solid validation, as a single `feature` call's do, so an invalid body fails the step that made it even when
   a later step would have used it up.
+- `validate: "final"` checks only the batch's end state, for a change that passes through a broken state (a cut moved
+  off the part and back, a parameter changed before the sketch that follows it): the steps record their regenerate
+  errors instead of failing (a step's result lists them in `errors`), and at the end every feature, sketch and parameter
+  must be as sound as before the batch and every changed solid valid. A failure there is `failed_step: "final"` with
+  `final_check.errors` naming each item that failed and why; it is still one atomic step, nothing is kept.
 
 ## History and files
 
@@ -388,7 +407,10 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   it with `at`, `part` or `base` (parts, values, poses and limits stay; `base` is kept unless given).
 - `joint_set` drives joints (`values: {joint: 30}` or `[rotation, translation]`, null leaves one free) or drags a part
   (`part` + world `matrix`); every other part follows through the joints and one pose op is written (`preview: true` only
-  reports). A position the joints cannot reach is refused with the joints that cannot all be met.
+  reports). A position the joints cannot reach is refused with the joints that cannot all be met. Live, a preview is
+  also staged (state `staged`, `preview_id`, no revision or request id needed): `viewport_image` with that `preview_id`
+  renders the trial pose, `preview_commit` applies it, `preview_cancel` or the next write drops it. Inside a
+  transaction (or with view-only access) a preview only reports.
 - `mechanism` lists joints, values, which coordinates are free, degrees of freedom and redundant equations (the
   ground's are not counted; `redundant_joints` names the joints that repeat others, e.g. the one closing a loop).
 - Gears for mechanisms: `feature kind=gear` (`type` spur | internal | rack, `module`, `teeth`, `width`, `bore`,
@@ -401,11 +423,15 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
     `traces: [{"part", "point": [x, y, z] now, "name"}]`. Without drivers, joints with a position or speed `drive` run.
     Returns each coordinate's range, speed and acceleration, and the traced paths. `clearance: true` (or `{"a", "b",
     "ignore", "clearance_mm"}`: bodies or components; a alone: against the mechanism's other bodies) checks every frame:
-    `clearance.status` collision | too_close | clear, `first_collision` (t, pair, kind intersecting | touching | inside),
-    `min_distance_mm` and `closest` (exact), `too_close` pairs, and the series "Minimum distance" (meshes: within
+    `clearance.status` collision | too_close | clear, `first_collision` (t, pair, kind intersecting | touching | inside,
+    `volume_mm3`, `depth_mm`, `at_limit`: joints of the pair held at a limit then), `min_distance_mm` and `closest`
+    (exact), `too_close` pairs, and the series "Minimum distance" (meshes: within
     `mesh_tolerance_mm`, over 1 mm up to 5% high). Pairs already touching at the start (a pin in its bore)
     are listed in `in_contact_at_start` and not followed; collisions between frames are not seen (raise `frames` for
-    fast motion).
+    fast motion). `contact_tolerance_mm` (default 0) makes faces that touch, or overlap no deeper than that (a hard
+    stop meshed a hair into its seat), a contact instead of a collision: `contacts` (pair, t, frame, kind,
+    `depth_mm`, `at_limit`, `expected` when a joint of the pair is at its limit), `contact_pairs`, and status `contact`
+    when nothing else is found; the closest approach leaves those pairs out. 0.05 mm suits printed and machined stops.
   - `id` with `settings` merges them key by key (an array, such as drivers, is replaced whole; null removes a key).
   - `dynamic` (Project Chrono): masses and inertias from the solids and their materials (steel when none, said in
     warnings), `gravity` (true: 9.81 m/s2 down -Z; false; or [x, y, z] mm/s2), joints with their `drive` (`mode`
@@ -504,6 +530,11 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   plane resolved to.
 - Live write results include `changes.bodies`: for each body that command made, changed or moved, its tight
   `bbox` (min, max, size), `volume_mm3` and `valid`, so no `validate` round trip is needed after each step.
+- A refused live edit names what failed, applied directly or with `preview: true` alike: a later feature it breaks
+  ("A feature fails after this change: fillet 'Fillet 2' (<id>) failed: ..."), or an invalid body with the feature
+  that last made it and the kernel's reasons ("Generated body failed solid validation: 'Arm' (<id>), made by fillet
+  'Fillet 2' (<op>): self intersecting wire on 1 face"). A `sketch_edit` is refused when a feature downstream of the
+  sketch fails this way.
 
 - `validate` checks solids and reports volumes; `context` summarises the document (sections `nodes`, `features`,
   `sketches`, `parameters`, `errors`); `entity_details` and `query_entities` describe faces and edges with their
