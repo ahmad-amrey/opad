@@ -46,6 +46,7 @@ OPAD_BENCH(OPAD_BENCH_ALIGN_CREASE, alignCrease) {
     std::string scan, block;
     std::vector<int> sides;  // the scan's sides along its top front edge
     int blockEdge = -1;      // the block's edge (0,0,40)-(100,0,40)
+    QPointF hover;           // where the pointer rests: on a scan side near the edge, as a pick there finds it
     opad::json measured;
     QString stepName;
     QElapsedTimer clock;
@@ -168,9 +169,26 @@ OPAD_BENCH(OPAD_BENCH_ALIGN_CREASE, alignCrease) {
       }
       case 4: {
         if (busy || ++st->settled < 10) return;
-        const gp_Pnt at = gp_Pnt(50, 0.9, 40).Transformed(scanMove());
+        // A point near the edge whose pick is a side of the scan (projected from the geometry, checked with the view's own
+        // pick: right on the edge or a cell off it, at either display scale).
+        bool found = false;
+        for (const double x : {50.0, 40.0, 60.0, 30.0, 70.0, 20.0, 80.0}) {
+          for (const double y : {0.9, 0.3, 1.6}) {
+            const gp_Pnt at = gp_Pnt(x, y, 40).Transformed(scanMove());
+            const QPointF where(view->widgetPoint({at.X(), at.Y(), at.Z()}));
+            opad::Ref r;
+            if (view->referenceAt(where, r) && r.body == st->scan && r.kind == opad::Ref::Kind::Edge) {
+              trace::log(QStringLiteral("bench: align crease: resting on side %1 at %2,%3 (display scale %4)").arg(r.index).arg(where.x()).arg(where.y()).arg(view->displayScale()));
+              st->hover = where;
+              found = true;
+              break;
+            }
+          }
+          if (found) break;
+        }
+        if (!require(found, "a side of the scan near the edge under the pointer")) return finish();
         begin("the pointer resting near the edge");
-        view->benchHoverAt(QPointF(view->widgetPoint({at.X(), at.Y(), at.Z()})));
+        view->benchHoverAt(st->hover);
         st->phase = 5;
         return;
       }
@@ -185,8 +203,7 @@ OPAD_BENCH(OPAD_BENCH_ALIGN_CREASE, alignCrease) {
         require(off < 0.1 && angle < 0.3, QStringLiteral("it lies on the true edge: %1 mm off, %2 degrees").arg(off, 0, 'f', 4).arg(angle, 0, 'f', 3));
         require(length > 85 && length < 101, QStringLiteral("it runs the edge's length: %1 mm of 100").arg(length, 0, 'f', 2));
         begin("the side clicked");
-        const gp_Pnt at = gp_Pnt(50, 0.9, 40).Transformed(scanMove());
-        view->benchClickAt(QPointF(view->widgetPoint({at.X(), at.Y(), at.Z()})));
+        view->benchClickAt(st->hover);
         st->phase = 6;
         return;
       }

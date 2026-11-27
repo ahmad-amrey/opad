@@ -39,9 +39,11 @@ gp_Trsf scanMove() {  // as tools/bench_cases/align.py _pairs_move
 OPAD_BENCH(OPAD_BENCH_ALIGN_STEPS, alignSteps) {
   struct State {
     int phase = 0, ticks = 0, settled = 0, click = 0;
-    bool all = true, jobDone = false, jobOk = false, retried = false;
+    bool all = true, jobDone = false, jobOk = false;
     std::string scan;
-    std::vector<opad::Vec3> nodes;  // the scan's top-face nodes to click (world)
+    std::vector<opad::Vec3> nodes;    // the scan's top-face nodes to choose from (world)
+    std::vector<opad::Vec3> clicked;  // those clicked, in order
+    size_t next = 0;                  // the next of `nodes` to try
     opad::json found;
     QString stepName;
     QElapsedTimer clock;
@@ -99,7 +101,8 @@ OPAD_BENCH(OPAD_BENCH_ALIGN_STEPS, alignSteps) {
         w.m_jobs->async(QStringLiteral("Finding nodes"), [docCopy, scene, scan, out](Progress) {
           const auto m = opad::scanfit::fit_mesh(opad::node_world_shape(*docCopy, *scene, scan));
           *out = opad::json::array();
-          for (const gp_Pnt& p : {gp_Pnt(20, 16, 40), gp_Pnt(80, 14, 40), gp_Pnt(52, 46, 40), gp_Pnt(28, 40, 40)}) {
+          for (const gp_Pnt& p : {gp_Pnt(20, 16, 40), gp_Pnt(80, 14, 40), gp_Pnt(52, 46, 40), gp_Pnt(28, 40, 40), gp_Pnt(70, 44, 40), gp_Pnt(12, 52, 40),
+                                  gp_Pnt(88, 50, 40), gp_Pnt(46, 8, 40), gp_Pnt(60, 28, 40), gp_Pnt(36, 26, 40)}) {
             const gp_Pnt moved = p.Transformed(scanMove());
             size_t best = 0;
             for (size_t i = 1; i < m->nodes.size(); ++i)
@@ -163,13 +166,6 @@ OPAD_BENCH(OPAD_BENCH_ALIGN_STEPS, alignSteps) {
         if (busy || ++st->settled < 8) return;
         st->settled = 0;
         const auto [vertices, other] = picked();
-        if (st->click > 0 && vertices == st->click - 1 && picker->statusText().contains("No vertex") && !st->retried) {
-          // Picking found no vertex there (the depth-first pick of a 2 mm mesh can miss by a pixel): it said so; once more.
-          trace::log(QStringLiteral("bench: align steps: click %1 found no vertex and said so; clicking again").arg(st->click));
-          view->benchClickAt(QPointF(view->widgetPoint(st->nodes[size_t(st->click - 1)])));
-          st->retried = true;
-          return;
-        }
         if (st->click > 0) {
           require(vertices == st->click && other == 0,
                   QStringLiteral("click %1 counted: %2 vertices picked, %3 other picks; it says \"%4\"").arg(st->click).arg(vertices).arg(other).arg(picker->statusText()));
@@ -180,17 +176,30 @@ OPAD_BENCH(OPAD_BENCH_ALIGN_STEPS, alignSteps) {
           picker->panel()->grab().save(prefix + ".points.png");
           // A click on a picked vertex takes it back.
           begin("a picked vertex clicked again");
-          view->benchClickAt(QPointF(view->widgetPoint(st->nodes[3])));
+          view->benchClickAt(QPointF(view->widgetPoint(st->clicked[3])));
           st->phase = 6;
           return;
         }
-        st->retried = false;
-        const opad::Vec3 at = st->nodes[size_t(st->click)];
-        const QPoint where = view->widgetPoint(at);
-        trace::log(QStringLiteral("bench: align steps: clicking vertex %1 at %2,%3 of %4x%5").arg(st->click + 1).arg(where.x()).arg(where.y()).arg(view->width()).arg(view->height()));
-        view->benchClickAt(QPointF(where));
-        ++st->click;
-        return;
+        // The next node a click there reaches (projected from the geometry, checked with the view's own pick: from this
+        // camera the block can hide part of the scan, at either display scale).
+        for (; st->next < st->nodes.size(); ++st->next) {
+          const QPoint where = view->widgetPoint(st->nodes[st->next]);
+          opad::Ref r;
+          const bool reached = view->referenceAt(QPointF(where), r) && r.body == st->scan && r.kind == opad::Ref::Kind::Vertex;
+          if (!reached) {
+            trace::log(QStringLiteral("bench: align steps: node %1 at %2,%3 is not reached from here (%4); the next one").arg(st->next).arg(where.x()).arg(where.y())
+                           .arg(QString::fromStdString(r.body.empty() ? std::string("nothing") : r.str())));
+            continue;
+          }
+          trace::log(QStringLiteral("bench: align steps: clicking vertex %1 at %2,%3 of %4x%5 (display scale %6)")
+                         .arg(st->click + 1).arg(where.x()).arg(where.y()).arg(view->width()).arg(view->height()).arg(view->displayScale()));
+          st->clicked.push_back(st->nodes[st->next++]);
+          view->benchClickAt(QPointF(where));
+          ++st->click;
+          return;
+        }
+        require(false, "four scan nodes a click reaches from this camera");
+        return finish();
       }
       case 6: {
         if (busy || ++st->settled < 8) return;

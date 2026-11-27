@@ -182,8 +182,10 @@ void PlanePicker::selectionChanged() {
 void PlanePicker::setPointsMode(bool on){
   if(!m_active||m_originStage||on==m_points)return;
   m_points=on;m_view->clearSelection();
-  if(on){m_accumulateBefore=m_view->pickAccumulate();m_view->setPickAccumulate(true);m_view->setSelectionFilter(Viewport::SelFilter::Vertex);}
-  else {m_view->setPickAccumulate(m_accumulateBefore);m_view->setSelectionFilter(Viewport::SelFilter::Face);m_status->clear();}
+  // The plane candidates (origin squares, construction planes, sketches) are out of the view meanwhile: only vertices count
+  // here, and a square about the origin took the clicks on a mesh behind it ("no vertex under that click").
+  if(on){++m_candidateSerial;m_view->clearCandidates();m_accumulateBefore=m_view->pickAccumulate();m_view->setPickAccumulate(true);m_view->setSelectionFilter(Viewport::SelFilter::Vertex);}
+  else {m_view->setPickAccumulate(m_accumulateBefore);m_view->setSelectionFilter(Viewport::SelFilter::Face);m_status->clear();constructionPlanes();}
   m_usePoints->setVisible(on);m_pointsHint->setVisible(on);refreshPoints();
 }
 QString PlanePicker::statusText() const{return m_status->text();}

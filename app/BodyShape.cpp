@@ -157,6 +157,26 @@ class SegmentSet : public Select3D_SensitiveSet {
 };
 
 // How close the segment ab comes to the pick ray (from its near to its far point).
+// Where the ray from `eye` towards `away` meets triangle p (Moller-Trumbore): the distance from the eye, or < 0 when it
+// misses. The exact triangle under the pointer, unlike the selecting volume's tests, which take its pixel tolerance.
+double rayHitsTriangle(const gp_Pnt& eye, const gp_Pnt& away, const gp_Pnt (&p)[3]) {
+  const gp_Vec dir(eye, away);
+  const double length = dir.Magnitude();
+  if (length < 1e-300) return -1;
+  const gp_Vec d = dir / length, e1(p[0], p[1]), e2(p[0], p[2]);
+  const gp_Vec h = d.Crossed(e2);
+  const double a = e1.Dot(h);
+  if (std::fabs(a) < 1e-300) return -1;
+  const gp_Vec s(p[0], eye);
+  const double u = s.Dot(h) / a;
+  if (u < -1e-9 || u > 1 + 1e-9) return -1;
+  const gp_Vec q = s.Crossed(e1);
+  const double v = d.Dot(q) / a;
+  if (v < -1e-9 || u + v > 1 + 1e-9) return -1;
+  const double t = e2.Dot(q) / a;
+  return t >= 0 ? t : -1;
+}
+
 double rayDistance(const gp_Pnt& eye, const gp_Pnt& away, const gp_Pnt& a, const gp_Pnt& b, gp_Pnt* nearest = nullptr) {
   const gp_Vec u(eye, away), v(a, b), w(a, eye);
   const double uu = u.Dot(u), uv = u.Dot(v), vv = v.Dot(v), uw = u.Dot(w), vw = v.Dot(w), det = uu * vv - uv * uv;
@@ -1330,7 +1350,10 @@ class MeshPickSet : public Select3D_SensitiveSet {
       result = r;
       return true;
     }
-    if (volume.OverlapsTriangle(p[0], p[1], p[2], Select3D_TOS_INTERIOR, r) && r.Depth() < m_surface) m_surface = r.Depth(), m_front = t;
+    // The triangle the pointer is on: the nearest the ray itself meets. The volume's own test takes the pick tolerance (12
+    // device pixels for a vertex), so on a fine scan a triangle up to that far off, nearer the eye, won, and none of its
+    // corners was in reach: the click found nothing, more often at one display scale than another.
+    if (const double along = rayHitsTriangle(m_eye, m_away, p); along >= 0 && along < m_surface) m_surface = along, m_front = t;
     bool any = false;
     for (int k = 0; k < 3; ++k) {
       SelectBasics_PickResult h;
@@ -1382,7 +1405,7 @@ class MeshPickSet : public Select3D_SensitiveSet {
   // The point pick under way (UI thread only).
   TopAbs_ShapeEnum m_type = TopAbs_FACE;
   std::vector<Hit> m_hits;
-  double m_surface = 0;  // depth of the nearest triangle under the pointer
+  double m_surface = 0;  // how far along the ray the triangle under the pointer is (rayHitsTriangle)
   int m_front = -1;      // that triangle
   gp_Pnt m_eye, m_away;
 };

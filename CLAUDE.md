@@ -739,7 +739,10 @@ Concrete consequences already in place; keep them that way:
 - A mesh body's Face, Edge and Vertex filters pick through `BodyPrs::meshGroups` (BodyShape.cpp `MeshPickSet`: one BVH
   over the triangulations as stored, built on the mesh worker; `GroupSensitive` asks it, owners made as picked by
   `groupOwner`, ordinals as `opad::subshape` counts them), never a sensitive and owner per triangle, side or node: a
-  3.3M-triangle scan's Edge filter (the Move panel's Axis box) took 217 s on the UI thread, its Vertex filter 118 s.
+  3.3M-triangle scan's Edge filter (the Move panel's Axis box) took 217 s on the UI thread, its Vertex filter 118 s. A point
+  pick takes the corners/sides of the triangle the ray itself meets (`rayHitsTriangle`), never the volume's own overlap test:
+  that one has the 12-device-pixel tolerance, so a nearer triangle off the pointer won and fine scans' clicks found nothing
+  at one display scale (benches pick points checked with `Viewport::referenceAt`).
   `mesh_circles` (rims) welds by hash and sorts the sides (16 s -> 4 s on that scan). Bench `heavy-mesh`
   (OPAD_BENCH_HEAVYMESH, tools/bench_cases/heavy_mesh.py: a generated 1.2M-triangle tube); `BodyPrs::log` traces a big
   body's build phases.
