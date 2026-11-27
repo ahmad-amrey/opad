@@ -134,6 +134,13 @@ json picked_bodies(const Scene& scene, const json& refs) {
   return out;
 }
 
+// The document's parameters as expressions read them (sketch shape picks and lengths).
+design::ParamTable scene_params(const Scene& scene) {
+  std::vector<design::ParamDef> defs;
+  for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+  return design::ParamTable(std::move(defs));
+}
+
 }  // namespace
 
 // Called while the registry is being built, so it registers through `add` rather than register_command().
@@ -250,7 +257,8 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const Frame frame = design::resolve_plane(doc, s, plane);
         plane["frame"] = frame.to_json();
         json id_map;
-        const json geometry = design::expand_sketch_shapes(parse_if_text(a.value("geometry", json::object())), &id_map);
+        const design::ParamTable params = scene_params(s);
+        const json geometry = design::expand_sketch_shapes(parse_if_text(a.value("geometry", json::object())), &id_map, &params);
         const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(s, "Sketch");
         json op = design::make_sketch_op(name, plane, geometry);
         if (!component.empty()) op["component"] = component;
@@ -298,7 +306,10 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         Document& doc = need(d);
         json set = json::object();
         json id_map;
-        if (a.contains("geometry")) set["geometry"] = design::expand_sketch_shapes(parse_if_text(a["geometry"]), &id_map);
+        if (a.contains("geometry")) {
+          const design::ParamTable params = scene_params(resolve(doc));
+          set["geometry"] = design::expand_sketch_shapes(parse_if_text(a["geometry"]), &id_map, &params);
+        }
         if (a.contains("name")) set["name"] = a["name"];
         json frame;
         if (a.contains("plane")) {

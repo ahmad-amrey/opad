@@ -106,6 +106,16 @@ using Cancel = std::function<bool()>;
 // every affected later op are computed. `strict`: an error in one of the *new* ops throws instead of being
 // recorded, so a wrong input never reaches the document; so does a plan that changes a locked body (locked_change).
 Plan plan_ops(const Document& doc, std::vector<json> new_ops, bool strict = true, const Cancel& cancel = {});
+// While one lives on this thread, strict plans record a failing new op (and a parameter it breaks) as non-strict ones do
+// instead of throwing; locked bodies still refuse. model_batch's validate "final" checks the batch's end state instead.
+class DeferErrors {
+ public:
+  DeferErrors();
+  ~DeferErrors();
+  DeferErrors(const DeferErrors&) = delete;
+  DeferErrors& operator=(const DeferErrors&) = delete;
+  static bool active();
+};
 // Recomputes whatever is out of date (after a merge, a hand edit, a tombstone). An empty plan = up to date.
 Plan plan_regenerate(const Document& doc, bool force = false, const Cancel& cancel = {});
 json commit(Document& doc, Plan&& plan, const std::string& author = {});

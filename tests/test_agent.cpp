@@ -140,8 +140,8 @@ int main(){try {
   // Both merged (0.11.0 batch): measured 169983 live, 96407 headless.
   // Deviation (+1.8 KB live, +1.3 KB headless; with both above measured 171797 live, 97720 headless): the read-only deviation
   // command (from, to, tolerance, both_ways, max_distance, region, sample, worst, bins, range, align, exact), the rest in the guide.
-  CHECK(live<172000);  // 170100 before deviation; 165800 before point clouds; 161800 before fitted references; 160900 before paging; all three merged: measured 160762; 160200 before rules, mirror names and ellipse radii; 159300 before set_phase; 159100 before the guide by section; 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
-  CHECK(headless<97900);  // 96500 before deviation; 93700 before point clouds; 91050 before fitted references; 90450 before paging; 89950 before rules, mirror names and ellipse radii; 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
+  CHECK(live<173000);  // 172000 before the MCP surface gaps (validate final, compact queries, of_face, contact tolerance, measured 172485); 170100 before deviation; 165800 before point clouds; 161800 before fitted references; 160900 before paging; all three merged: measured 160762; 160200 before rules, mirror names and ellipse radii; 159300 before set_phase; 159100 before the guide by section; 158600 before the offset relationship; 156400 before Align; 154400 before mesh to solid; 153400 before thermal; 138400 before motion and simulation; both agent-evaluation fix sets merged (measured 137886); 135400 for each alone, 133400 before them; 114300 before the git tools; the drawing commands are file-level for live agents (core/src/live.cpp); 113400 until t2a's final merge
+  CHECK(headless<98800);  // 97900 before the MCP surface gaps (measured 98301); 96500 before deviation; 93700 before point clouds; 91050 before fitted references; 90450 before paging; 89950 before rules, mirror names and ellipse radii; 89450 before the offset relationship; 88700 before Align; 87600 before mesh to solid; 86500 before thermal; 79100 before motion and simulation; 71050 until t4's final merge (the canvas command, sketch_tool's project: +1.5 KB), 72550 until t5a's (+6.55 KB)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});
@@ -257,6 +257,25 @@ int main(){try {
     agent::validate_input(agent::live_schema("joint_set"),{{"values",{{joint,30}}},{"preview",true}});  // a read: no revision or request id
     const json set=commands::run("joint_set",{{"values",{{joint,30}}}},&d);
     CHECK(set.contains("id"));CHECK_EQ(d.ops.size(),n+1);
+    // Live, a preview is staged too: its preview_id renders the trial pose (the bridge; gui case agent-activity).
+    CHECK(agent::live_schema("joint_set")["required"].dump().find("request_id")==std::string::npos);
+    bool described=false;for(const auto& c:commands::list())if(c.name=="joint_set")described=c.description.find("preview_id")!=std::string::npos;
+    CHECK(described);
+  }
+  {  // MCP surface gaps from a live modelling session: the schemas take the new arguments and refuse what is not one
+    const json batch=agent::live_schema("model_batch");
+    const json box={{"id","b"},{"command","feature"},{"arguments",{{"kind","box"},{"inputs",{{"length",1},{"width",1},{"height",1}}}}}};
+    agent::validate_input(batch,{{"steps",json::array({box})},{"validate","final"},{"expected_revision",0},{"request_id","r"}});
+    CHECK_THROWS(agent::validate_input(batch,{{"steps",json::array({box})},{"validate","later"},{"expected_revision",0},{"request_id","r"}}));
+    const json query=agent::live_schema("query_entities");
+    agent::validate_input(query,{{"body","b"},{"detail","compact"},{"filters",{{"of_face",{{"normal","+z"}}},{"loop","outer"},{"bounds",{{"min",{0,nullptr,nullptr}},{"max",{nullptr,nullptr,nullptr}}}},{"bounds_mode","not_inside"}}}});
+    agent::validate_input(query,{{"body","b"},{"filters",{{"of_face",3}}}});
+    CHECK_THROWS(agent::validate_input(query,{{"body","b"},{"detail","tiny"}}));
+    CHECK_THROWS(agent::validate_input(query,{{"body","b"},{"filters",{{"of_face","top"}}}}));
+    const json shapes={{"geometry",{{"shapes",json::array({{{"kind","line"},{"picks",{{0,0},{"w / 2","h"}}}}})}}},{"expected_revision",0},{"request_id","s"}};
+    agent::validate_input(agent::live_schema("sketch"),shapes);
+    json wrong=shapes;wrong["geometry"]["shapes"][0]["picks"][1][0]=true;
+    CHECK_THROWS(agent::validate_input(agent::live_schema("sketch"),wrong));
   }
   std::cout<<"agent schemas, bounded context, exact validation and stale references: PASS\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

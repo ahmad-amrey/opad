@@ -303,6 +303,7 @@ json evaluate_rule_filters(const ParamTable& params, const json& filters) {
     for (const char* side : {"min", "max"})
       if (out["bounds"].contains(side) && out["bounds"][side].is_array())
         for (auto& v : out["bounds"][side]) length(v, std::string("bounds ") + side);
+  if (out.contains("of_face") && out["of_face"].is_object()) out["of_face"] = evaluate_rule_filters(params, out["of_face"]);
   return out;
 }
 
@@ -321,7 +322,8 @@ std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
   const auto [recognition, given] = split_recognized(filters);
   const json rest = evaluate_rule_filters(ctx.params, given);  // expressions follow the parameters
   if (rest.contains("loop") && kind != Ref::Kind::Edge) throw Error("a \"loop\" rule picks edges: give kind \"edge\"");
-  const auto describe = entity_describer(shape, rest);
+  if (rest.contains("of_face") && kind != Ref::Kind::Edge) throw Error("an \"of_face\" rule picks edges: give kind \"edge\"");
+  const auto describe = entity_describer(shape, rest, tolerance);
   std::vector<int> candidates;
   if (!recognition.is_null()) {
     if (kind != Ref::Kind::Face) throw Error("a \"recognized\" rule picks faces: give kind \"face\"");
@@ -1080,6 +1082,7 @@ struct Walk {
   }
 
   Plan run(bool strict) {
+    const bool refuse = strict && !DeferErrors::active();  // a failing new op or a broken parameter throws
     std::vector<Op> temp;
     temp.reserve(new_ops.size());
     for (size_t i = 0; i < new_ops.size(); ++i) {
@@ -1104,7 +1107,7 @@ struct Walk {
     for (const auto& e : ops)
       if (e.op->type == "param") defs.push_back({e.op->id, e.data().value("name", ""), e.data().value("expr", ""), e.data().value("comment", "")});
     const ParamTable params(defs);
-    if (strict) check_params(params, ops);
+    if (refuse) check_params(params, ops);
     // What is locked now stays as it is (TODO 11 UI-37); the replay to compare with only when something is locked.
     std::optional<Scene> locked_before;
     if (strict && has_locks(doc)) locked_before = resolve(doc);
@@ -1142,7 +1145,7 @@ struct Walk {
         errors.push_back({{"op", d.id}, {"name", d.name}, {"expr", d.expr}, {"error", now}});
         broken += (broken.empty() ? "" : "; ") + now;
       }
-      if (strict && !broken.empty()) throw Error("the change makes a parameter fail: " + broken);
+      if (refuse && !broken.empty()) throw Error("the change makes a parameter fail: " + broken);
     }
     SceneBuilder builder(doc);
     for (const auto& e : ops) {
@@ -1294,8 +1297,9 @@ struct Walk {
         direct.insert(op["id"].get<std::string>());
         if (op.value("op", "") == "edit") direct.insert(op.value("target", ""));
       }
-      for (const auto& err : errors)
-        if (direct.count(err["op"].get<std::string>())) throw Error(err["error"].get<std::string>());
+      if (refuse)
+        for (const auto& err : errors)
+          if (direct.count(err["op"].get<std::string>())) throw Error(err["error"].get<std::string>());
       if (locked_before)
         if (const auto why = locked_change(*locked_before, builder.scene())) throw *why;
     }
@@ -1343,6 +1347,13 @@ struct Walk {
 };
 
 }  // namespace
+
+namespace {
+thread_local int deferring = 0;
+}
+DeferErrors::DeferErrors() { ++deferring; }
+DeferErrors::~DeferErrors() { --deferring; }
+bool DeferErrors::active() { return deferring > 0; }
 
 bool same_shapes(const TopoDS_Shape& a, const TopoDS_Shape& b) { return same_geometry(a, b); }
 

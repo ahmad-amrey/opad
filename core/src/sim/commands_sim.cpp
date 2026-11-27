@@ -436,7 +436,7 @@ void register_sim_commands(const std::function<void(const CommandInfo&, Handler)
       });
 
   reg("joint_set",
-      "Drive joints to values (deg / mm) or place a part; the rest follow through the joints. Writes a pose (id: its op); preview only reports values and moved, no id",
+      "Drive joints to values (deg / mm) or place a part; the rest follow through the joints. Writes a pose (id: its op); preview only reports values and moved, no id (live: also staged, its preview_id rendered by viewport_image)",
       {{"doc", "path"},
        {"values", {{"type", "object"}, {"additionalProperties", {{"anyOf", {{{"type", "number"}}, {{"type", "array"}, {"items", {{"type", {"number", "null"}}}}}}}}},
                    {"description", "{joint id: value (deg or mm) or [values, null leaves one free]}"}}},

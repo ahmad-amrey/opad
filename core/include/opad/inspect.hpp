@@ -85,13 +85,16 @@ json describe_entity(const TopoDS_Shape& sub);
 // The same plus what `filters` measure: "length" of an edge (length_min/max), "area" of a face (area_min/max).
 json describe_entity(const TopoDS_Shape& sub, const json& filters);
 // describe_entity(sub, filters) for the faces, edges or vertices of `body`, plus "loop" of an edge when the filters ask:
-// "inner" when it lies on a hole of one of the body's faces (any wire but the face's outer one), else "outer". Scans the
-// body's faces once, when it is made.
-std::function<json(const TopoDS_Shape&)> entity_describer(const TopoDS_Shape& body, const json& filters);
+// "inner" when it lies on a hole of one of the body's faces (any wire but the face's outer one), else "outer". With
+// "of_face" (a face's index, or face filters such as {"normal": "+z", "at_plane": {...}}) an edge also gets "of_face":
+// whether it bounds one of those faces, and "loop" is then that face's: "outer" on its outer wire, "inner" on a hole.
+// Scans the body's faces once, when it is made.
+std::function<json(const TopoDS_Shape&)> entity_describer(const TopoDS_Shape& body, const json& filters, double tolerance = 1e-5);
 // Whether a description passes the filters of query_entities and rule selectors (TODO 10 B7): curve, surface,
 // radius_min/max, length_min/max (edges), area_min/max (faces), parallel_to ("x"|"y"|"z" or [x,y,z]), normal ("+x".. or
 // [x,y,z]), at_plane {axis, value}, bounds {min, max} (a null coordinate is open on that side) with bounds_mode "inside"
-// (default) / "intersects" / "outside", loop "inner" / "outer" (edges, from entity_describer). Numbers only: rule selectors
+// (default) / "intersects" / "outside" (the whole entity clear of the box) / "not_inside" (any part out of it), loop
+// "inner" / "outer" and of_face (edges, from entity_describer). Numbers only: rule selectors
 // evaluate expressions first (design::evaluate_rule_filters). Throws for a filter it does not know.
 bool entity_matches(const json& detail, const json& filters, double tolerance = 1e-5);
 // Axis-aligned world bounding box of body nodes (empty list = all visible bodies). False when empty.

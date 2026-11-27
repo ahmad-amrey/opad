@@ -1,6 +1,14 @@
 #include "opad/model_batch.hpp"
 #include "opad/geometry.hpp"
+#include "opad/design/feature.hpp"
+#include <BRepCheck.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepCheck_ListOfStatus.hxx>
+#include <BRepCheck_Result.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <optional>
+#include <sstream>
 #include <Standard_Failure.hxx>
 #include <algorithm>
 #include <cctype>
@@ -103,6 +111,11 @@ void model_batch(Document& doc,const json& args,json& output,const BatchOptions&
       }
     }else if(value.is_array() || value.is_object())for(const auto& child:value)preflightRefs(child);
   };
+  // validate "final": the steps run with the design's errors recorded, not thrown (a cut moved away and back again), and
+  // only the batch's end state is checked; "each" (the default) checks every step as a single command is checked.
+  const std::string validate=args.value("validate","each");
+  if(validate!="each" && validate!="final")throw Error("validate is \"each\" (every step checked as one command is, the default) or \"final\" (only the batch's end state)");
+  const bool finalOnly=validate=="final";
   // A batch-level parent is where every body its feature steps make goes, unless a step names its own.
   const json batchParent=args.contains("parent")?args["parent"]:json(),batchComponent=args.contains("component")?args["component"]:json();
   // Validate every command and dependency before computing any geometry.
@@ -146,6 +159,8 @@ void model_batch(Document& doc,const json& args,json& output,const BatchOptions&
   static const std::string unusedStyle="body_name, color and parent apply to the bodies a feature makes";
   std::set<std::string> valid;  // body keys found valid by an earlier step
   Scene scene=resolve(doc);
+  std::optional<Scene> initial;std::optional<design::DeferErrors> deferred;
+  if(finalOnly){initial.emplace(scene);deferred.emplace();}
   for(const auto& step:args.at("steps")){
     const auto id=step.at("id").get<std::string>(),command=step.at("command").get<std::string>();
     output["failed_step"]=id;
@@ -175,13 +190,10 @@ void model_batch(Document& doc,const json& args,json& output,const BatchOptions&
       // Each step is checked as a single command is: a later step (a join, an intersect) can swallow an invalid body and
       // leave a valid one, so checking only the batch's end state committed geometry no step alone would have.
       if(cancelled())throw Error("cancelled");
-      for(const auto& body:invalid_changed_solids(doc,scene,after,&valid))invalidIds.push_back(body);
+      if(!finalOnly)for(const auto& body:invalid_changed_solids(doc,scene,after,&valid))invalidIds.push_back(body);
       if(!invalidIds.empty()){
         std::string names;
-        for(const auto& body:invalidIds){
-          const auto* node=after.node(body.get<std::string>());
-          names+=(names.empty()?"":", ")+(node && !node->name.empty()?"'"+node->name+"' ":"")+body.get<std::string>();
-        }
+        for(const auto& body:invalidIds)names+=(names.empty()?"":"; ")+describe_invalid_solid(doc,after,body.get<std::string>());
         throw Error("Batch step '"+id+"' ("+command+(command=="feature"?" "+input.value("kind",""):"")+") made a body that failed solid validation: "+names+
                     "; the batch was discarded, document unchanged. Run this step alone with preview=true to see it, then change its inputs (a smaller section, a smoother path).");
       }
@@ -203,7 +215,93 @@ void model_batch(Document& doc,const json& args,json& output,const BatchOptions&
     }
   }
   output.erase("failed_step");
+  if(finalOnly){
+    deferred.reset();
+    // The end state as one command's: no design item newly failing, nothing newly unresolved, every changed solid valid.
+    json errors=json::array();std::set<std::string> named;  // a failing feature or sketch is unresolved too: said once
+    for(const auto& f:scene.features)if(!f.error.empty()){
+      const auto* before=initial->feature(f.id);if(!before || before->error!=f.error){errors.push_back(describe_feature_error(f));named.insert(f.id);}
+    }
+    for(const auto& k:scene.sketches)if(!k.error.empty()){
+      const auto* before=initial->sketch(k.id);if(!before || before->error!=k.error){errors.push_back("sketch '"+k.name+"' ("+k.id+") failed: "+k.error);named.insert(k.id);}
+    }
+    for(const auto& p:scene.params)if(!p.error.empty()){
+      const auto* before=initial->param(p.name);if(!before || before->error!=p.error)errors.push_back("parameter '"+p.name+"' failed: "+p.error);
+    }
+    for(const auto& u:scene.unresolved){
+      bool old=false;for(const auto& v:initial->unresolved)if(v.op_id==u.op_id && v.reason==u.reason){old=true;break;}
+      if(!old && !named.count(u.op_id))errors.push_back("unresolved "+u.op_type+" "+u.op_id+(u.reason.empty()?"":": "+u.reason));
+    }
+    json invalid=json::array();
+    if(errors.empty())for(const auto& body:invalid_changed_solids(doc,*initial,scene,&valid)){invalid.push_back(body);errors.push_back("a body failed solid validation: "+describe_invalid_solid(doc,scene,body));}
+    if(!errors.empty()){
+      output["failed_step"]="final";
+      output["final_check"]={{"state","failed"},{"errors",errors}};
+      if(!invalid.empty())output["final_check"]["invalid_body_ids"]=invalid;
+      std::string text;for(size_t i=0;i<errors.size() && i<5;++i)text+=(text.empty()?"":"; ")+errors[i].get<std::string>();
+      if(errors.size()>5)text+=" (and "+std::to_string(errors.size()-5)+" more)";
+      throw Error("The batch's end state (validate \"final\") is not valid: "+text+"; the batch was discarded, document unchanged.");
+    }
+    output["final_check"]={{"state","valid"}};
+  }
   if(options.valid_keys)options.valid_keys->insert(valid.begin(),valid.end());
+}
+std::string invalid_solid_reason(const TopoDS_Shape& shape){
+  if(shape.IsNull())return "the body has no geometry";
+  std::map<std::string,std::map<std::string,int>> found;  // status -> sub-shape kind -> count
+  std::vector<std::string> order;
+  try{
+    BRepCheck_Analyzer analyzer(shape);
+    if(analyzer.IsValid())return {};
+    static const char* const kinds[]={"compound","compound solid","solid","shell","face","wire","edge","vertex","shape"};
+    auto note=[&](BRepCheck_Status status,TopAbs_ShapeEnum on){
+      if(status==BRepCheck_NoError)return;
+      std::ostringstream text;BRepCheck::Print(status,text);
+      std::string name=text.str();
+      while(!name.empty() && (name.back()=='\n' || name.back()=='\r' || name.back()==' '))name.pop_back();
+      if(name.rfind("BRepCheck_",0)==0)name=name.substr(10);
+      std::string words;  // SelfIntersectingWire -> self intersecting wire
+      for(char c:name){if(std::isupper(static_cast<unsigned char>(c)) && !words.empty())words+=' ';words+=char(std::tolower(static_cast<unsigned char>(c)));}
+      if(!found.count(words))order.push_back(words);
+      ++found[words][kinds[std::min<int>(int(on),8)]];
+    };
+    for(const TopAbs_ShapeEnum type:{TopAbs_VERTEX,TopAbs_EDGE,TopAbs_WIRE,TopAbs_FACE,TopAbs_SHELL,TopAbs_SOLID}){
+      TopTools_IndexedMapOfShape subs;TopExp::MapShapes(shape,type,subs);
+      for(int i=1;i<=subs.Extent();++i){
+        const Handle(BRepCheck_Result)& r=analyzer.Result(subs(i));if(r.IsNull())continue;
+        for(const auto status:r->Status())note(status,type);
+        for(r->InitContextIterator();r->MoreShapeInContext();r->NextShapeInContext())
+          for(const auto status:r->StatusOnShape())note(status,type);
+      }
+    }
+  }catch(const Standard_Failure&){return "the kernel could not check it";}
+  if(order.empty())return "the kernel's check fails without naming a sub-shape";
+  std::string out;
+  for(size_t i=0;i<order.size() && i<4;++i){
+    std::string on;
+    for(const auto& [kind,count]:found[order[i]])on+=(on.empty()?"":", ")+std::to_string(count)+" "+kind+(count==1?"":"s");
+    out+=(out.empty()?"":"; ")+order[i]+" on "+on;
+  }
+  if(order.size()>4)out+="; and "+std::to_string(order.size()-4)+" more kinds";
+  return out;
+}
+const Feature* feature_that_made(const Scene& scene,const std::string& body){
+  const Feature* last=nullptr;
+  for(const auto& f:scene.features)
+    for(const auto& b:f.result.value("bodies",json::array()))if(b.is_object() && b.value("id","")==body)last=&f;
+  return last;
+}
+std::string describe_feature_error(const Feature& f){
+  return f.kind+" '"+f.name+"' ("+f.id+") failed: "+f.error;
+}
+std::string describe_invalid_solid(const Document& doc,const Scene& scene,const std::string& body){
+  const auto* node=scene.node(body);
+  std::string out=(node && !node->name.empty()?"'"+node->name+"' ":"")+"("+body+")";
+  if(const auto* f=feature_that_made(scene,body))out+=", made by "+f->kind+" '"+f->name+"' ("+f->id+")";
+  std::string why;
+  try{why=invalid_solid_reason(node_world_shape(doc,scene,body));}catch(const std::exception&){}
+  if(!why.empty())out+=": "+why;
+  return out;
 }
 std::vector<std::string> invalid_changed_solids(const Document& doc,const Scene& before,const Scene& after,std::set<std::string>* valid){
   std::vector<std::string> out;
