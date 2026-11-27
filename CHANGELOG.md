@@ -27,6 +27,11 @@ including a new airflow check for ducts and fittings.
   where two planes meet. **Align scan to axes** stands a scan on XY in one step, its base flat down, a wall along X
   and centred, with *Next base*, *Next X* and *Flip* for the other ways it could stand. AI assistants get the same fits
   (`fit_reference`, `scan_axes`).
+- **Put a scan on its CAD by matching points.** Align has a new *Point pairs* way: click a point on the scan, then the
+  same point on the CAD body (or on another body, or a sketch's point), and so on in turn. From three pairs on, OPAD
+  finds the move that lines them all up best, shows it at once, and lists how far each pair is still apart. A pair
+  picked by mistake, far off the others, is left out and named; Esc takes back the last pick and Remove drops a pair.
+  It works with meshes, point clouds and solids alike, and AI assistants use it through Align (`from: point_pairs`).
 - **Point clouds: work with the raw scan.** A scanning app's mesh rounds edges, fills small holes and smooths detail
   away; the measured points keep it. OPAD now opens and imports point clouds as bodies of their own: PLY files without
   faces (they used to be refused), XYZ, PTS, CSV, E57 and LAS, with their colours, normals and intensity, in the right

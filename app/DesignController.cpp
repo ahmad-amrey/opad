@@ -239,6 +239,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::schedulePreview);
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::refreshValues);
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::inputsSettled);
+  connect(m_form, &FeaturePanel::pairsEdited, this, [this] { syncSelectionToInput(); });  // a pair removed in the list
   connect(viewport, &Viewport::notesMoved, this, [this] { if (m_triad && m_triad->shown()) placeMoveTriad(); });  // every camera move
   connect(m_form, &FeaturePanel::activeInputChanged, this, &DesignController::activateInput);
   connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
@@ -675,6 +676,11 @@ void DesignController::endFeature() {
   m_planScene.reset();
   m_viewport->clearPreviewBodies();
   m_viewport->clearCandidates();
+  ++m_pairSerial;
+  if (Job* j = std::exchange(m_pairJob, nullptr)) j->cancel();
+  m_pairPoints = opad::json();
+  m_pairStray = -1;
+  m_viewport->setPairMarkers({});
   m_viewport->setPickAccumulate(false);
   m_viewport->setBodiesPickable(true);
   m_activating = true;  // the clean-up below is not a pick
@@ -755,7 +761,9 @@ void DesignController::showCandidatesFor(const QString& typeName, bool planes) {
     m_activeCandidates = *found;
     showAllCandidates();
     syncSelectionToInput();
-    if (found->empty() && (type == "points" || type == "profiles")) {  // else the input waits for a pick that cannot come
+    const InputSpec* active = m_form->input(m_form->activeInput());
+    const bool paired = active && !active->pairs_with.empty();  // point pairs take vertices: no sketch is needed
+    if (found->empty() && !paired && (type == "points" || type == "profiles")) {  // else the input waits for a pick that cannot come
       m_nothingToPick = type == "points" ? tr("No sketch points yet: sketch points first (or pick vertices).")
                                          : tr("No sketch profiles yet: draw a closed shape in a sketch first (or pick a planar face).");
       if (!m_form->complete()) m_form->setStatus(m_nothingToPick, false);
@@ -1318,6 +1326,7 @@ void DesignController::viewportSelectionChanged() {
     m_activating = false;
     return;
   }
+  if (!in->pairs_with.empty() && pairPicked(name, *in, picks)) return;  // Align's point pairs: the other side next
   const opad::json had = m_form->picks(name);
   const bool first = had.is_null() || (had.is_array() && had.empty());
   m_form->setPicks(name, picks);
@@ -1390,6 +1399,7 @@ void DesignController::refreshValues() {
 void DesignController::schedulePreview() {
   if (!m_featureOn) return;
   placeMoveTriad();  // every pick and value change comes here: Move's triad follows them
+  refreshPairMarkers();  // and point pairs' markers (when their picks changed)
   m_readyPlan.reset();
   // While the handle is pulled, preview as fast as plans come back (the latest value wins) instead of waiting for
   // the pointer to rest: the body follows the drag as if its face were dragged. Otherwise inputs settle first.
@@ -1434,7 +1444,14 @@ void DesignController::runPreview(bool commit, bool keep) {
     m_viewport->clearPreviewBodies();
     return;
   }
-  const opad::json inputs = m_form->inputs();
+  opad::json inputs = m_form->inputs();
+  if (pairsWaiting(inputs)) {  // point pairs: three whole ones first
+    if (!m_distanceHandle->interacting()) m_distanceHandle->hide();
+    m_readyPlan.reset();
+    m_viewport->clearPreviewBodies();
+    pairPreviewed(opad::json());
+    return;
+  }
   const std::string name = m_form->name().toStdString();
   // A new feature is made in the active component (UI-33): its new bodies, plane or axis go there, in its frame.
   const std::string component = m_editing.empty() ? m_doc->activeComponent() : std::string();
@@ -1643,6 +1660,7 @@ void DesignController::runPreview(bool commit, bool keep) {
           picked = picked || (p.is_array() && !p.empty());
         }
       if (error != "cancelled") m_form->setStatus(i18n::t(error), picked || !picks);
+      if (error != "cancelled") pairPreviewed(opad::json());
       return;
     }
     m_readyPlan = plan;
@@ -1711,6 +1729,12 @@ void DesignController::runPreview(bool commit, bool keep) {
     parts.insert(parts.end(), construction->begin(), construction->end());
     m_viewport->setPreviewBodies(parts, hidden);
     m_viewport->setPreviewMotion(*motions);  // moved as they are (Move, Align): their own objects drawn elsewhere
+    if (!m_form->pairInputs().first.isEmpty()) {  // point pairs: the residuals in the list, the markers moved with the bodies
+      opad::json fit;
+      for (const auto& result : resultsFor(*plan, target, editResult))
+        if (result.is_object() && result.contains("pairs")) fit = result;
+      pairPreviewed(fit);
+    }
     m_viewport->setPreviewSketch(alignSketch, *sketchMotion);
     if (m_stretch.valid) for (const auto& part : parts) m_stretch.base.push_back(part.prs);
     if (m_distanceHandle->dragging()) stretchPreview(m_distanceHandle->value());  // this plan is for an older value
@@ -1886,6 +1910,7 @@ bool DesignController::escape() {
   }
   if (m_featureOn) {
     if (m_placer->escape()) return true;  // a primitive being placed: one stage back
+    if (stepBackPair()) return true;      // point pairs: the last pick
     endFeature();
     return true;
   }
@@ -2119,4 +2144,154 @@ void DesignController::bench() {
     });
   });
   });
+}
+
+// ---------------------------------------------------------------- point pairs (Align)
+// The two sides are two inputs (InputSpec::pairs_with: from_points, to_points). The viewport selection is the active side's
+// picks, so a pick hands over to the other side; the markers (ViewportPairs.cpp) show both, numbered, the bodies' side
+// where the preview moves it. Points are resolved on a worker (a scan's nodes are read), never in the click handler.
+namespace {
+opad::json listOf(const opad::json& p) { return p.is_array() ? p : p.is_null() ? opad::json::array() : opad::json::array({p}); }
+}  // namespace
+
+bool DesignController::pairPicked(const QString& name, const InputSpec& in, const opad::json& picks) {
+  const auto [from, to] = m_form->pairInputs();
+  const QString other = QString::fromStdString(in.pairs_with);
+  if (from.isEmpty() || !m_form->input(other)) return false;
+  const opad::json had = listOf(m_form->picks(name)), partner = listOf(m_form->picks(other));
+  if (picks.size() < had.size()) {  // a click on a picked point (picks toggle): its pair goes
+    size_t gone = 0;
+    while (gone < picks.size() && picks[gone] == had[gone]) ++gone;
+    m_form->removePair(int(gone));
+    emit status(tr("Pair %1 removed").arg(gone + 1));
+    return true;
+  }
+  opad::json added;
+  for (const auto& p : picks)
+    if (std::find(had.begin(), had.end(), p) == had.end()) added = p;
+  if (added.is_null()) {
+    syncSelectionToInput();
+    return true;
+  }
+  opad::json list = had;
+  if (had.size() > partner.size()) list.back() = added;  // this side was a pick ahead (its box clicked again): the new one replaces it
+  else list.push_back(added);
+  m_form->setPicks(name, list);
+  m_nothingToPick.clear();
+  m_form->setPairFit({}, -1, 0);  // fitted again with it
+  // Uneven: the other side's match next; even: the next pair starts on the bodies.
+  const QString next = list.size() != partner.size() ? other : from;
+  if (next != m_form->activeInput()) m_form->activate(next);
+  else syncSelectionToInput();
+  const size_t pair = std::max(list.size(), partner.size());
+  emit status(next == to ? tr("Pair %1: now pick its match on the target").arg(pair) : tr("Pair %1: pick a point on the bodies").arg(pair + 1));
+  schedulePreview();
+  return true;
+}
+
+bool DesignController::stepBackPair() {
+  const auto [from, to] = m_form->pairInputs();
+  if (from.isEmpty()) return false;
+  opad::json f = listOf(m_form->picks(from)), t = listOf(m_form->picks(to));
+  if (f.empty() && t.empty()) return false;
+  const QString side = f.size() > t.size() ? from : to;  // the last pick: the side a pick ahead, else the target's
+  opad::json& list = side == from ? f : t;
+  list.erase(list.end() - 1);
+  m_form->setPicks(side, list);
+  m_form->setPairFit({}, -1, 0);
+  if (m_form->activeInput() != side) m_form->activate(side);  // that point is picked again
+  else syncSelectionToInput();
+  schedulePreview();
+  emit status(tr("Took back the last pick · %1 again takes the one before; with none left it closes Align").arg(keys::fixedText("esc")));
+  return true;
+}
+
+bool DesignController::pairsWaiting(opad::json& inputs) {
+  const auto [from, to] = m_form->pairInputs();
+  if (from.isEmpty()) return false;
+  opad::json f = listOf(inputs.value(from.toStdString(), opad::json())), t = listOf(inputs.value(to.toStdString(), opad::json()));
+  const size_t n = std::min(f.size(), t.size());
+  if (n < 3) {
+    m_form->setStatus(tr("Pick a point on the bodies, then its match on the target: three pairs or more fix the move (%1 so far)").arg(n), false);
+    return true;
+  }
+  f.erase(f.begin() + long(n), f.end());  // a pick waiting for its match is not fitted yet
+  t.erase(t.begin() + long(n), t.end());
+  inputs[from.toStdString()] = f;
+  inputs[to.toStdString()] = t;
+  return false;
+}
+
+void DesignController::pairPreviewed(const opad::json& result) {
+  m_pairStray = -1;
+  if (result.is_object() && result.contains("pairs")) {
+    std::vector<double> residuals;
+    for (const auto& p : result["pairs"]) residuals.push_back(p.value("residual", 0.0));
+    m_pairStray = result.value("dropped_pair", 0) - 1;
+    m_form->setPairFit(residuals, m_pairStray, result.value("rms", 0.0));
+  } else {
+    m_form->setPairFit({}, -1, 0);
+  }
+  drawPairMarkers();
+}
+
+void DesignController::refreshPairMarkers() {
+  const auto [from, to] = m_form->pairInputs();
+  const opad::json picks = from.isEmpty() ? opad::json() : opad::json{{"from", listOf(m_form->picks(from))}, {"to", listOf(m_form->picks(to))}};
+  const std::string signature = picks.dump();
+  if (signature == m_pairPicks) return;
+  m_pairPicks = signature;
+  const int serial = ++m_pairSerial;
+  if (Job* j = std::exchange(m_pairJob, nullptr)) j->cancel();
+  if (from.isEmpty() || (picks["from"].empty() && picks["to"].empty())) {
+    m_pairPoints = opad::json();
+    m_pairStray = -1;
+    return drawPairMarkers();
+  }
+  refreshPlanCopies();
+  auto doc = m_planDoc;
+  auto scene = m_planScene;
+  auto out = std::make_shared<opad::json>();
+  m_pairJob = m_jobs->async(tr("Finding the picked points"), [doc, scene, picks, out](Progress p) {
+    Reading reading;
+    const opad::design::Cancel cancel = [p] { return p.cancelled(); };
+    *out = {{"from", point_positions(*doc, *scene, picks["from"], cancel)}, {"to", point_positions(*doc, *scene, picks["to"], cancel)}};
+  }, [this, serial, out](bool ok, const QString&) {
+    if (serial != m_pairSerial || !m_featureOn) return;
+    m_pairJob = nullptr;
+    if (!ok) return;
+    m_pairPoints = *out;
+    drawPairMarkers();
+  });
+}
+
+void DesignController::drawPairMarkers() {
+  std::vector<Viewport::PairMarker> markers;
+  const auto [from, to] = m_form->pairInputs();
+  if (m_pairPoints.is_object() && !from.isEmpty()) {
+    const opad::json& f = m_pairPoints["from"];
+    const opad::json& t = m_pairPoints["to"];
+    const opad::json refs = listOf(m_form->picks(from));
+    auto vec = [](const opad::json& v, const gp_Trsf& motion) {
+      const gp_Pnt p = gp_Pnt(v[0].get<double>(), v[1].get<double>(), v[2].get<double>()).Transformed(motion);
+      return opad::Vec3{p.X(), p.Y(), p.Z()};
+    };
+    for (size_t i = 0; i < std::max(f.size(), t.size()); ++i) {
+      Viewport::PairMarker m;
+      m.label = QString::number(i + 1);
+      m.stray = int(i) == m_pairStray;
+      if (i < f.size() && f[i].is_array()) {
+        // Drawn where the preview puts its body (the bodies' points move with them).
+        std::string body;
+        if (i < refs.size()) try {
+            body = refs[i].is_object() ? refs[i].value("body", "") : opad::Ref::parse(refs[i].get<std::string>()).body;
+          } catch (const std::exception&) {
+          }
+        m.from = vec(f[i], body.empty() ? gp_Trsf() : m_viewport->previewMotion(body));
+      }
+      if (i < t.size() && t[i].is_array()) m.to = vec(t[i], gp_Trsf());
+      markers.push_back(m);
+    }
+  }
+  m_viewport->setPairMarkers(markers);
 }

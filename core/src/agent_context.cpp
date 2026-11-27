@@ -354,11 +354,7 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   add({"feature_schema","Input schema, defaults and an example for one supported feature kind",{{"kind",{{"type","string"}}}},false},[](Document*,const json& a){
     const auto kind=a.at("kind").get<std::string>();const auto schema=agent::feature_schema(kind);json example=json::object();
     for(const auto& input:design::feature_spec(kind)->inputs){
-      if(!input.show_if.empty()){
-        const auto equal=input.show_if.find('=');const auto key=input.show_if.substr(0,equal),choices=input.show_if.substr(equal+1);
-        const auto value=example.contains(key)?(example[key].is_string()?example[key].get<std::string>():example[key].dump()):std::string();
-        if(("|"+choices+"|").find("|"+value+"|")==std::string::npos)continue;
-      }
+      if(!design::input_active(input,example))continue;
       if(!input.def.is_null()){example[input.name]=input.def;continue;}
       if(input.optional)continue;
       if(input.type=="profiles")example[input.name]=json::array({{{"sketch","<sketch-id from context>"},{"at",{5,5}}}});

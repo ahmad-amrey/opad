@@ -104,6 +104,9 @@ class DesignController : public QObject {
   bool browserPicked(const std::vector<std::string>& ids);
   bool escape();  // Esc: leaves the plane pick or the feature; false when there was nothing to leave
   bool undoPick();  // Ctrl+Z in a feature's panel: takes back the last pick; false (and says why) when there is none
+  // Align's point pairs (DesignPairs.cpp): the markers drawn now (benches) and whether their points are being resolved.
+  opad::json benchPairMarkers() const { return m_viewport->benchPairMarkers(); }
+  bool pairsResolving() const { return m_pairJob != nullptr; }
   void bench();   // OPAD_BENCH_DESIGN
   void benchSketch(std::function<void()> run);  // Sketch1 on XY opened, then run (a bench)
   opad::json recoveryState() const;
@@ -228,6 +231,20 @@ class DesignController : public QObject {
   int m_routeSerial = 0;
   QString m_idlePlane;             // the plane input a click fills while no input is active
   Job* m_idleJob = nullptr;
+  // Point pairs (InputSpec::pairs_with, DesignPairs.cpp): a pick on one side hands over to the other; a click on a picked
+  // point removes its pair; Esc takes back the last pick. Markers at the picked points (resolved on a worker), moved with
+  // the preview; the preview waits for three whole pairs and fits only whole ones.
+  bool pairPicked(const QString& name, const opad::design::InputSpec& in, const opad::json& picks);
+  bool stepBackPair();         // Esc: the last pick of the pairs; false when there is none
+  void refreshPairMarkers();   // the picks changed: resolve their points again
+  void drawPairMarkers();      // the resolved points, the preview's move and the stray pair
+  void pairPreviewed(const opad::json& result);  // a preview's fit (after its motion is drawn); null: none
+  bool pairsWaiting(opad::json& inputs);  // fewer than three whole pairs: true (and says so); else the uneven tail trimmed
+  Job* m_pairJob = nullptr;
+  int m_pairSerial = 0;
+  opad::json m_pairPoints;  // {"from": [[x,y,z] | null...], "to": [...]}, as picked
+  std::string m_pairPicks;  // the picks they were resolved for
+  int m_pairStray = -1;
   // A plane or axis fitted on a mesh (FitPick): fitted on a worker, then put into its input with its result.
   void refitPick(const QString& input, opad::json ref, bool axis);
   Job* m_fitJob = nullptr;

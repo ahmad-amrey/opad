@@ -109,7 +109,16 @@ class FeaturePanel : public QWidget {
   QSize preferredSize(int width) const;
   ToolGuide* guide() const { return m_guide; }  // UI-107: a new feature's animated guide, at the pick it waits for
   PanelFooter* footer() const { return m_footer; }
+  // Point pairs (InputSpec::pairs_with: Align's from_points / to_points, FeaturePairs.cpp): the inputs while shown (empty
+  // when not), the list under them (a row per pair: what each side has, what it is off by after the fit, Remove), and the
+  // fit the preview made: each pair's residual (mm) and the one left out (-1: none); empty residuals: not fitted.
+  std::pair<QString, QString> pairInputs() const;
+  void setPairFit(const std::vector<double>& residuals, int dropped, double rms);
+  void removePair(int index);  // both sides' picks at that position; emits pairsEdited and inputsChanged
+  int completePairs() const;   // pairs with both points
+  QString pairListText() const;  // the rows as shown, one a line (benches)
  signals:
+  void pairsEdited();  // a pair removed in the list: the view's picks and the markers follow
   void inputsChanged();                 // anything that changes the result
   void activeInputChanged(const QString& input);
   // "By rule…" on a face or edge input holding one picked entity (TODO 10 B7): the controller offers rules.
@@ -172,6 +181,15 @@ class FeaturePanel : public QWidget {
     QPushButton *fitBase = nullptr, *fitTurn = nullptr;
     QCheckBox* fitCentre = nullptr;
   };
+  void buildPairList();
+  void refreshPairList();
+  QWidget* m_pairList = nullptr;  // under the second paired input, in m_rows
+  QVBoxLayout* m_pairRows = nullptr;
+  QLabel* m_pairSummary = nullptr;
+  QString m_pairShown;  // what the rows were built from
+  std::vector<double> m_pairResiduals;
+  int m_pairDropped = -1;
+  double m_pairRms = 0;
   void buildFitRow(const QString& key, Row& w, bool axis);
   void refreshFitRow(const QString& key, Row& w, const opad::json& value);
   void editFit(const QString& key, const std::function<void(opad::json&)>& change);

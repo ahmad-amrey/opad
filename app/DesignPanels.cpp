@@ -278,6 +278,12 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
   m_notes.clear();
   m_suggested.clear();
   m_guideStep = m_guideCount = 0;
+  m_pairList = nullptr;  // deleted with the rows
+  m_pairRows = nullptr;
+  m_pairSummary = nullptr;
+  m_pairShown.clear();
+  m_pairResiduals.clear();
+  m_pairDropped = -1;
   while (QLayoutItem* it = m_rows->takeAt(0)) {
     delete it->widget();
     delete it;
@@ -403,6 +409,7 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
     m_rows->addWidget(w.row);
     if (in.type == "plane" || in.type == "axis") buildFitRow(key, w, in.type == "axis");
     m_widgets[key] = w;
+    if (!in.pairs_with.empty() && m_widgets.count(QString::fromStdString(in.pairs_with))) buildPairList();  // under the second of the two
   }
   refreshVisibility();
   activateNextPick();
@@ -537,15 +544,7 @@ void FeaturePanel::refreshVisibility() {
   for (const auto& in : m_spec->inputs) {
     auto it = m_widgets.find(QString::fromStdString(in.name));
     if (it == m_widgets.end()) continue;
-    bool shown = true;
-    if (!in.show_if.empty()) {
-      const size_t eq = in.show_if.find('=');
-      const std::string key = in.show_if.substr(0, eq);
-      std::string have = now.contains(key) ? (now[key].is_string() ? now[key].get<std::string>() : now[key].dump()) : std::string();
-      shown = false;
-      for (const QString& v : QString::fromStdString(in.show_if.substr(eq + 1)).split('|'))
-        if (v.toStdString() == have) shown = true;
-    }
+    const bool shown = opad::design::input_active(in, now);
     it->second.row->setVisible(shown);
     if (!shown && m_active == it->first) activate(QString());
     if (it->second.pick) {
@@ -597,6 +596,7 @@ void FeaturePanel::refreshVisibility() {
   }
   if (m_guideCount > 0) m_guide->setWaiting(m_guideStep, m_guideCount);  // a primitive being placed: its stage
   else m_guide->setWaiting(waiting < 0 ? needed : waiting, needed + 1);
+  refreshPairList();
   refreshNewBody();
 }
 

@@ -83,6 +83,7 @@
 #include "opad/geometry.hpp"
 #include "opad/kernel_guard.hpp"
 #include "opad/mesh_solid.hpp"
+#include "opad/point_pairs.hpp"
 #include "opad/scan_fit.hpp"
 
 namespace opad::design {
@@ -112,6 +113,12 @@ InputSpec pick(const char* name, const char* label, const char* type, int min_co
   InputSpec s = in(name, label, type, nullptr, show_if, min_count == 0);
   s.min_count = min_count;
   s.max_count = max_count;
+  return s;
+}
+
+// Points picked in turn with `other`, one each: pairs by position (Align's point pairs).
+InputSpec paired(InputSpec s, const char* other) {
+  s.pairs_with = other;
   return s;
 }
 
@@ -275,14 +282,21 @@ std::vector<FeatureSpec> build_specs() {
   // A point, line or plane of the bodies (From) onto another (To): moved, turned, or both, as one; placed as they are, like a
   // linked file's Move (align_motion). Faces put together face each other; Flip lays them flush. Sketches take the same
   // inputs through align_sketch_plane.
+  // Point pairs: points picked on the bodies (a scan) and the matching points on the target (its CAD body, another body, a
+  // sketch), in turn; the rigid move that lines them all up best (opad/point_pairs.hpp), one stray pair left out.
   add("align", "Align", "align", "body",
-      "Put a point, line or face of bodies or components onto another point, line or plane: a face on a face, an edge along an edge, a hole on an axis.",
-      {pick("bodies", "Bodies", "bodies", 1, 0), choice("from", "Align", {"plane", "line", "point"}), in("from_plane", "From face or plane", "plane", nullptr, "from=plane"),
+      "Put a point, line or face of bodies or components onto another point, line or plane: a face on a face, an edge along an edge, a hole on an axis. "
+      "Point pairs: points on the bodies and the matching points on the target, in turn (three pairs or more); the move that lines them all up best, a stray pair left out.",
+      {pick("bodies", "Bodies", "bodies", 1, 0), choice("from", "Align", {"plane", "line", "point", "point_pairs"}), in("from_plane", "From face or plane", "plane", nullptr, "from=plane"),
        in("from_line", "From edge or axis", "axis", nullptr, "from=line"), pick("from_point", "From point", "points", 1, 1, "from=point"),
-       choice("to", "Onto", {"plane", "line", "point"}), in("to_plane", "To face or plane", "plane", nullptr, "to=plane"),
-       in("to_line", "To edge or axis", "axis", nullptr, "to=line"), pick("to_point", "To point", "points", 1, 1, "to=point"),
-       choice("motion", "Motion", {"move_and_rotate", "move", "rotate"}), in("flip", "Flip", "bool", false), in("offset", "Offset", "length", "0 mm", "to=plane"),
-       in("angle", "Turn about it", "angle", "0 deg", "to=plane|line"), in("frame", "Origin and X onto the plane's too", "bool", false, "to=plane")});
+       paired(pick("from_points", "Points on the bodies", "points", 1, 0, "from=point_pairs"), "to_points"),
+       paired(pick("to_points", "Matching points on the target", "points", 1, 0, "from=point_pairs"), "from_points"),
+       in("drop_outlier", "Leave out a stray pair", "bool", true, "from=point_pairs"),
+       choice("to", "Onto", {"plane", "line", "point"}, "from=plane|line|point"), in("to_plane", "To face or plane", "plane", nullptr, "to=plane,from=plane|line|point"),
+       in("to_line", "To edge or axis", "axis", nullptr, "to=line,from=plane|line|point"), pick("to_point", "To point", "points", 1, 1, "to=point,from=plane|line|point"),
+       choice("motion", "Motion", {"move_and_rotate", "move", "rotate"}, "from=plane|line|point"), in("flip", "Flip", "bool", false, "from=plane|line|point"),
+       in("offset", "Offset", "length", "0 mm", "to=plane,from=plane|line|point"), in("angle", "Turn about it", "angle", "0 deg", "to=plane|line,from=plane|line|point"),
+       in("frame", "Origin and X onto the plane's too", "bool", false, "to=plane,from=plane|line|point")});
   add("remove", "Remove", "delete", "body", "Take bodies out of the design from here on (history is kept).", {pick("bodies", "Bodies", "bodies", 1, 0)});
   add("plane", "Construction plane", "plane", "construct", "A plane to sketch on or to mirror, split and draft about.",
       {choice("mode", "Type", {"offset", "angle", "midplane", "three_points", "point_normal"}), in("plane", "From plane", "plane", xy, "mode=offset|angle|midplane"),
@@ -350,6 +364,7 @@ json feature_specs_json() {
       if (!i.def.is_null()) j["default"] = i.def;
       if (!i.choices.empty()) j["choices"] = i.choices;
       if (!i.show_if.empty()) j["show_if"] = i.show_if;
+      if (!i.pairs_with.empty()) j["pairs_with"] = i.pairs_with;
       if (i.optional) j["optional"] = true;
       if (i.type == "bodies" || i.type == "faces" || i.type == "edges" || i.type == "profiles" || i.type == "points") {
         j["min"] = i.min_count;
@@ -1902,7 +1917,56 @@ gp_Pnt nearest_on(const gp_Pnt& p, const gp_Pnt& o, const gp_Dir& d) { return o.
 
 }  // namespace
 
-gp_Trsf align_motion(const Ctx& ctx, const json& in, bool facing) {
+// Point pairs: from_points[i] onto to_points[i], the least-squares rigid move; what each pair is off by after it into
+// `report` (the result's "pairs", "rms", "max_residual", "dropped_pair" 1-based, "note").
+static gp_Trsf pair_motion(const Ctx& ctx, const json& in, json* report) {
+  const Points from = resolve_points(ctx, in.value("from_points", json()));
+  const Points to = resolve_points(ctx, in.value("to_points", json()));
+  if (from.at.empty()) throw Error("pick points on the bodies and the matching points on the target, in turn");
+  const pairs::PairFit fit = pairs::fit_pairs(from.at, to.at, in.value("drop_outlier", true));
+  if (report) {
+    json list = json::array();
+    for (size_t i = 0; i < from.at.size(); ++i)
+      list.push_back({{"pair", i + 1},
+                      {"from", {from.at[i].X(), from.at[i].Y(), from.at[i].Z()}},
+                      {"to", {to.at[i].X(), to.at[i].Y(), to.at[i].Z()}},
+                      {"residual", fit.residuals[i]},
+                      {"used", int(i) != fit.dropped}});
+    (*report)["pairs"] = list;
+    (*report)["rms"] = fit.rms;
+    (*report)["max_residual"] = fit.max;
+    if (fit.dropped >= 0) {
+      (*report)["dropped_pair"] = fit.dropped + 1;
+      char text[160];
+      std::snprintf(text, sizeof text, "pair %d left out: %.3g mm off, the others %.3g mm rms", fit.dropped + 1, fit.residuals[size_t(fit.dropped)], fit.rms);
+      (*report)["note"] = text;
+    }
+  }
+  return fit.motion;
+}
+
+json point_positions(const Document& doc, const Scene& scene, const json& refs, const Cancel& cancel) {
+  std::vector<ParamDef> defs;
+  for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+  const ParamTable params(defs, scene.units);
+  const std::map<std::string, TopoDS_Shape> fresh;
+  const Ctx ctx{doc, params, scene, fresh, cancel};
+  json out = json::array();
+  if (!refs.is_array()) return out;
+  for (const auto& r : refs) {
+    ctx.check_cancel();
+    try {
+      const Points p = resolve_points(ctx, json::array({r}));
+      out.push_back(p.at.empty() ? json() : json::array({p.at[0].X(), p.at[0].Y(), p.at[0].Z()}));
+    } catch (const std::exception&) {
+      out.push_back(json());
+    }
+  }
+  return out;
+}
+
+gp_Trsf align_motion(const Ctx& ctx, const json& in, bool facing, json* report) {
+  if (in.value("from", std::string()) == "point_pairs") return pair_motion(ctx, in, report);
   const AlignGeo from = align_geo(ctx, in, "from"), to = align_geo(ctx, in, "to");
   const std::string motion = in.value("motion", std::string("move_and_rotate"));
   if (motion != "move_and_rotate" && motion != "move" && motion != "rotate") throw Error("align: motion must be move_and_rotate, move or rotate");
@@ -2573,7 +2637,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     return out;
   }
   if (kind == "align") {
-    const gp_Trsf t = align_motion(ctx, in, true);
+    const gp_Trsf t = align_motion(ctx, in, true, &out.extra);
     for (const auto& id : placed_nodes(ctx, in.value("bodies", json()))) out.placed.push_back({id, t});
     if (out.placed.empty()) throw Error("pick the bodies or components to align");
     return out;

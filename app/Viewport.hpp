@@ -450,6 +450,16 @@ class Viewport : public QWidget, protected AIS_ViewController {
   };
   void setDeviationPins(const std::vector<Pin>& pins);
   size_t deviationPinCount() const { return m_deviationPins.size() / 2; }
+  // Align's point pairs (ViewportPairs.cpp): a numbered dot at each picked point (the bodies' side and the target's in two
+  // colours, a stray pair red) and a dashed line between the two of a pair, `from` where the preview draws it. Topmost,
+  // never picked or fitted. Replaces the earlier ones; empty: none.
+  struct PairMarker {
+    std::optional<opad::Vec3> from, to;  // world
+    QString label;                       // the pair's number
+    bool stray = false;                  // left out of the fit
+  };
+  void setPairMarkers(const std::vector<PairMarker>& pairs);
+  opad::json benchPairMarkers() const;  // what is drawn: each pair's points and its line's length
   opad::json benchVertexPaint(const std::string& id, size_t samples) const;  // OPAD_BENCH_DEVIATION: drawn or not, sampled vertices (world) and colours
   bool faceTintsPending() const {
     return std::any_of(m_faceTints.begin(), m_faceTints.end(), [](const auto& t) { return t.second.ais == nullptr; });
@@ -1318,6 +1328,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   unsigned m_faceTintSerial = 0, m_paintSerial = 0;
   void applyTints(std::map<std::string, std::shared_ptr<const opad::FaceColors>> tints, std::map<std::string, std::shared_ptr<const VertexPaint>> paints, bool painting);
   std::vector<Handle(AIS_InteractiveObject)> m_deviationPins;  // setDeviationPins (ViewportDeviation.cpp)
+  std::vector<Handle(AIS_InteractiveObject)> m_pairMarks;      // setPairMarkers (ViewportPairs.cpp)
+  std::vector<PairMarker> m_pairMarkers;
   bool faceTinted(const std::string& id) const { return m_faceTints.count(id) > 0; }
   void styleComparePart(const Handle(AIS_Shape)& ais, const ComparePart& part);
   class SideView;  // side by side (ViewportCompare.cpp)

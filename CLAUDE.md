@@ -427,7 +427,12 @@ not close. `OPAD_MESHSOLID_DEBUG=1` traces why a profile or attempt was refused.
 
 A scan's "faces" are triangles, so planes and axes on a mesh body are fitted: `{"fit": {body, seed | triangles | points |
 planes, tolerance, of}, "result": {...}}` in any plane or axis input (`Ctx::plane` / `Ctx::axis` -> `fitted_plane` /
-`fitted_axis`). The result is stored in body coordinates with the body key and a digest of `fit`: while both match it is
+`fitted_axis`). Align's `point_pairs` mode (`from_points[i]` onto `to_points[i]`, `InputSpec::pairs_with`) is
+`pairs::fit_pairs` (`core/src/point_pairs.cpp`: Kabsch through an SVD, refused under three pairs or on one line; with
+`drop_outlier` the worst pair by a deleted-residual F test, its leverage included, at 0.1%), residuals/`rms`/`dropped_pair`
+in the result; the app (DesignController "point pairs", `FeaturePairs.cpp` list, `Viewport::setPairMarkers`) alternates
+the sides, resolves the points on a worker (`point_positions`), previews three whole pairs only; show_if takes
+`a=x,b=y` (all hold). `ctest -R align`, bench align-pairs. The result is stored in body coordinates with the body key and a digest of `fit`: while both match it is
 used as is (a moved body carries it), else fitted again; `complete_feature_fits` in the Walk writes results into new ops
 and edits, as automatic targets are (replay never fits). Fits are robust: least median of squares over sampled hypotheses,
 then least squares on the 3-sigma inliers; a region grows from its seed by normals (averaged over 6 rings on noisy meshes,
