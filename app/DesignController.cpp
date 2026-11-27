@@ -537,6 +537,10 @@ void DesignController::startFeature(const QString& kind) {
       const QString active = m_form->activeInput();
       m_form->setPicks(active, picks);
       if (in->advance) m_form->activateNextPick();  // Combine: the selection is the target, the tools come next
+      if (spec->kind == "align") {  // the bodies taken: Align's next step (its From plane) is shown
+        m_form->activate(QString());
+        m_form->activateNextPick();
+      }
       if (m_form->activeInput() == active) activateInput(active);
     }
   }
@@ -561,6 +565,11 @@ void DesignController::startFeature(const QString& kind, const std::vector<std::
                         in->type == "plane" || in->type == "axis" || in->type == "path";
       pick ? m_form->setPicks(name, value) : m_form->setValue(name, value);  // a plane or axis given as its one object too
     }
+  // Align given its bodies (a command, a bench): its next step is shown, as when the bodies were picked first.
+  if (kind == "align" && m_form->activeInput() == "bodies" && !m_form->picks("bodies").is_null() && !m_form->picks("bodies").empty()) {
+    m_form->activate(QString());
+    m_form->activateNextPick();
+  }
   activateInput(m_form->activeInput());  // the view shows the given picks
   schedulePreview();
 }
@@ -964,7 +973,9 @@ void DesignController::activateInput(const QString& name) {
       if(!m_featureOn)return;m_form->setPicks(name,plane);schedulePreview();m_openPanel(m_panel);m_form->activate(QString());m_form->activateNextPick();
     };
     // Not the selection: that is the feature's other picks (a single draft face became its own neutral plane).
-    emit stateChanged();QTimer::singleShot(0,this,[this]{if(m_pickPlane&&m_featureOn){m_planePicker->panel()->setHeader("plane",tr("Choose plane"));m_planePicker->start(false,m_openPanel,false);}});return;
+    // The picker says which plane it is choosing (Align's From or To), not just "Choose plane".
+    const QString header = m_form->spec() && m_form->spec()->kind == "align" ? tr("Choose plane: %1").arg(i18n::t(QString::fromStdString(in->label))) : tr("Choose plane");
+    emit stateChanged();QTimer::singleShot(0,this,[this,header]{if(m_pickPlane&&m_featureOn){m_planePicker->panel()->setHeader("plane",header);m_planePicker->start(false,m_openPanel,false);}});return;
   }
   if (m_placer->active()) m_placer->panelPicking(true);  // the box takes the clicks: no marker meanwhile
   const Viewport::SelFilter want = filterFor(in->type);

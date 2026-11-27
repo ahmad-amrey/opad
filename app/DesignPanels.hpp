@@ -117,6 +117,10 @@ class FeaturePanel : public QWidget {
   void removePair(int index);  // both sides' picks at that position; emits pairsEdited and inputsChanged
   int completePairs() const;   // pairs with both points
   QString pairListText() const;  // the rows as shown, one a line (benches)
+  // Align's plane steps: the plane input whose turn it is, shown as the next step (its box says to click it, a line under it
+  // says which side) without opening the plane picker: that opens when the box is clicked. Empty: none waiting.
+  QString nextPlane() const { return m_nextPlane; }
+  QString planeStepText(const QString& input) const;  // the line under a plane box (benches)
  signals:
   void pairsEdited();  // a pair removed in the list: the view's picks and the markers follow
   void inputsChanged();                 // anything that changes the result
@@ -181,6 +185,9 @@ class FeaturePanel : public QWidget {
     QPushButton *fitBase = nullptr, *fitTurn = nullptr;
     QCheckBox* fitCentre = nullptr;
   };
+  QString m_nextPlane;
+  std::map<QString, QLabel*> m_planeSteps;  // Align's plane rows: the line saying which side and what to do
+  bool stepsPlanes() const { return m_spec && m_spec->kind == "align"; }
   void buildPairList();
   void refreshPairList();
   QWidget* m_pairList = nullptr;  // under the second paired input, in m_rows

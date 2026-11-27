@@ -278,6 +278,8 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
   m_notes.clear();
   m_suggested.clear();
   m_guideStep = m_guideCount = 0;
+  m_nextPlane.clear();
+  m_planeSteps.clear();  // deleted with the rows
   m_pairList = nullptr;  // deleted with the rows
   m_pairRows = nullptr;
   m_pairSummary = nullptr;
@@ -407,6 +409,13 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
       continue;
     }
     m_rows->addWidget(w.row);
+    if (in.type == "plane" && stepsPlanes()) {  // which side this plane is, and that a click on the box chooses it
+      auto* step = new QLabel(this);
+      step->setObjectName("planeStep");
+      step->setWordWrap(true);
+      m_rows->addWidget(step);
+      m_planeSteps[key] = step;
+    }
     if (in.type == "plane" || in.type == "axis") buildFitRow(key, w, in.type == "axis");
     m_widgets[key] = w;
     if (!in.pairs_with.empty() && m_widgets.count(QString::fromStdString(in.pairs_with))) buildPairList();  // under the second of the two
@@ -582,7 +591,21 @@ void FeaturePanel::refreshVisibility() {
       it->second.pick->set(n, what, m_active == it->first, in.optional || n >= std::max(1, in.min_count) || in.min_count == 0);
       if (it->second.fit) refreshFitRow(it->first, it->second, p);
       const auto note = m_notes.find(it->first);
-      it->second.pick->setNote(note == m_notes.end() ? QString() : note->second);
+      QString shownNote = note == m_notes.end() ? QString() : note->second;
+      if (shownNote.isEmpty() && m_nextPlane == it->first && n == 0) shownNote = tr("Click to choose the plane");
+      it->second.pick->setNote(shownNote);
+      if (const auto step = m_planeSteps.find(it->first); step != m_planeSteps.end()) {
+        const bool from = in.name.rfind("from", 0) == 0;
+        QString text;
+        if (n > 0 && !fitpick::isFit(p)) text = from ? tr("From: done. Click the box to choose another plane.") : tr("To: done. Click the box to choose another plane.");
+        else if (n > 0) text = from ? tr("From: done (fitted, its quality below).") : tr("To: done (fitted, its quality below).");
+        else if (m_active == it->first) text = from ? tr("From: choosing the plane of the bodies they are aligned by.") : tr("To: choosing the plane they go onto.");
+        else text = from ? tr("From: the face or plane of the bodies they are aligned by. Click the box to choose it.")
+                         : tr("To: the face or plane they go onto. Click the box to choose it.");
+        step->second->setText(text);
+        step->second->setStyleSheet(QString("padding-left: 126px; color: %1;").arg(theme::css(m_nextPlane == it->first || m_active == it->first ? theme::current().sel : theme::current().fg3)));
+        step->second->setVisible(shown);
+      }
     }
   }
   // The guide's steps: the shown picks the feature needs, in order, then its values; it waits at the first one missing.
@@ -822,6 +845,7 @@ void FeaturePanel::setStatus(const QString& text, bool error) {
 
 void FeaturePanel::activate(const QString& name) {
   if (m_active == name) return;
+  if (!name.isEmpty()) m_nextPlane.clear();  // an input taken: no plane waits beside it
   m_active = name;
   refreshVisibility();
   emit activeInputChanged(m_active);
@@ -847,6 +871,10 @@ void FeaturePanel::focusRevealed(const std::set<QString>& before, const QString&
       const QString key = QString::fromStdString(in.name);
       const auto it = m_widgets.find(key);
       if (it == m_widgets.end() || !it->second.pick || it->second.row->isHidden() || before.count(key) || !needs(in)) continue;
+      if (in.type == "plane" && stepsPlanes()) {  // Align: shown as the next step, its box starts the picker
+        m_nextPlane = key;
+        return refreshVisibility();
+      }
       return activate(key);
     }
   if (m_active.isEmpty() && !wasActive.isEmpty()) activateNextPick();
@@ -881,8 +909,17 @@ void FeaturePanel::activateNextPick() {
     if (it == m_widgets.end() || !it->second.pick || it->second.row->isHidden()) continue;
     const opad::json p = picks(it->first);
     const int n = p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1;
-    if (n < std::max(1, in.min_count) && !in.optional) return activate(it->first);
+    if (n < std::max(1, in.min_count) && !in.optional) {
+      // Align: a plane's turn is shown, not started (the picker opening on its own surprised); its box starts it.
+      if (in.type == "plane" && stepsPlanes()) {
+        m_nextPlane = it->first;
+        if (!m_active.isEmpty()) return activate(QString());
+        return refreshVisibility();
+      }
+      return activate(it->first);
+    }
   }
+  m_nextPlane.clear();
   // Nothing is missing: stay on (or go to) the first pick input so clicks still mean something. Not a plane that has
   // one already: that opens the plane picker, which a box on its default XY plane does not need at the start.
   if (!m_active.isEmpty()) return;
@@ -890,6 +927,11 @@ void FeaturePanel::activateNextPick() {
     auto it = m_widgets.find(QString::fromStdString(in.name));
     if (it != m_widgets.end() && it->second.pick && !it->second.row->isHidden() && in.type != "plane") return activate(it->first);
   }
+}
+
+QString FeaturePanel::planeStepText(const QString& input) const {
+  const auto it = m_planeSteps.find(input);
+  return it == m_planeSteps.end() ? QString() : it->second->text();
 }
 
 QSize FeaturePanel::preferredSize(int width) const {

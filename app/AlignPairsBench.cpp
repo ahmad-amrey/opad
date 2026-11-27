@@ -319,7 +319,7 @@ OPAD_BENCH(OPAD_BENCH_ALIGN_PAIRS, alignPairs) {
         // Remove in the list: the second pair goes, both of its points.
         QList<QToolButton*> removes;
         for (QToolButton* b : form->findChildren<QToolButton*>())
-          if (b->parentWidget() && b->parentWidget()->objectName() == "pairRow" && b->isVisible()) removes << b;
+          if (b->parentWidget() && b->parentWidget()->objectName() == "pairRow" && !b->isHidden()) removes << b;
         if (!require(removes.size() == 4, QStringLiteral("a Remove per pair (%1)").arg(removes.size()))) return finish();
         begin("Remove on pair 2");
         removes[1]->click();
