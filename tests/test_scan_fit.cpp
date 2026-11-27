@@ -295,6 +295,24 @@ TEST(lines_planes_and_their_intersection) {
   CHECK(angle_to(crease.dir, tilted(gp_Dir(1, 0, 0))) < 0.3);
   CHECK(line_distance(tilted(gp_Pnt(50, 0, 0)), crease.origin, crease.dir) < 0.05);
   CHECK(crease.length > 85 && crease.length < 102);  // the plate is 100 long: the rim the two flats share
+  // The pointer resting right on the edge: a side of a triangle that touches it, where the averaged normals blend the two
+  // flats. Each flat is still grown from a triangle inside it: the same crease.
+  int on_edge = -1, on_side = 0;
+  for (int t = 0; t < m->triangles() && on_edge < 0; ++t)
+    for (int k = 0; k < 3; ++k) {
+      const gp_Pnt p = m->nodes[size_t(m->tri[size_t(t)][size_t(k)])], q = m->nodes[size_t(m->tri[size_t(t)][size_t((k + 1) % 3)])];
+      const gp_Pnt c((p.XYZ() + q.XYZ()) / 2);
+      if (line_distance(p, tilted(gp_Pnt(0, 0, 0)), tilted(gp_Dir(1, 0, 0))) < 0.15 && line_distance(q, tilted(gp_Pnt(0, 0, 0)), tilted(gp_Dir(1, 0, 0))) < 0.15 &&
+          std::fabs(gp_Vec(tilted(gp_Pnt(50, 0, 0)), c).Dot(gp_Vec(tilted(gp_Dir(1, 0, 0))))) < 10) {
+        on_edge = t, on_side = k;
+        break;
+      }
+    }
+  CHECK(on_edge >= 0);
+  const scanfit::Line right_on = scanfit::crease_line(*m, on_edge, on_side, 10 * kPi / 180);
+  CHECK(angle_to(right_on.dir, tilted(gp_Dir(1, 0, 0))) < 0.3);
+  CHECK(line_distance(tilted(gp_Pnt(50, 0, 0)), right_on.origin, right_on.dir) < 0.05);
+  CHECK(right_on.length > 85);
   // A side in the middle of a flat with nothing turning away near it but far off: still a crease (the nearest rim), but a
   // side on a single flat with no other flat at all is refused, as is a seed off the mesh.
   CHECK_THROWS(scanfit::crease_line(*m, -1, 0, 10 * kPi / 180));

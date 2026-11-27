@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <list>
 #include <mutex>
@@ -741,39 +742,64 @@ Line crease_line(const FitMesh& m, int seed, int side, double angle) {
   const int n = m.triangles();
   if (seed < 0 || seed >= n) throw Error("the picked side is not on the mesh (it has " + std::to_string(n) + " triangles)");
   side = std::clamp(side, 0, 2);
-  const std::vector<int> a = grow_region(m, seed, angle, false);
+  const auto& tri = m.tri[size_t(seed)];
+  const gp_Pnt mid((m.nodes[size_t(tri[size_t(side)])].XYZ() + m.nodes[size_t(tri[size_t((side + 1) % 3)])].XYZ()) / 2);
+  double mean_side = 0;
+  for (int k = 0; k < 3; ++k) mean_side += m.nodes[size_t(tri[size_t(k)])].Distance(m.nodes[size_t(tri[size_t((k + 1) % 3)])]) / 3;
+  // Seeds are taken inside a flat: a triangle whose own normal and its neighbourhood's averaged one agree. Near the crease
+  // (where the pointer rests) the averaged normals blend the two flats, and a region grown from a triangle there stays a
+  // sliver. The nearest such triangle to the picked side that `wanted` accepts, searched outwards across shared sides in
+  // widening reach; -1: none.
+  // Its two rings of neighbours must lie flat with it too: a region grows from the mean of the seed's two rings, and a seed
+  // beside the edge (on a clean mesh, whose averaged normals are its own) has rings that reach round onto the other flat.
+  auto inside_flat = [&](int t) {
+    if (m.normal[size_t(t)].Magnitude() < 1e-12 || m.smooth[size_t(t)].Magnitude() < 1e-12 || m.normal[size_t(t)].Angle(m.smooth[size_t(t)]) > angle) return false;
+    int ring[16], count = 0;
+    ring[count++] = t;
+    for (int depth = 0, from = 0; depth < 2; ++depth) {
+      const int to = count;
+      for (int i = from; i < to; ++i)
+        for (int k = 0; k < 3; ++k) {
+          const int o = m.across[size_t(ring[i])][size_t(k)];
+          if (o < 0 || std::find(ring, ring + count, o) != ring + count || count >= 16) continue;
+          if (m.normal[size_t(o)].Magnitude() > 1e-12 && m.normal[size_t(o)].Angle(m.normal[size_t(t)]) > angle) return false;
+          ring[count++] = o;
+        }
+      from = to;
+    }
+    return true;
+  };
+  auto nearest = [&](const std::function<bool(int)>& wanted) {
+    int found = -1;
+    for (double reach = std::max(20 * mean_side, 1e-6); found < 0 && reach < 200 * std::max(mean_side, 1e-6); reach *= 2) {
+      std::vector<char> seen(size_t(n), 0);
+      std::vector<int> queue = {seed};
+      seen[size_t(seed)] = 1;
+      double best = std::numeric_limits<double>::max();
+      for (size_t i = 0; i < queue.size(); ++i) {
+        const int t = queue[i];
+        for (int k = 0; k < 3; ++k) {
+          const int u = m.across[size_t(t)][size_t(k)];
+          if (u < 0 || seen[size_t(u)] || m.centre[size_t(u)].Distance(mid) > reach) continue;
+          seen[size_t(u)] = 1;
+          queue.push_back(u);
+        }
+        if (!inside_flat(t) || !wanted(t)) continue;
+        if (const double d = m.centre[size_t(t)].Distance(mid); d < best) best = d, found = t;
+      }
+    }
+    return found;
+  };
+  const int a_seed = inside_flat(seed) ? seed : nearest([](int) { return true; });
+  if (a_seed < 0) throw Error("no crease near there: no flat around the picked side");
+  const std::vector<int> a = grow_region(m, a_seed, angle, false);
   std::vector<char> in_a(size_t(n), 0);
   gp_Vec na(0, 0, 0);
   for (int t : a) in_a[size_t(t)] = 1, na += m.smooth[size_t(t)] * m.area[size_t(t)];
   if (na.Magnitude() < 1e-12) throw Error("the flat around the picked side has no direction");
   na.Normalize();
-  const auto& tri = m.tri[size_t(seed)];
-  const gp_Pnt mid((m.nodes[size_t(tri[size_t(side)])].XYZ() + m.nodes[size_t(tri[size_t((side + 1) % 3)])].XYZ()) / 2);
-  // The second flat's seed: the triangle nearest the side, off the first flat, that turns away from it by twice the
-  // tolerance and lies inside a flat of its own (its normal and its neighbourhood's averaged one agree). Near the crease the
-  // averaged normals blend the two flats, so the triangles right beyond the first flat's rim would only grow a sliver.
-  // Searched outwards from the seed across shared sides, in widening reach.
-  int b_seed = -1;
-  double mean_side = 0;
-  for (int k = 0; k < 3; ++k) mean_side += m.nodes[size_t(tri[size_t(k)])].Distance(m.nodes[size_t(tri[size_t((k + 1) % 3)])]) / 3;
-  for (double reach = std::max(20 * mean_side, 1e-6); b_seed < 0 && reach < 200 * std::max(mean_side, 1e-6); reach *= 2) {
-    std::vector<char> seen(size_t(n), 0);
-    std::vector<int> queue = {seed};
-    seen[size_t(seed)] = 1;
-    double best = std::numeric_limits<double>::max();
-    for (size_t i = 0; i < queue.size(); ++i) {
-      const int t = queue[i];
-      for (int k = 0; k < 3; ++k) {
-        const int u = m.across[size_t(t)][size_t(k)];
-        if (u < 0 || seen[size_t(u)] || m.centre[size_t(u)].Distance(mid) > reach) continue;
-        seen[size_t(u)] = 1;
-        queue.push_back(u);
-      }
-      if (in_a[size_t(t)] || m.normal[size_t(t)].Magnitude() < 1e-12 || m.smooth[size_t(t)].Magnitude() < 1e-12) continue;
-      if (m.normal[size_t(t)].Angle(na) < 2 * angle || m.normal[size_t(t)].Angle(m.smooth[size_t(t)]) > angle) continue;
-      if (const double d = m.centre[size_t(t)].Distance(mid); d < best) best = d, b_seed = t;
-    }
-  }
+  // The second flat: the nearest such triangle off the first flat that turns away from it by twice the tolerance.
+  const int b_seed = nearest([&](int t) { return !in_a[size_t(t)] && m.normal[size_t(t)].Angle(na) >= 2 * angle; });
   if (b_seed < 0) throw Error("no crease near there: no other flat meets the flat around the picked side");
   const std::vector<int> b = grow_region(m, b_seed, angle, false);
   if (a.size() < 3 || b.size() < 3) throw Error("no crease near there: one side of it is too small a flat to fit");

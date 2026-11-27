@@ -2384,6 +2384,7 @@ void DesignController::creaseHover() {
     m_creaseJob = nullptr;
     if (!ok) {
       if (error != "cancelled") emit status(i18n::t(error));
+      trace::log(QStringLiteral("design: crease at side %1 of %2: %3").arg(m_creaseSide).arg(QString::fromStdString(m_creaseBody), error));
       return;
     }
     const opad::json world = out->value("world", opad::json::object());
