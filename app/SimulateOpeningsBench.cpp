@@ -45,11 +45,10 @@ bool until(const std::function<bool()>& done, int ms) {
   return done();
 }
 
-// A duct adapter's wall, revolved about Z from its bore (r, z) made 2.4 mm thick outward: the 8" sleeve with a 1 mm chamfer
-// inside its rim, a step in where the collar it slides over stops, a cone down to the 6" spigot, a 1 mm chamfer inside its rim.
+// A duct adapter's wall, revolved about Z from its bore (r, z) made 2.4 mm thick outward: an 8" sleeve with a 1 mm chamfer
+// inside its rim, a step in where the duct it slides over stops, a cone down to the 6" spigot, a 1 mm chamfer inside its rim.
 std::string adapterBrep(double x0) {
-  const std::vector<std::array<double, 2>> bore = {{99.9, 0},   {98.9, 1},    {98.9, 34},    {95.6, 34},
-                                                   {95.6, 48},  {71.36, 160}, {71.36, 195}, {72.36, 196}};
+  const std::vector<std::array<double, 2>> bore = {{101.6, 0}, {100.6, 1}, {100.6, 34}, {97, 34}, {97, 48}, {76.2, 160}, {76.2, 195}, {77.2, 196}};
   BRepBuilderAPI_MakePolygon poly;
   for (const auto& p : bore) poly.Add(gp_Pnt(x0 + p[0], 0, p[1]));
   for (auto it = bore.rbegin(); it != bore.rend(); ++it) poly.Add(gp_Pnt(x0 + (*it)[0] + 2.4, 0, (*it)[1]));
@@ -106,7 +105,7 @@ OPAD_BENCH(OPAD_BENCH_FLOWOPENINGS, flowopenings) {
       }
       return -1;
     };
-    const int bore8 = circle(adapter, 1, 98.9), bore6 = circle(adapter, 195, 71.36), rim6 = circle(adapter, 196, 72.36);
+    const int bore8 = circle(adapter, 1, 100.6), bore6 = circle(adapter, 195, 76.2), rim6 = circle(adapter, 196, 77.2);
     require(bore8 >= 0 && bore6 >= 0 && rim6 >= 0, "the bores' and the spigot rim's circles");
     view->standardView("iso");
     view->fitAll();
@@ -138,8 +137,8 @@ OPAD_BENCH(OPAD_BENCH_FLOWOPENINGS, flowopenings) {
     opad::json plan = check->plan();
     require(plan.value("mesh", "") == "axisymmetric" && plan.value("steps", 0) == 1,
             "round with a step: solved as a wedge whose blocks step with it (" + QString::fromStdString(plan.dump().substr(0, 160)) + ")");
-    require(std::fabs(plan["inlet"].value("diameter_mm", 0.0) - 197.8) < 0.01 && std::fabs(plan["outlet"].value("diameter_mm", 0.0) - 142.72) < 0.01,
-            "the openings are the bores, 197.8 and 142.72 across");
+    require(std::fabs(plan["inlet"].value("diameter_mm", 0.0) - 201.2) < 0.01 && std::fabs(plan["outlet"].value("diameter_mm", 0.0) - 152.4) < 0.01,
+            "the openings are the bores, 201.2 and 152.4 across");
     require(plan.value("seconds_estimate", 0.0) > 0, "the plan says about how long it takes");
     require(until([area] { return area->checkArrowsShown() == 2 && area->fanGlyphsShown() == 2; }, 5000),
             "an outline and an arrow through each opening, the arrows clickable in the view");
@@ -166,8 +165,8 @@ OPAD_BENCH(OPAD_BENCH_FLOWOPENINGS, flowopenings) {
     require(until([&] { return !check->picking() && edgesOf(check->listed("outlet")) == std::set<int>{rim6}; }, 10000),
             "one click takes that loop in place of the proposed one (not added to it), and picking stops");
     check->flush();
-    require(until([check] { return std::fabs(check->plan().value("outlet", opad::json::object()).value("diameter_mm", 0.0) - 144.72) < 0.01; }, 20000),
-            "planned again with the rim's hole as the outlet, 144.72 across");
+    require(until([check] { return std::fabs(check->plan().value("outlet", opad::json::object()).value("diameter_mm", 0.0) - 154.4) < 0.01; }, 20000),
+            "planned again with the rim's hole as the outlet, 154.4 across");
 
     view->standardView("iso");
     view->fitAll();

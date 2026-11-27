@@ -645,16 +645,16 @@ std::string wedge_layout(const FlowPlan& plan, WedgeLayout& w) {
 }
 
 // About how long a run takes: meshing, then the cells times the iterations it usually needs times one iteration's cost per
-// cell on one core. Measured with OPAD's OpenFOAM v2606 pack on one machine (16 cores, one used): 8 us per cell and iteration
-// on Windows (the MinGW build: the duct adapter's wedge, 15k cells, 8.8 us; its full part, 143k and 278k cells, 6.6 to 9 us;
-// OpenCFD's own v2512 build the same), 6.6 us on Linux (the 278k-cell case under WSL on that machine); macOS not measured
-// (taken as Linux). snappyHexMesh about 0.36 ms per cell it makes. A solve settles in about 150 to 330 iterations (the
-// pressure drop's probes, or the residuals): 220 taken.
+// cell on one core. Measured with OPAD's OpenFOAM v2606 pack on one idle machine (16 cores, one used): on Windows (the
+// MinGW build; OpenCFD's own v2512 build runs as fast) 6.3 to 6.9 us per cell and iteration on round 8" to 6" adapters as
+// wedges (15k to 20k cells), 4.4 to 4.8 us whole (143k to 248k cells): 5.5 taken. Linux ran the same 278k-cell case 0.7
+// times as long (WSL on that machine): 4 taken; macOS not measured (taken as Linux). snappyHexMesh about 0.36 ms per cell
+// it makes. A solve settles in 115 to 460 iterations (the pressure drop's probes, or the residuals): 220 taken.
 void estimate_seconds(FlowPlan& plan) {
 #if defined(_WIN32)
-  const double per_cell_iteration = 8e-6;
+  const double per_cell_iteration = 5.5e-6;
 #else
-  const double per_cell_iteration = 6.6e-6;
+  const double per_cell_iteration = 4e-6;
 #endif
   const double cells = double(plan.cells), iterations = std::min(220.0, double(plan.iterations > 0 ? plan.iterations : 220));
   const double mesh = plan.mesh == "3d" ? 5 + 0.36e-3 * cells : 1;
@@ -758,7 +758,7 @@ Geometry geometry(const Document& doc, const Scene& scene, const FlowSettings& s
       }
     }
     // Cells (snappyHexMesh, write_3d_mesh): the stubs' volume at the background cells; the part's own walls at level 2 (a
-    // quarter of them), about ten cells deep with their layers; three layers along the stubs. Measured on the duct adapter
+    // quarter of them), about ten cells deep with their layers; three layers along the stubs. Measured on a round 8" to 6" adapter
     // (stubs 2 and 12 diameters): 143k cells, of which 42k at level 0, 82k at level 2, 57k in layers; this gives 143k.
     const double c = plan.cell_mm;
     double wall_area = 0;
@@ -969,7 +969,7 @@ void write_3d_mesh(const Geometry& g, const FlowSettings& s, const fs::path& dir
     if (plan.inlet_extension_mm > 0 || plan.outlet_extension_mm > 0) {
       write_text_file(dir / "constant" / "triSurface" / "stub.stl", stubs.str());
       geo << "  stub { type triSurfaceMesh; file \"stub.stl\"; }\n";
-      // Level 0 to 1 (the part's walls 1 to 2): at level 1 throughout, the stubs' volume was 180k of the duct adapter's 278k cells.
+      // Level 0 to 1 (the part's walls 1 to 2): at level 1 throughout, the stubs' volume was 180k of a round 8" to 6" adapter's 278k cells.
       refine << "    stub { level (0 1); patchInfo { type wall; } }\n";
       layers << " \"stub.*\" { nSurfaceLayers 3; }";
     }
@@ -1162,12 +1162,12 @@ void write_case(const Geometry& g, const FlowSettings& s, const fs::path& dir) {
             "  \"(U|k|omega)\" { solver smoothSolver; smoother symGaussSeidel; tolerance 1e-8; relTol 0.1; }\n}\n"
             "SIMPLE { nNonOrthogonalCorrectors " + std::string(skewed ? "1" : "0") + "; consistent yes; residualControl { " +
                 // With the probes the pressure drop's settling ends the solve (run_flow); the residuals only stop one that has
-                // fully converged. These residuals alone stopped the duct adapter's wedge with its drop still moving 2 %.
+                // fully converged. These residuals alone stopped an adapter's wedge with its drop still moving 2 %.
                 std::string(probes_of(g).at.empty() ? "p 1e-4; " + std::string(wedge ? "" : "U 1e-5; ") + "\"(k|omega)\" 1e-5;"
                                                     : "p 1e-5; " + std::string(wedge ? "" : "U 1e-6; ") + "\"(k|omega)\" 1e-6;") +
                 " } }\n"
-            // The wedge at SIMPLEC's own relaxation: the duct adapter's settled in 115 iterations, not 334 at U 0.8 and 0.7. The
-            // whole part at 0.7: its expansion's jet, solved whole, swung by 2 to 3 Pa for 600 iterations at 0.8 or 0.9 and
+            // The wedge at SIMPLEC's own relaxation: an adapter's settled in 115 iterations, not 334 at U 0.8 and 0.7. The
+            // whole part at 0.7: an expansion's jet, solved whole, swung by 2 to 3 Pa for 600 iterations at 0.8 or 0.9 and
             // settled within 1.5 % at 0.7.
             "relaxationFactors { equations { U " + std::string(wedge ? "0.9" : "0.7") + "; \".*\" " + (wedge ? "0.9" : "0.7") + "; } }\n");
   // A wedge's velocity across it (Uz) is zero to round-off, so its normalised residual is noise that never falls below any
@@ -1922,8 +1922,8 @@ StudyRun run_flow(const Document& doc, const Scene& scene, const json& st, const
       double lo = 1e300, hi = -1e300;
       for (const auto& [t, v] : drops)
         if (t > end_t - 100) lo = std::min(lo, v), hi = std::max(hi, v);
-      summary["pressure_drop_swing_pa"] = 0.5 * (hi - lo) * s.rho;
       if (!averaged.empty()) {
+        summary["pressure_drop_swing_pa"] = 0.5 * (hi - lo) * s.rho;  // either way about the average (a settled run has none)
         summary["averaged_iterations"] = {std::atof(averaged.front().c_str()), std::atof(averaged.back().c_str())};
         const std::string span = averaged.front() + " to " + averaged.back();
         if (swinging)
