@@ -2239,7 +2239,9 @@ StudyRun run_flow(const Document& doc, const Scene& scene, const json& st, const
   // What one iteration cost here (one core), per cell: the estimate's figure, measured (the log's last execution time).
   if (const size_t at = log.rfind("ExecutionTime = "); at != std::string::npos && std::stoi(last) > 0 && !m->c.empty())
     summary["seconds_per_cell_iteration"] = std::atof(log.c_str() + at + 16) / (double(std::stoi(last)) * double(m->c.size()));
-  summary["converged"] = converged;
+  summary["converged"] = converged || swinging;
+  // How it came to rest: its residuals, the pressure drop settled, or swinging a little about one state (averaged); null: not.
+  summary["settled_by"] = settled ? json("pressure drop") : log.find("solution converged") != std::string::npos && converged ? json("residuals") : swinging ? json("average") : json(nullptr);
   summary["streamlines"] = res->streamlines.size();
   summary["case_dir"] = dir.keep ? json(path_to_utf8(dir.p)) : json(nullptr);
   summary["warnings"] = run.warnings;
