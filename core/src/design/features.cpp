@@ -224,6 +224,11 @@ std::vector<FeatureSpec> build_specs() {
   add("cloud_crop", "Crop points", "cloud_crop", "modify",
       "Keep or delete a region of a cloud's points (a lasso, a brush or a box picked on it).",
       {in("region", "Region", "region"), choice("keep", "Keep", {"inside", "outside"})});
+  // Edit point cloud (opad/cloud_edit.hpp, the app's mode of that name): points moved by brushes, deleted and added by hand,
+  // stored compactly (moved ordinals with their offsets, deleted ranges, the new points) against the cloud as it was.
+  add("cloud_edit", "Edit point cloud", "cloud_edit", "modify",
+      "Sculpt a scan by hand: points pushed in or pulled out under a brush, smoothed onto their surface, deleted, and new ones added on the surface where the scan left a hole.",
+      {pick("bodies", "Point cloud", "bodies", 1, 1), in("edit", "Changes", "cloud_edit", json::object())});
   add("cloud_slice", "Slice points", "cloud_slice", "create",
       "The points within a band either side of a plane, laid onto it as a 2D profile to sketch over or turn into sketch geometry; several slices step along the plane's normal.",
       {pick("bodies", "Point cloud", "bodies", 1, 1), in("plane", "Plane", "plane", xy), in("offset", "Offset", "length", "0 mm"),

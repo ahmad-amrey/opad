@@ -1,7 +1,8 @@
 // Point clouds (opad/point_cloud.hpp): the readers on generated files (PLY ASCII / binary little and big endian, with and
 // without colour, normals and a scalar; XYZ, PTS, CSV; E57 written here and E57 with bit-packed scaled integers; LAS), the
 // body they become (a nodes-only triangulation through BREP text and viewer mode), regions, the neighbour grid, slices and
-// their profiles, outliers, voxel downsampling, normals and the writers.
+// their profiles, outliers, voxel downsampling, normals and the writers; editing by hand (opad/cloud_edit.hpp: brushes,
+// deleting, adding on the surface, the cloud_edit feature replayed).
 #include <BRep_Tool.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
@@ -16,6 +17,7 @@
 #include "check.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/commands.hpp"
+#include "opad/cloud_edit.hpp"
 #include "opad/design/cloud.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/geometry.hpp"
@@ -650,4 +652,213 @@ TEST(cloud_commands) {
   CHECK_THROWS(commands::run("cloud", {{"body", body}, {"action", "nope"}}, &d));
   CHECK_THROWS(commands::run("cloud", {{"body", body}, {"action", "region"}}, &d));
 }
+namespace {
+// A flat patch of points 1 mm apart on z = 0 (x, y in 0..40), normals +Z, colours by x.
+std::shared_ptr<const pc::Points> patch(bool normals = true, bool colours = true) {
+  auto p = std::make_shared<pc::Points>();
+  for (int j = 0; j <= 40; ++j)
+    for (int i = 0; i <= 40; ++i) {
+      p->xyz.insert(p->xyz.end(), {float(i), float(j), 0.f});
+      if (normals) p->normals.insert(p->normals.end(), {0.f, 0.f, 1.f});
+      if (colours) p->rgb.insert(p->rgb.end(), {uint8_t(i * 6), uint8_t(50), uint8_t(200)});
+    }
+  return p;
+}
+uint32_t at_xy(int i, int j) { return uint32_t(j * 41 + i); }
+}  // namespace
+
+TEST(cloud_edit_push_and_pull_follow_the_falloff) {
+  auto base = patch();
+  pc::Editor e(base);
+  pc::Brush b;
+  b.centre = {20, 20, 0};
+  b.toward = {0, 0, 1};
+  b.radius = 5;
+  const auto moved = e.push(b, 2.0);  // pull: out of the surface, toward the eye
+  CHECK_NEAR(e.at(at_xy(20, 20))[2], 2.0, 1e-6);
+  CHECK_NEAR(e.at(at_xy(22, 20))[2], 2.0 * pc::falloff(0.4), 1e-6);  // (1 - 0.16)^2 of it
+  CHECK_NEAR(e.at(at_xy(20, 17))[2], 2.0 * pc::falloff(0.6), 1e-6);
+  CHECK_NEAR(e.at(at_xy(22, 20))[0], 22.0, 1e-6);  // along the normal only
+  CHECK_EQ(e.at(at_xy(25, 20))[2], 0.0);  // on the rim: weight 0
+  CHECK_EQ(e.at(at_xy(30, 30))[2], 0.0);
+  size_t inside = 0;
+  for (int j = 0; j <= 40; ++j)
+    for (int i = 0; i <= 40; ++i) inside += (i - 20) * (i - 20) + (j - 20) * (j - 20) < 25;
+  CHECK_EQ(moved.size(), inside);
+  CHECK_EQ(e.edit().moved.size(), inside);
+  // Push takes it back in, by the same falloff about the same centre.
+  e.push(b, -2.0);
+  CHECK_NEAR(e.at(at_xy(20, 20))[2], 0.0, 1e-6);
+  CHECK_NEAR(e.at(at_xy(22, 20))[2], 0.0, 1e-6);
+  // Normals facing away from the eye are turned to it: a pull still comes toward the eye.
+  auto flipped = std::make_shared<pc::Points>(*base);
+  for (size_t i = 0; i < flipped->size(); ++i) flipped->normals[3 * i + 2] = -1;
+  pc::Editor f(flipped);
+  f.push(b, 1.5);
+  CHECK_NEAR(f.at(at_xy(20, 20))[2], 1.5, 1e-6);
+  // Without normals, along the view.
+  pc::Editor g(patch(false));
+  pc::Brush slanted = b;
+  const double s = std::sqrt(0.5);
+  slanted.toward = {s, 0, s};
+  g.push(slanted, 1.0);
+  CHECK_NEAR(g.at(at_xy(20, 20))[0], 20 + s, 1e-6);
+  CHECK_NEAR(g.at(at_xy(20, 20))[2], s, 1e-6);
+  // The far side of a part is out of reach: a point 10 mm behind the surface stays.
+  auto two = std::make_shared<pc::Points>(*base);
+  two->xyz.insert(two->xyz.end(), {20.f, 20.f, -10.f});
+  two->normals.insert(two->normals.end(), {0.f, 0.f, -1.f});
+  two->rgb.insert(two->rgb.end(), {0, 0, 0});
+  pc::Editor h(two);
+  h.push(b, 2.0);
+  CHECK_EQ(h.at(uint32_t(two->size() - 1))[2], -10.0);
+  // Smooth: a spike pulled out sinks back toward the plane of its neighbours.
+  pc::Brush narrow = b;
+  narrow.radius = 1.2;
+  e.push(narrow, 3.0);
+  const double before = e.at(at_xy(20, 20))[2];
+  CHECK(before > 2.9);
+  b.radius = 3;
+  e.smooth(b, 1.0, 8);
+  CHECK(e.at(at_xy(20, 20))[2] < 0.5 * before);
+}
+
+TEST(cloud_edit_deletes_by_brush_region_and_keep) {
+  auto base = patch();
+  pc::Editor e(base);
+  pc::Brush b;
+  b.centre = {10, 10, 0};
+  b.radius = 3;
+  const auto gone = e.erase(b);
+  CHECK(!gone.empty());
+  CHECK(e.deleted(at_xy(10, 10)) && !e.deleted(at_xy(14, 10)));
+  // A deleted point is under no brush any more and moves no more.
+  std::vector<uint32_t> ids;
+  std::vector<float> w;
+  e.under(b, ids, w);
+  CHECK(ids.empty());
+  CHECK(e.push(b, 1).empty());
+  CHECK_EQ(e.erase(pc::Region::of({at_xy(10, 10), at_xy(30, 30)})), size_t(1));  // one was gone already
+  pc::Points out = pc::apply(*base, e.edit());
+  CHECK_EQ(out.size(), base->size() - gone.size() - 1);
+  CHECK(out.colored() && out.has_normals());
+  // A lasso (a square in a top view: NDC = (p - 20) / 20) finds only live points, where they are now.
+  std::array<double, 16> top{};
+  top[0] = 1.0 / 20, top[3] = -1, top[5] = 1.0 / 20, top[7] = -1, top[15] = 1;
+  CHECK(e.inPolygon(top, {{-0.6, -0.6}, {-0.4, -0.6}, {-0.4, -0.4}, {-0.6, -0.4}}).empty());  // x, y in 8..12: all deleted
+  const pc::Region r = e.inPolygon(top, {{-0.1, -0.1}, {0.1, -0.1}, {0.1, 0.1}, {-0.1, 0.1}});  // x, y in 18..22
+  CHECK(!r.empty());
+  for (uint32_t i : r.indices()) CHECK(!e.deleted(i));
+  CHECK(r.count() < 25u);
+  // Keep: every other point goes.
+  const size_t live = r.count();
+  e.keep(r);
+  CHECK_EQ(pc::apply(*base, e.edit()).size(), live);
+}
+
+TEST(cloud_edit_adds_points_on_the_local_surface) {
+  // A tilted plane z = x / 2 with a hole about (10, 10), colours by x.
+  auto p = std::make_shared<pc::Points>();
+  const double l = std::sqrt(1.25);
+  for (int j = 0; j <= 20; ++j)
+    for (int i = 0; i <= 20; ++i) {
+      if ((i - 10) * (i - 10) + (j - 10) * (j - 10) < 5) continue;
+      p->xyz.insert(p->xyz.end(), {float(i), float(j), float(i * 0.5)});
+      p->normals.insert(p->normals.end(), {float(-0.5 / l), 0.f, float(1 / l)});
+      p->rgb.insert(p->rgb.end(), {uint8_t(i * 10), 0, 0});
+    }
+  pc::Editor e(p);
+  // The pointer's ray straight down through (10, 10), seeded above the hole's middle.
+  const auto added = e.add({10, 10, 9}, {0, 0, 1});
+  CHECK(added.has_value());
+  CHECK_EQ(*added, uint32_t(p->size()));
+  const Vec3 q = e.at(*added);
+  CHECK_NEAR(q[0], 10, 1e-4);
+  CHECK_NEAR(q[1], 10, 1e-4);
+  CHECK_NEAR(q[2], 5, 1e-3);  // on the plane
+  const pc::Edit edit = e.edit();
+  CHECK_EQ(edit.added.size(), size_t(1));
+  CHECK_NEAR(edit.added.normals[0], -0.5 / l, 1e-3);  // the plane's normal, turned as its neighbours'
+  CHECK_NEAR(edit.added.normals[2], 1 / l, 1e-3);
+  CHECK(std::abs(int(edit.added.rgb[0]) - 100) <= 12);  // its neighbours' colour (x about 10)
+  // It is a point like the others: found, moved and deleted.
+  std::vector<uint32_t> nb;
+  e.nearest({10, 10, 5}, 1, nb);
+  CHECK_EQ(nb.front(), *added);
+  pc::Brush b;
+  b.centre = q;
+  b.toward = {0, 0, 1};
+  b.radius = 0.5;
+  e.push(b, 1.0);
+  CHECK(e.at(*added)[2] > 5.5);
+  CHECK_EQ(pc::apply(*p, e.edit()).size(), p->size() + 1);
+  b.centre = e.at(*added);
+  e.erase(b);
+  CHECK(e.deleted(*added));
+  CHECK_EQ(pc::apply(*p, e.edit()).size(), p->size());
+  // Too few points to fit a plane to: nothing added.
+  auto two = std::make_shared<pc::Points>();
+  two->xyz = {0, 0, 0, 1, 0, 0};
+  pc::Editor lone(two);
+  CHECK(!lone.add({0, 0, 1}, {0, 0, 1}).has_value());
+}
+
+TEST(cloud_edit_feature_replays_the_same_cloud) {
+  Files f;
+  pc::Points scan = cylinder(120, 31);
+  pc::write_file(f.dir / "scan.ply", scan);
+  Document d = open(f.dir / "scan.ply", false);
+  const std::string body = resolve(d).all_bodies().front();
+  auto shape = [&] { return body_shape(d, resolve(d).node(body)->body_key); };
+  auto base = std::make_shared<const pc::Points>(pc::from_shape(shape()));
+  // A session: pulled out on +X, deleted round the top, a point added.
+  pc::Editor e(base);
+  pc::Brush b;
+  b.centre = {10, 0, 10};
+  b.toward = {1, 0, 0};
+  b.radius = 3;
+  e.push(b, 0.8);
+  e.countStroke();
+  b.centre = {0, 10, 19};
+  b.toward = {0, 1, 0};
+  e.erase(b);
+  e.countStroke();
+  CHECK(e.add({-10, 0, 7.3}, {-1, 0, 0}).has_value());
+  e.countStroke();
+  const pc::Edit edit = e.edit();
+  CHECK(!edit.moved.empty() && !edit.deleted.empty() && edit.added.size() == 1);
+  // Through JSON and back, bit for bit.
+  const json stored = edit.to_json();
+  const pc::Edit back = pc::Edit::from_json(json::parse(stored.dump()));
+  CHECK(back.moved == edit.moved && back.offsets == edit.offsets && back.deleted.ranges == edit.deleted.ranges && back.added.xyz == edit.added.xyz &&
+        back.added.rgb == edit.added.rgb && back.added.normals == edit.added.normals && back.added.scalar == edit.added.scalar && back.strokes == 3);
+  const pc::Points expected = pc::apply(*base, edit);
+  CHECK_EQ(expected.size(), base->size() - edit.deleted.count() + 1);
+  // The feature: one step, the cloud changed in place.
+  const json op = design::make_feature_op("cloud_edit", "Edit1", {{"bodies", json::array({{{"body", body}}})}, {"edit", stored}});
+  design::apply_ops(d, {op});
+  CHECK_EQ(resolve(d).all_bodies().size(), size_t(1));
+  CHECK_EQ(resolve(d).node(body)->representation, std::string("points"));
+  const pc::Points now = pc::from_shape(shape());
+  CHECK(now.xyz == expected.xyz && now.rgb == expected.rgb && now.normals == expected.normals && now.scalar == expected.scalar);
+  // Regenerated, saved and opened again: the same points.
+  design::commit(d, design::plan_regenerate(d, true));
+  CHECK(pc::from_shape(shape()).xyz == expected.xyz);
+  d.save_as(f.dir / "edited.opad");
+  const Document again = Document::load(f.dir / "edited.opad");
+  CHECK(pc::from_shape(body_shape(again, resolve(again).node(body)->body_key)).xyz == expected.xyz);
+  // Edited to no change: the cloud as scanned.
+  const std::string id = resolve(d).features.back().id;
+  design::apply_ops(d, {design::make_edit_op(id, {{"inputs", {{"bodies", json::array({{{"body", body}}})}, {"edit", json::object()}}}})});
+  CHECK(pc::from_shape(shape()).xyz == base->xyz);
+  // An edit made on another cloud (another number of points) is refused, and so is a malformed one.
+  pc::Edit wrong = edit;
+  wrong.base += 1;
+  CHECK_THROWS(design::apply_ops(d, {design::make_feature_op("cloud_edit", "Bad", {{"bodies", json::array({{{"body", body}}})}, {"edit", wrong.to_json()}})}));
+  json cut = stored;
+  cut["offsets"] = "AAAA";
+  CHECK_THROWS(pc::Edit::from_json(cut));
+  CHECK_THROWS(pc::apply(*base, wrong));
+}
+
 CHECK_MAIN()
