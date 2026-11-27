@@ -46,7 +46,12 @@ including a new airflow check for ducts and fittings.
   The earlier tools are all still there under *Advanced*.
 - **Airflow through ducts and fittings.** A new airflow check (and `flow` study) works out the pressure a fitting loses
   at a given airflow, or the airflow a fan really delivers through it, shows the air speed, pressure and streamlines, and
-  marks where the air swirls. Round parts are solved as a thin slice, so a run takes a minute or so.
+  marks where the air swirls. You say where the air goes in and out by clicking an edge round each opening (OPAD
+  proposes the bores, past any chamfer at the rim), and an arrow through each opening shows the air's way: click it, or
+  *Flip the air's way*, to turn it round. Round parts are solved as a thin slice, steps and ledges included, so a run
+  takes well under a minute (an 8" to 6" duct adapter with a step: 13 seconds, where it took 12 minutes as a full 3D
+  part); other parts are solved whole in about 3 to 7 minutes. A run stops once the pressure drop has settled, and the
+  check says beforehand about how long it will take on your computer.
 - **Solvers installed from inside OPAD.** The airflow and strength checks need OpenFOAM and CalculiX; when one is
   missing, *Install* downloads it (about 45 MB for OpenFOAM, 13 MB for CalculiX) from OPAD's own releases, checks it
   and sets it up for you on Windows, Linux and macOS, with no admin rights and nothing else to install. A copy you
