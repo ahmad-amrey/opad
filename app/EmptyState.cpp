@@ -60,6 +60,7 @@ QString typeIcon(const QString& path) {
   if (suffix == "opad") return "doc";
   if (QStringList{"dxf", "dwg", "svg"}.contains(suffix)) return "drawing";
   if (QStringList{"stl", "3mf", "obj", "ply", "gltf", "glb", "wrl", "vrml"}.contains(suffix)) return "mesh";
+  if (QStringList{"xyz", "asc", "pts", "csv", "e57", "las"}.contains(suffix)) return "pointCloud";
   return "step";
 }
 
