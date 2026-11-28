@@ -505,7 +505,9 @@ per mode the densest band, `fit_plane`, grown 3 robust sigmas at a time; kept wh
 diagonal and flat (`sagitta`: a quadric's bow over the half extent within its rms, so a dome or an ellipsoid's cap is
 refused); then the principal bases; neither = method "pca", the least spread first (explicitly sorted). X: `x` "outline"
 (default; `outline_of`: nodes in the base plane, Akl-Toussaint octagon filter, monotone-chain hull, the minimum-area
-rectangle on a hull edge, long side as X, `turn_deg` from the walls' X) or "walls" (the old turns). `OPAD_SCANFIT_DEBUG=1`
+rectangle on a hull edge, long side as X, `turn_deg` from the walls' X; taken only when clear, `squared`: every hull edge
+over 2 degrees off, modulo quarter turns, gives 1% more area, else an oval's least rectangle followed the tessellation, which
+differs on macOS) or "walls" (the old turns). `OPAD_SCANFIT_DEBUG=1`
 traces each dominant-plane candidate. Align's `frame` input maps the From frame onto the To one. UI: a mesh triangle (face or edge pick) in the plane
 picker or an axis input becomes a fit (`fitpick::fromPick`), a box of triangles `fromTriangles`, the picker's Fit to
 points `fromPoints`; `DesignController::refitPick` fits on a worker and the panel's fit row (tolerance, kind, Next base /

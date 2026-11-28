@@ -223,7 +223,8 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   direction, least median of squares, grown to its 3-sigma inliers, kept only when flat), then the principal
   directions. `method: "pca"`: no plane either, the principal directions, the least spread first (the thin direction
   stands up). Each base has its `outline` (`size_mm` of the outline's minimum-area rectangle seen square to the base,
-  `turn_deg` from the unsquared X to it, `unsquared_mm` the box the unsquared X gives) and its X `turns`: with `x:
+  `turn_deg` from the unsquared X to it, `unsquared_mm` the box the unsquared X gives; `squared: false` when the outline
+  has no one clear rectangle, round or oval, and X stays unsquared) and its X `turns`: with `x:
   "outline"` (the default) the rectangle's long side and its quarter turns, then the wall directions; `x: "walls"` the
   walls' main direction (else the longest direction) and its quarter turns. Squaring matters: a few degrees off adds
   millimetres to every side of the part's box. `align_inputs` is a ready Align: `from_plane: {"fit": {"body", "of": "scan_axes",

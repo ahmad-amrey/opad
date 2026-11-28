@@ -699,7 +699,8 @@ TEST(clouds_render_as_points_and_by_height) {
   const Image h = render_scene(d, s, o, &heights);
   CHECK(heights.contains("cloud_height"));
   const json& ch = heights["cloud_height"];
-  std::printf("    by height: %.3f .. %.3f mm\n", ch["range_mm"][0].get<double>(), ch["range_mm"][1].get<double>());
+  std::printf("    by height: %.3f .. %.3f mm, %s\n", ch["range_mm"][0].get<double>(), ch["range_mm"][1].get<double>(),
+              ch.contains("planes") ? ch["planes"].dump().c_str() : "no planes");
   CHECK_NEAR(ch["range_mm"][0].get<double>(), 0, 0.01);
   CHECK_NEAR(ch["range_mm"][1].get<double>(), 5, 0.01);
   CHECK_EQ(ch["planes"].size(), 1u);

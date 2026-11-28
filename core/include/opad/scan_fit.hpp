@@ -127,6 +127,9 @@ struct ScanOutline {
   double length = 0, width = 0;            // its sides (mm), length >= width
   double turn_deg = 0;                     // from the unsquared X (walls, else the longest direction) to x about the base normal, -45..45
   double unsquared_length = 0, unsquared_width = 0;  // the outline's box along the unsquared X
+  // Whether x is the rectangle's: false when the outline has no one clear rectangle (round or oval, or a regular
+  // polygon's several alike), whose turn would follow the noise; then x is the unsquared X, turn 0, the box along it.
+  bool squared = false;
 };
 ScanOutline scan_outline(const FitMesh& m, const ScanAxes& axes, int base);
 // The X directions offered with a base, in turn order. `x` "outline" (default): the outline's long side and its quarter

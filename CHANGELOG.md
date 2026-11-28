@@ -136,7 +136,8 @@ including a new airflow check for ducts and fittings.
 ### Changed
 - **Align scan to axes squares a scan to its outline.** X now runs along the long side of the smallest rectangle round
   the scan's outline, seen from above its base, so a part scanned a couple of degrees off measures its true size instead
-  of a few millimetres more on every side. The panel shows the outline's size and how far it turned;
+  of a few millimetres more on every side. A round or oval outline, which has no one clear rectangle, keeps its longest
+  direction along X. The panel shows the outline's size and how far it turned;
   *Square to outline* off lines the walls up with X as before. AI assistants get the outline and the turn from
   `scan_axes` and choose with `x`.
 - **Align scan to axes finds the flat a scan stands on more often.** When the facets' normals show no flat, as on a

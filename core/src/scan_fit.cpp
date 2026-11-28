@@ -1277,7 +1277,10 @@ double cross2(const Eigen::Vector2d& o, const Eigen::Vector2d& a, const Eigen::V
 }
 
 // The outline squared: the nodes in the base plane, their convex hull (the points inside the octagon of the eight
-// extreme ones left out first: Akl-Toussaint), the rectangle of least area, which has a side on a hull edge.
+// extreme ones left out first: Akl-Toussaint), the rectangle of least area, which has a side on a hull edge. Taken only
+// when it is clear: every hull edge more than 2 degrees (modulo quarter turns) from its side gives a rectangle at least
+// 1% larger. A rectangle's grows by about (L/W + W/L) x the turn (9% at 2 degrees for 140 x 64), an ellipse's only with
+// the turn squared (0.07% for 100 x 60), so an oval's least rectangle lies wherever its tessellation and noise put it.
 ScanOutline outline_of(const FitMesh& m, const ScanBase& b, const gp_Dir& x0) {
   const gp_Vec n(b.normal), e1(plane_x(b.normal)), e2 = n.Crossed(e1);
   const size_t stride = std::max<size_t>(1, m.nodes.size() / 4'000'000);
@@ -1348,6 +1351,8 @@ ScanOutline outline_of(const FitMesh& m, const ScanBase& b, const gp_Dir& x0) {
   }
   double area = 1e300, blo[2] = {0, 0}, bhi[2] = {0, 0};
   Eigen::Vector2d bu = u0.normalized();
+  std::vector<std::pair<Eigen::Vector2d, double>> sides;  // each hull edge's direction and its rectangle's area
+  sides.reserve(hull.size());
   for (size_t k = 0; k < hull.size(); ++k) {
     Eigen::Vector2d u = hull[(k + 1) % hull.size()] - hull[k];
     if (u.norm() <= 0) continue;
@@ -1355,8 +1360,23 @@ ScanOutline outline_of(const FitMesh& m, const ScanBase& b, const gp_Dir& x0) {
     double lo[2], hi[2];
     extents(u, lo, hi);
     const double a = (hi[0] - lo[0]) * (hi[1] - lo[1]);
+    sides.push_back({u, a});
     if (a < area * (1 - 1e-12)) area = a, bu = u, std::copy(lo, lo + 2, blo), std::copy(hi, hi + 2, bhi);
   }
+  for (const auto& [u, a] : sides) {
+    const double off = std::fabs(std::remainder(std::atan2(bu.x() * u.y() - bu.y() * u.x(), bu.dot(u)), kPi / 2));
+    if (off > rad(2) && a < 1.01 * area) {
+      o.x = x0;
+      o.length = o.unsquared_length, o.width = o.unsquared_width;
+      double lo[2], hi[2];
+      const Eigen::Vector2d w = u0.normalized(), wv(-w.y(), w.x());
+      extents(w, lo, hi);
+      const Eigen::Vector2d mid = w * ((lo[0] + hi[0]) / 2) + wv * ((lo[1] + hi[1]) / 2);
+      o.centre = b.origin.Translated(e1 * mid.x() + e2 * mid.y());
+      return o;
+    }
+  }
+  o.squared = true;
   const Eigen::Vector2d bv(-bu.y(), bu.x());
   const Eigen::Vector2d mid = bu * ((blo[0] + bhi[0]) / 2) + bv * ((blo[1] + bhi[1]) / 2);
   o.centre = b.origin.Translated(e1 * mid.x() + e2 * mid.y());

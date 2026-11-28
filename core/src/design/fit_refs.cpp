@@ -111,7 +111,7 @@ json quality_json(const scanfit::Quality& q) { return q.to_json(); }
 json outline_json(const scanfit::ScanOutline& o) {
   auto r2 = [](double v) { return std::round(v * 100) / 100; };
   return {{"size_mm", json::array({r2(o.length), r2(o.width)})}, {"turn_deg", r2(o.turn_deg)},
-          {"unsquared_mm", json::array({r2(o.unsquared_length), r2(o.unsquared_width)})}};
+          {"unsquared_mm", json::array({r2(o.unsquared_length), r2(o.unsquared_width)})}, {"squared", o.squared}};
 }
 
 // The fit computed now: a result in the body's coordinates when there is a body, else in world coordinates.

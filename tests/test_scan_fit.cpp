@@ -499,7 +499,13 @@ TEST(scan_axes_of_an_organic_blob) {
   CHECK(angle_to(axes.bases[2].normal, tilted(gp_Dir(0, 1, 0))) < 1);
   CHECK(angle_to(axes.bases[4].normal, tilted(gp_Dir(1, 0, 0))) < 1);
   CHECK(axes.bases[0].kind == "pca");
+  // An oval outline has no one clear rectangle (its least one turns with the tessellation and the noise): X stays the
+  // longest direction, not squared.
+  const scanfit::ScanOutline o = scanfit::scan_outline(*m, axes, 0);
   const auto turns = scanfit::scan_turns(*m, axes, 0);
+  std::printf("    blob outline %.2f x %.2f, squared %d, turn %.3f deg, X off %.3f deg\n", o.length, o.width, int(o.squared), o.turn_deg, angle_to(turns[0], tilted(gp_Dir(1, 0, 0))));
+  CHECK(!o.squared);
+  CHECK(o.turn_deg == 0);
   CHECK(angle_to(turns[0], tilted(gp_Dir(1, 0, 0))) < 1);
   const scanfit::ScanFrame f = scanfit::scan_frame(*m, axes, 0, 0, "auto");
   CHECK(f.origin.Distance(tilted(gp_Pnt(0, 0, 0))) < 0.5);  // the box centre
@@ -583,6 +589,7 @@ TEST(square_a_scan_to_its_outline) {
   std::printf("    outline %.2f x %.2f, turn %.2f deg; unsquared %.2f x %.2f, off %.2f deg\n", o.length, o.width, o.turn_deg, o.unsquared_length,
               o.unsquared_width, angle_to(walls[0], tilted(gp_Dir(1, 0, 0))));
   CHECK(angle_to(walls[0], tilted(gp_Dir(1, 0, 0))) > 1);  // what X was before
+  CHECK(o.squared);
   CHECK(angle_to(o.x, tilted(gp_Dir(1, 0, 0))) < 0.15);
   CHECK(std::fabs(o.length - 140) < 0.4);
   CHECK(std::fabs(o.width - 64) < 0.4);
@@ -611,6 +618,7 @@ TEST(square_a_scan_to_its_outline) {
   CHECK_NEAR(outline["size_mm"][0].get<double>(), 140, 0.4);
   CHECK_NEAR(outline["size_mm"][1].get<double>(), 64, 0.4);
   CHECK(std::fabs(outline["turn_deg"].get<double>()) > 1);
+  CHECK(outline.value("squared", false));
   CHECK(report["align_inputs"]["from_plane"]["fit"].value("x", "") == "outline");
   const json r = commands::run("feature", {{"kind", "align"}, {"inputs", report["align_inputs"]}}, &doc);
   CHECK(!r.contains("error"));
@@ -772,6 +780,34 @@ TEST(fitted_axes_and_points_as_references) {
   CHECK(kept["plane"].contains("result") && kept["plane2"].contains("result"));
   // A fit on a solid body is refused with a reason.
   CHECK_THROWS(design::fit_reference(doc, after, {{"fit", {{"body", "nope"}, {"seed", 0}}}}, "plane"));
+}
+
+
+TEST(scan_axes_of_a_stepped_sheet_cloud) {
+  // A 60 x 40 sheet of points 0.5 mm apart with a 5 mm step at x = 36, no noise: the larger level is the dominant plane
+  // (base 0, facing out of the material), the other level next; with normals from the file, without, and unusable ones.
+  for (const std::string normals : {"given", "none", "zero"}) {
+    scanfit::FitMesh m;
+    gp_XYZ sum(0, 0, 0);
+    for (double x = 0; x <= 60; x += 0.5)
+      for (double y = 0; y <= 40; y += 0.5) {
+        m.nodes.emplace_back(x, y, x < 36 ? 0 : 5);
+        sum += m.nodes.back().XYZ();
+        if (normals != "none") m.node_normal.emplace_back(0, 0, normals == "given" ? 1 : 0);
+      }
+    m.centroid = gp_Pnt(sum / double(m.nodes.size()));
+    m.diagonal = std::sqrt(60.0 * 60 + 40 * 40 + 5 * 5);
+    const scanfit::ScanAxes axes = scanfit::scan_axes(m);
+    std::printf("    stepped sheet (%s normals): method %s, base 0 %s at z %.4f, normal %.4f %.4f %.4f\n", normals.c_str(), axes.method.c_str(),
+                axes.bases[0].kind.c_str(), axes.bases[0].origin.Z(), axes.bases[0].normal.X(), axes.bases[0].normal.Y(), axes.bases[0].normal.Z());
+    CHECK(axes.method == "plane");
+    CHECK(axes.bases.size() >= 2);
+    CHECK(axes.bases[0].kind == "plane" && axes.bases[1].kind == "plane");
+    CHECK(std::fabs(axes.bases[0].origin.Z()) < 1e-6);
+    CHECK(axes.bases[0].normal.Z() < -0.999999);
+    CHECK(std::fabs(axes.bases[1].origin.Z() - 5) < 1e-6);
+    CHECK(axes.bases[1].normal.Z() > 0.999999);
+  }
 }
 
 CHECK_MAIN()
