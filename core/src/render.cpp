@@ -568,10 +568,14 @@ json colour_by_height(const Document& doc, const Scene& scene, const RenderOptio
       if (it.point_normals.size() == it.points.size())
         for (size_t i = 0; i < count; ++i) fm.node_normal.emplace_back(it.point_normals[3 * i], it.point_normals[3 * i + 1], it.point_normals[3 * i + 2]);
       fm.centroid = gp_Pnt(sum / double(count));
-      gp_XYZ lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
-      for (const auto& p : fm.nodes)
-        for (int c = 1; c <= 3; ++c) lo.SetCoord(c, std::min(lo.Coord(c), p.Coord(c))), hi.SetCoord(c, std::max(hi.Coord(c), p.Coord(c)));
-      fm.diagonal = (hi - lo).Modulus();
+      // The box from the first point on, in plain doubles: from +-1e300 a coordinate left unset made the diagonal
+      // infinite (seen on macOS), and with it every point an inlier of every plane.
+      double lo[3] = {fm.nodes[0].X(), fm.nodes[0].Y(), fm.nodes[0].Z()}, hi[3] = {lo[0], lo[1], lo[2]};
+      for (const auto& p : fm.nodes) {
+        const double c[3] = {p.X(), p.Y(), p.Z()};
+        for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], c[k]), hi[k] = std::max(hi[k], c[k]);
+      }
+      fm.diagonal = std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) + (hi[1] - lo[1]) * (hi[1] - lo[1]) + (hi[2] - lo[2]) * (hi[2] - lo[2]));
       const scanfit::ScanAxes axes = scanfit::scan_axes(fm);
       if (axes.bases.empty()) continue;
       const scanfit::ScanBase& b = axes.bases.front();

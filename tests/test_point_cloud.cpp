@@ -23,7 +23,6 @@
 #include "opad/geometry.hpp"
 #include "opad/point_cloud.hpp"
 #include "opad/render.hpp"
-#include "opad/scan_fit.hpp"
 #include "opad/step_io.hpp"
 
 using namespace opad;
@@ -684,12 +683,6 @@ TEST(clouds_render_as_points_and_by_height) {
   const Scene s = resolve(d);
   const std::string body = s.all_bodies().front();
   CHECK(pc::from_shape(node_world_shape(d, s, body), true, 1000).size() <= 1000u);  // a sample of a big cloud
-  {  // the normals as the body store gives them back (the file's are 0 0 1)
-    const pc::Points back = pc::from_shape(node_world_shape(d, s, body), true);
-    std::printf("    stored cloud: %zu points, normals %s", back.size(), back.has_normals() ? "" : "none");
-    if (back.has_normals()) std::printf("%.3f %.3f %.3f", back.normals[0], back.normals[1], back.normals[2]);
-    std::printf("\n");
-  }
   RenderOptions o;
   o.width = 320, o.height = 200, o.supersample = 1;
   o.camera = Camera::preset("top");
@@ -703,32 +696,7 @@ TEST(clouds_render_as_points_and_by_height) {
   // By height: the cloud's own base (the larger flat, z = 0) is blue, the step red; the range and plane reported.
   o.cloud_color = "height";
   json heights;
-  // The dominant-plane search traced (macOS fell back to the principal axes here while the same sheet passed in
-  // test_scan_fit): the render's own call, and the same points handed to scan_axes directly.
-#ifdef _WIN32
-  _putenv_s("OPAD_SCANFIT_DEBUG", "1");
-#else
-  setenv("OPAD_SCANFIT_DEBUG", "1", 1);
-#endif
-  {
-    const pc::Points back = pc::from_shape(node_world_shape(d, s, body), true);
-    scanfit::FitMesh fm;
-    gp_XYZ sum(0, 0, 0);
-    for (size_t i = 0; i < back.size(); ++i) {
-      fm.nodes.emplace_back(back.xyz[3 * i], back.xyz[3 * i + 1], back.xyz[3 * i + 2]);
-      sum += fm.nodes.back().XYZ();
-      if (back.has_normals()) fm.node_normal.emplace_back(back.normals[3 * i], back.normals[3 * i + 1], back.normals[3 * i + 2]);
-    }
-    fm.centroid = gp_Pnt(sum / double(back.size()));
-    fm.diagonal = std::sqrt(60.0 * 60 + 40 * 40 + 5 * 5);
-    std::printf("    the stored points directly: method %s\n", scanfit::scan_axes(fm).method.c_str());
-  }
   const Image h = render_scene(d, s, o, &heights);
-#ifdef _WIN32
-  _putenv_s("OPAD_SCANFIT_DEBUG", "");
-#else
-  unsetenv("OPAD_SCANFIT_DEBUG");
-#endif
   CHECK(heights.contains("cloud_height"));
   const json& ch = heights["cloud_height"];
   std::printf("    by height: %.3f .. %.3f mm, %s\n", ch["range_mm"][0].get<double>(), ch["range_mm"][1].get<double>(),
@@ -736,6 +704,7 @@ TEST(clouds_render_as_points_and_by_height) {
   CHECK_NEAR(ch["range_mm"][0].get<double>(), 0, 0.01);
   CHECK_NEAR(ch["range_mm"][1].get<double>(), 5, 0.01);
   CHECK_EQ(ch["planes"].size(), 1u);
+  CHECK_EQ(ch["planes"][0]["method"].get<std::string>(), "plane");  // the larger level, not the principal axes
   const uint8_t* low = h.px(96, 100);
   const uint8_t* high = h.px(272, 100);
   CHECK(low[2] > low[0] + 80);
