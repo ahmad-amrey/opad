@@ -168,7 +168,12 @@ void AgentBridge::save(const std::shared_ptr<Session>& session,const json& args,
 }
 void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string name,json args,const std::string& receipt){
   if(m_busy){fail(session,"busy",tr("An agent operation is still running. Wait or use Stop."),receipt);return;}
-  const bool write=live_mutation(name,args),preview=args.value("preview",false);const auto transaction=args.value("transaction","");
+  const auto transaction=args.value("transaction","");
+  // joint_set preview=true is a read that needs no revision or request id; with edit access and outside a transaction its
+  // pose is also staged on a copy, as a write's preview is: preview_id renders it (viewport_image) and preview_commit applies it.
+  const bool stagedPose=name=="joint_set" && args.value("preview",false) && transaction.empty() && canEdit() && !editorBusy() &&
+                        !(m_prepared && m_prepared->transaction);
+  const bool write=live_mutation(name,args) || stagedPose,preview=args.value("preview",false);
   const auto previewId=args.value("preview_id","");
   if(!previewId.empty() && (!m_prepared || m_prepared->id!=previewId || m_prepared->owner!=session->socket)){
     fail(session,"unknown_preview",tr("No matching prepared operation belongs to this connection."));return;
@@ -202,7 +207,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       ActivityEvent e;e.kind=ActivityEvent::Group;e.state=ActivityEvent::Staged;e.icon=QStringLiteral("commit");e.client=client;
       e.text=tr("%1's task: %2").arg(client,agentsay::quote(m_prepared->label,48));e.second=tr("Preview, not applied yet · %1").arg(agentsay::stepsSoFar(0));
       m_group=m_staged=m_prepared->event=post(e);emit statusChanged();  // the chip and the viewport's preview chip
-      m_busy=false;m_receipts[receipt].state="staged";reply(session,live_result({{"state","staged"},{"transaction",m_prepared->id},{"base_revision",revision},{"revision",revision},{"lifetime",transaction_policy()}}),receipt);return;
+      m_busy=false;if(!receipt.empty())m_receipts[receipt].state="staged";reply(session,live_result({{"state","staged"},{"transaction",m_prepared->id},{"base_revision",revision},{"revision",revision},{"lifetime",transaction_policy()}}),receipt);return;
     }
     struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta,steps;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;
       agentsay::Sentence said;QStringList stepSentences;QImage thumb,picture;};auto result=std::make_shared<Result>();
@@ -295,6 +300,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         opad::agent::model_batch(*working->doc,args,result->output,options);
       }
       else result->output=opad::commands::run(name,args,working->doc.get());
+      if(name=="joint_set" && preview && result->output.is_object())result->output.erase("id");  // staged: the pose is no op yet
       if(p.cancelled())throw opad::Error("cancelled");
       if(write && name!="export"){
         // Who made these steps, so the timeline can say so after the file is reopened ("Claude · 14:02"); data.by stays "Agent".
@@ -315,6 +321,11 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
             if(const auto* sk=working->scene.sketch(id.get<std::string>());sk)result->output["sketch_id"]=sk->id;
           }
         }
+        // A feature failing downstream by name, kind and id first (it is unresolved too, where only its reason is said).
+        for(const auto& feature:working->scene.features)if(!feature.error.empty()){
+          auto* before=source->scene.feature(feature.id);
+          if(!before || before->error!=feature.error)throw opad::Error("A feature fails after this change: "+opad::agent::describe_feature_error(feature)+"; document unchanged.");
+        }
         if(working->scene.unresolved.size()>source->scene.unresolved.size()){  // name them (gap log #12)
           std::string reasons;int fresh=0;
           for(const auto& u:working->scene.unresolved){
@@ -322,9 +333,6 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
             if(before)continue;if(fresh++<5)reasons+=(reasons.empty()?"":"; ")+(u.reason.empty()?u.op_type+" "+u.op_id:u.reason);
           }
           throw opad::Error("The edit introduced unresolved operations; document unchanged: "+reasons+(fresh>5?" (and "+std::to_string(fresh-5)+" more)":""));
-        }
-        for(const auto& feature:working->scene.features)if(!feature.error.empty()){
-          auto* before=source->scene.feature(feature.id);if(!before || before->error!=feature.error)throw opad::Error(feature.error);
         }
         result->delta=changes(baseline->scene,working->scene);
         result->delta["scope"]=transaction.empty()?"command":"transaction";
@@ -335,7 +343,9 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           const auto* prior=baseline->scene.node(id);if(prior && prior->body_key==node.body_key && baseline->scene.world(id).to_json()==working->scene.world(id).to_json())continue;
           auto shape=opad::node_world_shape(*working->doc,working->scene,id);
           if(node.representation=="solid"){
-            if(!batchValid.count(node.body_key) && !BRepCheck_Analyzer(shape).IsValid())throw opad::Error("Generated body failed solid validation; document unchanged.");++checkedSolids;checked.insert(id);
+            if(!batchValid.count(node.body_key) && !BRepCheck_Analyzer(shape).IsValid())
+              throw opad::Error("Generated body failed solid validation: "+opad::agent::describe_invalid_solid(*working->doc,working->scene,id)+"; document unchanged.");
+            ++checkedSolids;checked.insert(id);
           }
           if(result->delta["references"].size()<100)result->delta["references"].push_back(reference_token(*working->doc,working->scene,opad::Ref::from_json(json{{"body",id},{"kind","body"}})));
           if(preview || !transaction.empty()){
@@ -412,7 +422,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         prepared->said=result->said;
         if(prepared->transaction){prepared->id=m_prepared->id;prepared->label=m_prepared->label;prepared->receipts=m_prepared->receipts;prepared->steps=m_prepared->steps;prepared->event=m_prepared->event;}
         if(name=="model_batch")prepared->steps<<result->stepSentences;else if(prepared->transaction)prepared->steps<<result->said.text;
-        prepared->receipts.push_back(receipt);
+        if(!receipt.empty())prepared->receipts.push_back(receipt);
         clearPrepared(!prepared->transaction,!prepared->transaction);m_prepared=prepared;
         const auto runningRow=std::exchange(m_running,0);
         if(prepared->transaction){  // the step goes under its task's row
@@ -430,7 +440,8 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         }else prepared->event=runningRow;
         if(preview || prepared->transaction){
           if(!result->preview.IsNull())m_viewport->setPreparedPreview(result->preview,result->prs,result->hidden);
-          m_receipts[receipt].state="staged";auto out=live_result({{"state","staged"},{"revision",revision},{prepared->transaction?"transaction":"preview_id",prepared->id},{"result",prepared->result},{"changes",prepared->changes},{"elapsed_ms",started->elapsed()}});
+          if(!receipt.empty())m_receipts[receipt].state="staged";
+          auto out=live_result({{"state","staged"},{"revision",revision},{prepared->transaction?"transaction":"preview_id",prepared->id},{"result",prepared->result},{"changes",prepared->changes},{"elapsed_ms",started->elapsed()}});
           reply(session,std::move(out),receipt);activity(tr("Preview ready; document unchanged."));
         }else commit(session,prepared->id,receipt,revision);
       }else {

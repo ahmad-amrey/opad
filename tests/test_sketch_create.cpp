@@ -1,4 +1,6 @@
 #include "check.hpp"
+#include "opad/core.hpp"
+#include "opad/design/expr.hpp"
 #include "opad/design/sketch_create.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_shapes.hpp"
@@ -247,6 +249,59 @@ TEST(shapes_expand_into_ordinary_geometry) {
   named = false;
   try { expand_sketch_shapes({{"points", opad::json::array({{{"id", 5}, {"x", 0}, {"y", 0}}})}, {"shapes", opad::json::array({{{"kind", "line"}, {"picks", {{0, 0}, {1, 1}}}, {"first_id", 3}}})}}); } catch (const opad::Error& e) { named = std::string(e.what()).find("first_id 3 is already taken; the next free id is 6") != std::string::npos; }
   CHECK(named);
+}
+
+// A live agent's finding: shape picks took numbers only. They and the length options take parameter expressions, as
+// dimensions do, evaluated when the shape is expanded; without the document's parameters an expression is refused.
+TEST(shape_picks_and_lengths_take_parameter_expressions) {
+  const ParamTable params({{"p1", "w", "40 mm", ""}, {"p2", "h", "w / 2", ""}, {"p3", "r", "3 mm", ""}});
+  opad::json id_map;
+  const opad::json geometry = expand_sketch_shapes(
+      {{"shapes", opad::json::array({{{"kind", "rounded_rect"}, {"picks", opad::json::array({opad::json::array({"-w / 2", 0}), opad::json::array({"w / 2", "h"})})}, {"options", {{"radius", "r + 1 mm"}}}},
+                                     {{"kind", "circle"}, {"picks", {{0, "h / 2"}}}, {"options", {{"diameter", "h / 4"}}}}})}},
+      &id_map, &params);
+  const Sketch sk = Sketch::from_json(geometry);
+  double x0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const auto& id : id_map[0]["points"]) {
+    const SkPoint* p = sk.point(id.get<int>());
+    x0 = std::min(x0, p->x), x1 = std::max(x1, p->x), y1 = std::max(y1, p->y);
+  }
+  CHECK_NEAR(x0, -20, 1e-9);
+  CHECK_NEAR(x1, 20, 1e-9);
+  CHECK_NEAR(y1, 20, 1e-9);
+  bool circle = false;
+  for (const auto& id : id_map[1]["entities"])
+    if (const SkEntity* e = sk.entity(id.get<int>()); e && e->type == E::Circle) {
+      circle = true;
+      CHECK_NEAR(e->r, 2.5, 1e-9);
+      CHECK_NEAR(sk.point(e->p[0])->y, 10, 1e-9);
+    }
+  CHECK(circle);
+  const auto regions = sketch_regions(sk, opad::Frame{});
+  double largest = 0;
+  for (const auto& r : regions) largest = std::max(largest, r.area);
+  CHECK_NEAR(largest, 40 * 20 - (4 - M_PI) * 16 - M_PI * 2.5 * 2.5, 1e-4);  // corners of radius 4 and the circle's hole: the expressions were read
+  auto refused = [&](const opad::json& shapes, const ParamTable* table, const std::string& part) {
+    try {
+      expand_sketch_shapes({{"shapes", shapes}}, nullptr, table);
+    } catch (const opad::Error& e) {
+      return std::string(e.what()).find(part) != std::string::npos;
+    }
+    return false;
+  };
+  const opad::json line = opad::json::array({{{"kind", "line"}, {"picks", {{0, 0}, {"w", 0}}}}});
+  CHECK(refused(line, nullptr, "shapes[0].picks[1][0]: the expression \"w\" needs the document's parameters"));
+  CHECK(refused(opad::json::array({{{"kind", "line"}, {"picks", {{0, 0}, {"depth", 0}}}}}), &params, "shapes[0].picks[1][0]"));
+  CHECK(refused(opad::json::array({{{"kind", "line"}, {"picks", {{0, 0}, {true, 0}}}}}), &params, "must be a number (mm) or an expression"));
+  // Through the sketch command: the document's own parameters.
+  opad::Document doc = opad::Document::create();
+  opad::commands::run("param", {{"name", "w"}, {"expr", "30 mm"}}, &doc);
+  const opad::json made = opad::commands::run("sketch", {{"geometry", {{"shapes", line}}}}, &doc);
+  const opad::Scene scene = opad::resolve(doc);
+  const Sketch drawn = Sketch::from_json(scene.sketch(made["sketch_id"].get<std::string>())->geometry);
+  double reach = 0;
+  for (const auto& p : drawn.points) reach = std::max(reach, p.x);
+  CHECK_NEAR(reach, 30, 1e-9);
 }
 
 // TODO 10 B4: text from the built-in font, the same everywhere: closed block letters (profiles to extrude) or

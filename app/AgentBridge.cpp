@@ -253,6 +253,15 @@ void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,cons
           const auto ref=opad::Ref::from_json(v["ref"]);
           if(ref.kind!=opad::Ref::Kind::Body && ref.kind!=opad::Ref::Kind::Point)given->push_back({ref.to_json().dump(),{v["geometry"].get<std::string>(),v["placement"].dump()}});
         }catch(const std::exception&){}
+        // A compact query_entities page: one body token (geometry, placement) for every item's ref.
+        if(v.value("detail","")=="compact" && v.contains("reference") && v["reference"].is_object() && v.contains("items") && v["items"].is_array()){
+          const json& token=v["reference"];
+          if(token.contains("geometry") && token["geometry"].is_string() && token.contains("placement"))
+            for(const auto& item:v["items"])if(item.is_object() && item.contains("ref") && item["ref"].is_string())try{
+              const auto ref=opad::Ref::from_json(item["ref"]);
+              if(ref.kind!=opad::Ref::Kind::Body && ref.kind!=opad::Ref::Kind::Point)given->push_back({ref.to_json().dump(),{token["geometry"].get<std::string>(),token["placement"].dump()}});
+            }catch(const std::exception&){}
+        }
         for(const auto& [key,child]:v.items())tokens(child);
       }else if(v.is_array())for(const auto& child:v)tokens(child);
     };

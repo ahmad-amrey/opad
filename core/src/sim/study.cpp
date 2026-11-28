@@ -265,7 +265,7 @@ StudyRun run_motion(const Document& doc, const Scene& scene, const json& st, con
   if (!tsum.empty()) run.summary["traces"] = tsum;
   // How close the parts come along the way (MCP stress test #21): every frame, not only the poses one would pick by hand.
   if (const json c = st.value("clearance", json(false)); !c.is_null() && c != false) {
-    if (!c.is_boolean() && !c.is_object()) throw Error("a motion study's clearance is true or {\"a\", \"b\", \"ignore\", \"clearance_mm\"}");
+    if (!c.is_boolean() && !c.is_object()) throw Error("a motion study's clearance is true or {\"a\", \"b\", \"ignore\", \"clearance_mm\", \"contact_tolerance_mm\"}");
     run.summary["clearance"] = path_clearance(doc, scene, run, c, progress);
   }
   if (!run.warnings.empty()) run.summary["warnings"] = run.warnings;

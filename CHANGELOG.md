@@ -7,6 +7,15 @@ as a commit log.
 
 ## [Unreleased]
 
+### Added
+- **AI assistants can try a mechanism's pose before keeping it.** A trial joint position is now held as a preview
+  that the assistant can picture and then apply or drop, so you see the pose it is weighing in the 3D view too.
+- **Hard stops are contacts, not collisions.** A motion study's clearance check takes a contact tolerance: faces that
+  touch, or overlap by no more than it, at a designed stop are listed as contacts (and marked as expected when a
+  joint sits at its limit), instead of a collision of a hair's depth that is only meshing noise.
+- **A face's outline in one pick.** Assistants can ask for the outer or inner edges of a face found by its direction and
+  height, arcs included, and get short lists back, so filleting or chamfering an outline takes fewer steps.
+
 ### Changed
 - **Align scan to axes squares a scan to its outline.** X now runs along the long side of the smallest rectangle round
   the scan's outline, seen from above its base, so a part scanned a couple of degrees off measures its true size instead
@@ -17,6 +26,11 @@ as a commit log.
   point cloud or a scan with noisy normals, OPAD now fits the dominant plane from the points' positions instead of
   falling back to the principal axes, and it works on point clouds too. When no plane is found either, the thinnest
   direction stands up.
+- When an assistant's edit is refused because a later feature breaks or a body is not a valid solid, the message now
+  names the feature and says what is wrong with the solid, applied directly as well as previewed.
+- An assistant's batch of steps can pass through a broken state on the way (a cut moved off the part and back): only
+  the end result is checked, and it is still one step to undo.
+- Sketch shapes an assistant draws take parameter expressions for their points and sizes, as dimensions already do.
 
 ### Fixed
 - Pictures that AI assistants take of the model (and `opad-cli render`) now draw point clouds, as points in their own

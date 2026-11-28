@@ -144,29 +144,52 @@ json query_entities(const Document& doc,const Scene& scene,const json& args,cons
   std::vector<design::ParamDef> defs;for(const auto& p:scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
   const json filters=design::evaluate_rule_filters(design::ParamTable(defs),given);
   if(filters.contains("loop") && refKind!=Ref::Kind::Edge)throw Error("a \"loop\" filter picks edges: give kind \"edge\"");
+  if(filters.contains("of_face") && refKind!=Ref::Kind::Edge)throw Error("an \"of_face\" filter picks edges: give kind \"edge\"");
   const double tolerance=args.value("tolerance_mm",1e-5);
+  const std::string detailMode=args.value("detail","full");
+  if(detailMode!="full" && detailMode!="compact")throw Error("detail is \"full\" (every field and a reference token per item, the default) or \"compact\"");
+  const bool compact=detailMode=="compact";
   std::vector<int> recognized;  // TODO 11 UI-97: {"recognized":"hole","diameter":6} narrows the scan to those groups' faces
   if(!recognition.is_null()){if(refKind!=Ref::Kind::Face)throw Error("a \"recognized\" filter picks faces: give kind \"face\"");recognized=recognized_faces(shape,recognition,tolerance,cancelled);}
   if(filters.contains("radius_min") && filters.contains("radius_max") && filters["radius_min"].get<double>()>filters["radius_max"].get<double>())throw Error("radius_min exceeds radius_max");
   auto axis=[](const std::string& a){return a=="x"?0:a=="y"?1:2;};
   if(filters.contains("bounds"))for(int i=0;i<3;++i){const json& lo=filters["bounds"]["min"][i];const json& hi=filters["bounds"]["max"][i];if(!lo.is_null() && !hi.is_null() && lo.get<double>()>hi.get<double>())throw Error("Invalid bounding region");}
-  // What the filters measure beyond inspect_ref's details: an edge's loop (inner: on a hole of a face).
-  const auto describe=filters.contains("loop")?entity_describer(shape,filters):std::function<json(const TopoDS_Shape&)>();
+  // What the filters measure beyond inspect_ref's details: an edge's loop (inner: on a hole of a face), of_face.
+  const auto describe=filters.contains("loop") || filters.contains("of_face")?entity_describer(shape,filters,tolerance):std::function<json(const TopoDS_Shape&)>();
   TopTools_IndexedMapOfShape subs;if(describe)TopExp::MapShapes(shape,TopAbs_EDGE,subs);
+  // compact: the ref and a few rounded numbers per item (about a tenth of the full item); the body's key and placement once,
+  // in reference, for every item (a reference token is that with the item's ref).
+  auto rounded=[](const json& v)->json{
+    if(v.is_number())return std::round(v.get<double>()*1e4)/1e4;
+    if(v.is_array()){json out=json::array();for(const auto& x:v)out.push_back(x.is_number()?json(std::round(x.get<double>()*1e4)/1e4):x);return out;}
+    return v;
+  };
+  auto brief=[&](const json& d){
+    json j={{"ref",d.value("ref","")}};
+    for(const char* key:{"curve","surface","recognized","length","area","radius","start","end","center","normal","direction","point","loop"})
+      if(d.contains(key) && !d[key].is_null() && !(d[key].is_string() && d[key].get<std::string>().empty()))j[key]=rounded(d[key]);
+    return j;
+  };
   size_t count=0;json items=json::array();
   for(int i=0;i<entities;++i){
     if(cancelled && cancelled())throw Error("cancelled");
     if(!recognition.is_null() && !std::binary_search(recognized.begin(),recognized.end(),i))continue;
     Ref ref;ref.body=body;ref.kind=refKind;ref.index=i;
     auto detail=inspect_ref(doc,scene,ref);
-    if(describe && i<subs.Extent())detail["loop"]=describe(subs(i+1)).value("loop","");
+    if(describe && i<subs.Extent()){const json d=describe(subs(i+1));for(const char* key:{"loop","of_face"})if(d.contains(key))detail[key]=d[key];}
     if(!entity_matches(detail,filters,tolerance))continue;  // the same filters rule selectors use (TODO 10 B7)
     if(count>=offset(args) && items.size()<limit(args)){
-      detail["reference"]=reference_token(doc,scene,ref);items.push_back(std::move(detail));
+      if(compact)items.push_back(brief(detail));
+      else {detail["reference"]=reference_token(doc,scene,ref);items.push_back(std::move(detail));}
     }
     ++count;
   }
   auto out=page(std::move(items),count,args);out["body"]=body;out["coordinates"]="world mm";out["scanned"]=entities;
+  if(compact){
+    Ref whole;whole.body=body;whole.kind=Ref::Kind::Body;
+    auto token=reference_token(doc,scene,whole);token.erase("ref");
+    out["detail"]="compact";out["reference"]=token;  // every item's token: {ref, geometry, placement}
+  }
   out["status"]=count==0?"no_match":args.value("ambiguity","all")=="unique" && count!=1?"ambiguous":"matched";
   out["selection_allowed"]=count>0 && (args.value("ambiguity","all")=="all" || count==1);
   // What it matched as a ready rule reference (mcp-eval 2026-10-06): index references broke when a parameter renumbered the
@@ -308,7 +331,7 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   // Lengths may be expressions of the document's parameters ("height", "w / 2 + 1 mm"): a rule follows them.
   const json length={{"type",{"number","string"}}},area={{"type",{"number","string"}}};
   const json corner={{"type","array"},{"items",{{"type",{"number","string","null"}}}},{"minItems",3},{"maxItems",3}};
-  const json filters={{"type","object"},{"additionalProperties",false},{"properties",{
+  json filters={{"type","object"},{"additionalProperties",false},{"properties",{
     {"curve",{{"type","string"},{"enum",{"line","circle","ellipse","hyperbola","parabola","bezier","bspline","offset","other"}}}},
     {"surface",{{"type","string"},{"enum",{"plane","cylinder","cone","sphere","torus","bezier","bspline","revolution","extrusion","offset","other"}}}},
     {"parallel_to",axis},{"normal",{{"type","string"},{"enum",{"+x","-x","+y","-y","+z","-z"}}}},
@@ -316,11 +339,14 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
     {"at_plane",{{"type","object"},{"additionalProperties",false},{"properties",{{"axis",axis},{"value",length}}},{"required",{"axis","value"}}}},
     {"bounds",{{"type","object"},{"additionalProperties",false},{"properties",{{"min",corner},{"max",corner}}},{"required",{"min","max"}}}},
     {"bounds_mode",{{"type","string"},{"enum",{"inside","intersects","outside"}},{"default","inside"}}},
-    {"loop",{{"type","string"},{"enum",{"inner","outer"}}}}
+    {"loop",{{"type","string"},{"enum",{"inner","outer"}}}},
+    {"of_face",{{"type",{"integer","object"}},{"description","Edges of these faces (index or face filters); loop is then theirs"}}}
   }}};
-  add({"query_entities","Paged geometric selection with evidence and current reference tokens. Filters are ANDed in world mm. at_plane selects entities whose entire bounding box lies on an axis-aligned plane; parallel_to matches straight edges; bounds requires full containment (bounds_mode: intersects, outside; null = open side); loop inner: edges on a hole of a face. Lengths may be parameter expressions. unique ambiguity mode never silently chooses among matches. Rerun after regeneration.",bounded({
+  filters["properties"]["bounds_mode"]["enum"].push_back("not_inside");
+  add({"query_entities","Paged geometric selection with evidence and current reference tokens. Filters are ANDed in world mm. at_plane selects entities whose entire bounding box lies on an axis-aligned plane; parallel_to matches straight edges; bounds requires full containment (bounds_mode: intersects, outside = wholly out, not_inside = partly out; null = open side); loop inner: edges on a hole of a face; of_face + loop outer: a face's outer edges. detail compact: ref and a few numbers per item. Lengths may be parameter expressions. unique ambiguity mode never silently chooses among matches. Rerun after regeneration.",bounded({
     {"body",{{"type","string"}}},{"kind",{{"type","string"},{"enum",{"edge","face","vertex"}},{"default","edge"}}},{"filters",filters},
-    {"ambiguity",{{"type","string"},{"enum",{"all","unique"}},{"default","all"}}},{"tolerance_mm",{{"type","number"},{"minimum",1e-7},{"maximum",1},{"default",1e-5}}}
+    {"ambiguity",{{"type","string"},{"enum",{"all","unique"}},{"default","all"}}},{"tolerance_mm",{{"type","number"},{"minimum",1e-7},{"maximum",1},{"default",1e-5}}},
+    {"detail",{{"type","string"},{"enum",{"full","compact"}},{"default","full"}}}
   }),false},run([](const Document& d,const Scene& s,const json& a){return agent::query_entities(d,s,a);}));
   add({"entity_details","Exact geometry and paged adjacency with a checked reference token",bounded({{"ref",{{"type",{"string","object"}}}},{"feature",{{"type","string"}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::entity_details(d,s,a);}));
   add({"resolve_reference","Check a reference token, optionally remap only a unique proven geometric match",{{"doc",{{"type","string"}}},{"reference",{{"type","object"},{"required",{"document","ref"}}}},{"remap",{{"type","boolean"},{"default",false}}}},false},run([](const Document& d,const Scene& s,const json& a){return agent::resolve_reference(d,s,a.at("reference"),a.value("remap",false));}));

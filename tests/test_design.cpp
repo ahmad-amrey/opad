@@ -1595,6 +1595,56 @@ TEST(rule_selectors_pick_the_same_edges_after_an_earlier_edit) {
   CHECK(s.unresolved.empty());
 }
 
+// A live agent's findings on query_entities: a face's outer rim had no selector (of_face + loop), "outside" left out an
+// arc reaching into the box (not_inside takes what is not wholly in it), and replies took about 1 KB per edge (compact).
+TEST(query_entities_picks_a_faces_outer_rim_compactly) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "t"}, {"expr", "5 mm"}}, &doc);
+  const std::string body = feature_cmd(doc, "box", {{"length", "40 mm"}, {"width", "30 mm"}, {"height", "t"}})["body_ids"][0];
+  feature_cmd(doc, "fillet", {{"edges", json::array({{{"body", body}, {"kind", "edge"}, {"select", {{"parallel_to", "z"}}}, {"expect", 4}}})}, {"radius", "3 mm"}});
+  feature_cmd(doc, "cylinder", {{"plane", {{"origin", {0, 0, -1}}, {"normal", {0, 0, 1}}}}, {"diameter", "6 mm"}, {"height", "t + 2 mm"},
+                                {"operation", "cut"}, {"targets", json::array({body})}});
+  auto query = [&](const json& filters, const json& more = json::object()) {
+    json args = {{"body", body}, {"kind", "edge"}, {"filters", filters}, {"limit", 100}};
+    for (const auto& [k, v] : more.items()) args[k] = v;
+    return agent::query_entities(doc, resolve(doc), args);
+  };
+  const json top = {{"normal", "+z"}, {"at_plane", {{"axis", "z"}, {"value", "t"}}}};
+  json rim = {{"of_face", top}, {"loop", "outer"}}, hole = {{"of_face", top}, {"loop", "inner"}};
+  CHECK_EQ(query(rim)["total"].get<int>(), 8);  // four lines and four arcs
+  CHECK_EQ(query(hole)["total"].get<int>(), 1);
+  CHECK_EQ(query({{"of_face", top}})["total"].get<int>(), 9);
+  // Bounds modes over the rim, the half x >= 0: the right line and arcs are in it, the long sides reach into it.
+  auto in_half = [&](const char* mode) {
+    json f = rim;
+    f["bounds"] = {{"min", {0, nullptr, nullptr}}, {"max", {nullptr, nullptr, nullptr}}};
+    f["bounds_mode"] = mode;
+    return query(f)["total"].get<int>();
+  };
+  CHECK_EQ(in_half("inside"), 3);
+  CHECK_EQ(in_half("intersects"), 5);
+  CHECK_EQ(in_half("outside"), 3);
+  CHECK_EQ(in_half("not_inside"), 5);
+  // Compact: a ref and a few numbers per item, the body's token once.
+  const json full = query(rim), brief = query(rim, {{"detail", "compact"}});
+  CHECK_EQ(brief["items"].size(), size_t(8));
+  CHECK(brief["items"][0]["ref"].is_string() && !brief["items"][0].contains("reference") && !brief["items"][0].contains("bbox"));
+  CHECK(brief["items"][0].contains("length") && brief["items"][0].contains("start"));
+  CHECK(brief["reference"].contains("geometry") && brief["reference"].contains("placement"));
+  CHECK(brief["items"].dump().size() * 4 < full["items"].dump().size());
+  CHECK_EQ(brief["rule"], full["rule"]);
+  CHECK_THROWS(query(rim, {{"detail", "tiny"}}));
+  CHECK_THROWS(query({{"of_face", {{"loop", "outer"}}}}));
+  CHECK_THROWS(query({{"of_face", {{"normal", "-x"}, {"at_plane", {{"axis", "x"}, {"value", 99}}}}}}));  // no such face
+  // The rule it hands back works as an input, its expression following t.
+  const std::string fillet = feature_cmd(doc, "fillet", {{"edges", json::array({brief["rule"]})}, {"radius", "1 mm"}})["feature_id"];
+  CHECK(resolve(doc).feature(fillet)->error.empty());
+  commands::run("param", {{"name", "t"}, {"expr", "6 mm"}}, &doc);
+  const Scene s = resolve(doc);
+  CHECK(s.feature(fillet)->error.empty());
+  CHECK_EQ(s.feature(fillet)->result["selected"][0]["ordinals"].size(), 8u);
+}
+
 // A rule's values follow the parameters (at_plane "h"), and rules tell a ring's two rims apart: by loop, by length, by
 // a box an edge reaches into (bounds_mode).
 TEST(rule_selectors_take_expressions_loops_lengths_and_bounds_modes) {
