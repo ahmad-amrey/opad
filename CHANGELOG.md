@@ -5,7 +5,20 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
-## [Unreleased]
+## [0.11.0] - 2026-11-27
+
+OPAD now works with 3D scans: open the raw point cloud, line a scan up with the axes from fitted planes and axes, and
+see how far it is from your CAD on a colour map. Solvers install from inside OPAD, and downloads carry their version.
+Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,
+dimensions between lines draw properly, and Sketch fillet says why a corner can't be rounded. Version control keeps each
+design in a folder of its own, with linked files saved by relative paths, and OPAD can offer you development builds
+before they ship.
+Meshes are ready for the printer without another program: scale an STL to size, combine, cut and repair it, then
+export it laid on the bed.
+Working with an AI assistant is calm and readable now: OPAD tells you in plain words what Claude, Codex or another
+AI app looked at and changed, marks its steps in the timeline, and asks you only when it needs you.
+Simulate is now for everyone: pick the question that matches your case, from a picture, and OPAD walks you through it,
+including a new airflow check for ducts and fittings.
 
 ### Added
 - **Prepare STL, OBJ, 3MF and PLY meshes for printing without leaving OPAD.** A new *Mesh* tab in Design has the
@@ -28,45 +41,6 @@ as a commit log.
   joint sits at its limit), instead of a collision of a hair's depth that is only meshing noise.
 - **A face's outline in one pick.** Assistants can ask for the outer or inner edges of a face found by its direction and
   height, arcs included, and get short lists back, so filleting or chamfering an outline takes fewer steps.
-
-### Changed
-- **Align scan to axes squares a scan to its outline.** X now runs along the long side of the smallest rectangle round
-  the scan's outline, seen from above its base, so a part scanned a couple of degrees off measures its true size instead
-  of a few millimetres more on every side. The panel shows the outline's size and how far it turned;
-  *Square to outline* off lines the walls up with X as before. AI assistants get the outline and the turn from
-  `scan_axes` and choose with `x`.
-- **Align scan to axes finds the flat a scan stands on more often.** When the facets' normals show no flat, as on a
-  point cloud or a scan with noisy normals, OPAD now fits the dominant plane from the points' positions instead of
-  falling back to the principal axes, and it works on point clouds too. When no plane is found either, the thinnest
-  direction stands up.
-- When an assistant's edit is refused because a later feature breaks or a body is not a valid solid, the message now
-  names the feature and says what is wrong with the solid, applied directly as well as previewed.
-- An assistant's batch of steps can pass through a broken state on the way (a cut moved off the part and back): only
-  the end result is checked, and it is still one step to undo.
-- Sketch shapes an assistant draws take parameter expressions for their points and sizes, as dimensions already do.
-- **Thin walls say what makes them.** The print check names the two features whose surfaces come too close, a shell
-  against its block or a pocket against a rib, and clicking a thin wall selects both of its sides.
-
-### Fixed
-- Pictures that AI assistants take of the model (and `opad-cli render`) now draw point clouds, as points in their own
-  colours, and can colour them by their height above a plane.
-- **The print check no longer reports sharp edges as thin walls.** Where a pocket comes out of a slanted face, the
-  thin wedge along the edge was listed as a wall; it is left out now.
-
-## [0.11.0] - 2026-11-27
-
-OPAD now works with 3D scans: open the raw point cloud, line a scan up with the axes from fitted planes and axes, and
-see how far it is from your CAD on a colour map. Solvers install from inside OPAD, and downloads carry their version.
-Sketching gets a round of fixes from everyday use: double-click selects connected curves, offsets go to one side,
-dimensions between lines draw properly, and Sketch fillet says why a corner can't be rounded. Version control keeps each
-design in a folder of its own, with linked files saved by relative paths, and OPAD can offer you development builds
-before they ship.
-Working with an AI assistant is calm and readable now: OPAD tells you in plain words what Claude, Codex or another
-AI app looked at and changed, marks its steps in the timeline, and asks you only when it needs you.
-Simulate is now for everyone: pick the question that matches your case, from a picture, and OPAD walks you through it,
-including a new airflow check for ducts and fittings.
-
-### Added
 - **Line up 3D scans and STL meshes.** A scan has no exact faces or edges, so OPAD now fits them: click a mesh where a
   plane or an axis is asked for (Align, Move, a sketch's plane, construction planes and axes) and it fits the flat around
   the click, or a hole's or boss's axis, and says how good the fit is (how far the mesh strays from it, and over how
@@ -160,6 +134,22 @@ including a new airflow check for ducts and fittings.
   freezing the window, and AI assistants get the same numbers from the `deviation` tool.
 
 ### Changed
+- **Align scan to axes squares a scan to its outline.** X now runs along the long side of the smallest rectangle round
+  the scan's outline, seen from above its base, so a part scanned a couple of degrees off measures its true size instead
+  of a few millimetres more on every side. The panel shows the outline's size and how far it turned;
+  *Square to outline* off lines the walls up with X as before. AI assistants get the outline and the turn from
+  `scan_axes` and choose with `x`.
+- **Align scan to axes finds the flat a scan stands on more often.** When the facets' normals show no flat, as on a
+  point cloud or a scan with noisy normals, OPAD now fits the dominant plane from the points' positions instead of
+  falling back to the principal axes, and it works on point clouds too. When no plane is found either, the thinnest
+  direction stands up.
+- When an assistant's edit is refused because a later feature breaks or a body is not a valid solid, the message now
+  names the feature and says what is wrong with the solid, applied directly as well as previewed.
+- An assistant's batch of steps can pass through a broken state on the way (a cut moved off the part and back): only
+  the end result is checked, and it is still one step to undo.
+- Sketch shapes an assistant draws take parameter expressions for their points and sizes, as dimensions already do.
+- **Thin walls say what makes them.** The print check names the two features whose surfaces come too close, a shell
+  against its block or a pocket against a rib, and clicking a thin wall selects both of its sides.
 - **Connecting an AI app is one button.** *AI assistants* lists the AI apps found on this computer, each with one
   Connect button, and then says what is left (restart the app, a first question to ask). For any other AI app, *Copy
   setup message* gives you one message to paste into its chat, and its assistant adds OPAD itself. What the assistant may
@@ -214,6 +204,10 @@ including a new airflow check for ducts and fittings.
   comes back with the 3D view.
 
 ### Fixed
+- Pictures that AI assistants take of the model (and `opad-cli render`) now draw point clouds, as points in their own
+  colours, and can colour them by their height above a plane.
+- **The print check no longer reports sharp edges as thin walls.** Where a pocket comes out of a slanted face, the
+  thin wedge along the edge was listed as a wall; it is left out now.
 - **Updating no longer asks to close OPAD's command-line tool.** Each open session of an AI app connected to OPAD
   (Claude Code, Claude Desktop, Codex) keeps its own `opad-cli` running, so the installer used to list ten or more of
   them to close. It now leaves them running, and those sessions keep their connection; only an open OPAD still has to be
