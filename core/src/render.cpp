@@ -16,6 +16,9 @@
 #include <cctype>
 
 #include "opad/canvas.hpp"
+#include "opad/design/feature.hpp"
+#include "opad/point_cloud.hpp"
+#include "opad/scan_fit.hpp"
 #include "opad/design/sketch_text.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
@@ -151,11 +154,16 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
   // World bounding box and sphere.
   double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
   bool any = false;
+  const std::vector<float> no_positions;
   for (const auto& it : items) {
-    if (!it.mesh) continue;
-    const auto& p = it.mesh->positions;
+    const auto& p = it.mesh ? it.mesh->positions : no_positions;
     for (size_t i = 0; i + 2 < p.size(); i += 3) {
       Vec3 w = it.world.apply({p[i], p[i + 1], p[i + 2]});
+      for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], w[k]); hi[k] = std::max(hi[k], w[k]); }
+      any = true;
+    }
+    for (size_t i = 0; i + 2 < it.points.size(); i += 3) {  // a cloud's points
+      Vec3 w = it.world.apply({it.points[i], it.points[i + 1], it.points[i + 2]});
       for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], w[k]); hi[k] = std::max(hi[k], w[k]); }
       any = true;
     }
@@ -297,11 +305,57 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
       }
     };
 
+    // A cloud's points as round splats, about three quarters of their spacing across on screen (neighbours overlap), at
+    // least a pixel; lit by their normals when they have them.
+    auto splat = [&](const RenderItem& it) {
+      const auto& P = it.points;
+      const size_t count = P.size() / 3;
+      const bool lit = it.point_normals.size() == P.size(), painted = it.point_colors.size() == P.size();
+      const Mat4& m = it.world;
+      const Vec3 unit = m.apply_dir({1, 0, 0});
+      const double scale = std::sqrt(unit[0] * unit[0] + unit[1] * unit[1] + unit[2] * unit[2]);
+      const double spacing = it.point_spacing > 0 ? it.point_spacing * scale : 2 * radius / std::sqrt(std::max<double>(1, static_cast<double>(count)));
+      for (size_t i = 0; i < count; ++i) {
+        const Vec3 w = m.apply({P[3 * i], P[3 * i + 1], P[3 * i + 2]});
+        double sx, sy, z;
+        if (!project(w, sx, sy, z)) continue;
+        const double ppm = b.perspective ? b.focal / z : H / (2 * b.half_h);
+        const double r = std::clamp(0.75 * spacing * ppm, 0.5 * ss, 6.0 * ss);
+        float shade = 0.85f;
+        if (lit) {
+          const Vec3 nw = m.apply_dir({it.point_normals[3 * i], it.point_normals[3 * i + 1], it.point_normals[3 * i + 2]});
+          shade = static_cast<float>(0.32 + 0.68 * std::fabs(dot(norm(V3{nw[0], nw[1], nw[2]}), light)));
+        }
+        const float* c = painted ? &it.point_colors[3 * i] : it.color.data();
+        const float cr = c[0] * shade, cg = c[1] * shade, cb = c[2] * shade;
+        const int cx = static_cast<int>(std::floor(sx)), cy = static_cast<int>(std::floor(sy));
+        const int x0 = std::max(0, static_cast<int>(std::floor(sx - r))), x1 = std::min(W - 1, static_cast<int>(std::ceil(sx + r)));
+        const int y0 = std::max(0, static_cast<int>(std::floor(sy - r))), y1 = std::min(H - 1, static_cast<int>(std::ceil(sy + r)));
+        for (int y = y0; y <= y1; ++y)
+          for (int x = x0; x <= x1; ++x) {
+            const double dx = x + 0.5 - sx, dy = y + 0.5 - sy;
+            if (dx * dx + dy * dy > r * r && !(x == cx && y == cy)) continue;
+            const size_t idx = static_cast<size_t>(y) * W + x;
+            if (z >= zb[idx]) continue;
+            float* px3 = &fb[idx * 3];
+            if (it.opacity >= 1.0f) {
+              zb[idx] = static_cast<float>(z);
+              px3[0] = cr, px3[1] = cg, px3[2] = cb;
+            } else {
+              px3[0] = px3[0] * (1 - it.opacity) + cr * it.opacity;
+              px3[1] = px3[1] * (1 - it.opacity) + cg * it.opacity;
+              px3[2] = px3[2] * (1 - it.opacity) + cb * it.opacity;
+            }
+          }
+      }
+    };
+
     for (int pass = 0; pass < 2; ++pass) {  // opaque first, then transparent
       for (const auto& it : items) {
-        if (!it.mesh) continue;
         bool transparent = it.opacity < 1.0f;
         if ((pass == 0) == transparent) continue;
+        if (!it.points.empty()) splat(it);
+        if (!it.mesh) continue;
         const auto& P = it.mesh->positions;
         const auto& I = it.mesh->indices;
         const auto& N = it.mesh->normals;
@@ -480,6 +534,83 @@ void draw_label(Image& img, const std::string& text, int x, int y, int h) {
     }
 }
 
+// Point clouds coloured by their height above a plane: the one given (world), else each cloud's own dominant plane
+// (scan_axes' base 0 on the drawn points, heights into the material). One range for all of them: the 2nd to 98th
+// percentile, so a few stray points do not wash the colours out.
+json colour_by_height(const Document& doc, const Scene& scene, const RenderOptions& opt, std::vector<RenderItem>& items,
+                      const std::vector<std::string>& bodies) {
+  const bool given = !opt.height_plane.is_null();
+  auto unit = [](Vec3 v) {
+    const double l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    return l > 0 ? Vec3{v[0] / l, v[1] / l, v[2] / l} : Vec3{0, 0, 1};
+  };
+  Vec3 go{0, 0, 0}, gn{0, 0, 1};
+  if (given) {
+    const Frame f = design::resolve_plane(doc, scene, opt.height_plane);
+    go = f.origin, gn = unit(f.normal());
+  }
+  json planes = json::array();
+  std::vector<std::vector<float>> heights(items.size());
+  std::vector<float> sample;
+  for (size_t k = 0; k < items.size(); ++k) {
+    RenderItem& it = items[k];
+    if (it.points.empty()) continue;
+    const size_t count = it.points.size() / 3;
+    Vec3 o = go, nrm = gn;
+    if (!given) {
+      scanfit::FitMesh fm;
+      fm.nodes.reserve(count);
+      gp_XYZ sum(0, 0, 0);
+      for (size_t i = 0; i < count; ++i) {
+        fm.nodes.emplace_back(it.points[3 * i], it.points[3 * i + 1], it.points[3 * i + 2]);
+        sum += fm.nodes.back().XYZ();
+      }
+      if (it.point_normals.size() == it.points.size())
+        for (size_t i = 0; i < count; ++i) fm.node_normal.emplace_back(it.point_normals[3 * i], it.point_normals[3 * i + 1], it.point_normals[3 * i + 2]);
+      fm.centroid = gp_Pnt(sum / double(count));
+      gp_XYZ lo(1e300, 1e300, 1e300), hi(-1e300, -1e300, -1e300);
+      for (const auto& p : fm.nodes)
+        for (int c = 1; c <= 3; ++c) lo.SetCoord(c, std::min(lo.Coord(c), p.Coord(c))), hi.SetCoord(c, std::max(hi.Coord(c), p.Coord(c)));
+      fm.diagonal = (hi - lo).Modulus();
+      const scanfit::ScanAxes axes = scanfit::scan_axes(fm);
+      if (axes.bases.empty()) continue;
+      const scanfit::ScanBase& b = axes.bases.front();
+      o = it.world.apply({b.origin.X(), b.origin.Y(), b.origin.Z()});
+      nrm = unit(it.world.apply_dir({-b.normal.X(), -b.normal.Y(), -b.normal.Z()}));  // into the material: heights above the base
+      planes.push_back({{"body", bodies[k]}, {"origin", {o[0], o[1], o[2]}}, {"normal", {nrm[0], nrm[1], nrm[2]}}, {"method", axes.method}, {"rms_mm", b.q.rms}});
+    }
+    auto& h = heights[k];
+    h.resize(count);
+    const size_t stride = std::max<size_t>(1, count / 200000);
+    for (size_t i = 0; i < count; ++i) {
+      const Vec3 w = it.world.apply({it.points[3 * i], it.points[3 * i + 1], it.points[3 * i + 2]});
+      h[i] = static_cast<float>((w[0] - o[0]) * nrm[0] + (w[1] - o[1]) * nrm[1] + (w[2] - o[2]) * nrm[2]);
+      if (i % stride == 0) sample.push_back(h[i]);
+    }
+  }
+  if (sample.empty()) return json();
+  auto at = [&](double q) {
+    const size_t i = std::min(sample.size() - 1, static_cast<size_t>(q * static_cast<double>(sample.size() - 1)));
+    std::nth_element(sample.begin(), sample.begin() + static_cast<std::ptrdiff_t>(i), sample.end());
+    return static_cast<double>(sample[i]);
+  };
+  double lo = at(0.02), hi = at(0.98);
+  if (hi - lo < 1e-6) lo -= 0.5, hi += 0.5;
+  for (size_t k = 0; k < items.size(); ++k) {
+    if (heights[k].empty()) continue;
+    auto& c = items[k].point_colors;
+    c.resize(heights[k].size() * 3);
+    for (size_t i = 0; i < heights[k].size(); ++i) {
+      const auto rgb = result_color((heights[k][i] - lo) / (hi - lo));
+      c[3 * i] = rgb[0], c[3 * i + 1] = rgb[1], c[3 * i + 2] = rgb[2];
+    }
+  }
+  json out = {{"range_mm", {lo, hi}}};
+  if (given) out["plane"] = {{"origin", {go[0], go[1], go[2]}}, {"normal", {gn[0], gn[1], gn[2]}}};
+  else out["planes"] = planes;
+  return out;
+}
+
 // Several fitted preset views in one image, each labelled with its name (B9).
 Image render_grid(const Document& doc, const Scene& scene, const RenderOptions& opt, json* receipt) {
   const int n = static_cast<int>(opt.views.size());
@@ -541,6 +672,7 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
   std::vector<Mesh> meshes;
   meshes.reserve(bodies.size());
   std::vector<RenderItem> items;
+  std::vector<std::string> itemBodies;
   int id = 1;
   for (const auto& bid : bodies) {
     const Node* n = scene.node(bid);
@@ -549,9 +681,20 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
     if (!opt.ignore_visibility && !scene.effectively_visible(bid)) continue;
     if(n->opacity<=0)continue;
     if(receipt)(*receipt)["visible_ids"].push_back(bid);
-    meshes.push_back(tessellate_body(doc, n->body_key, opt.tolerance));
+    const bool cloud = n->representation == "points";
+    meshes.push_back(cloud ? Mesh{} : tessellate_body(doc, n->body_key, opt.tolerance));
     RenderItem it;
-    it.mesh = &meshes.back();
+    it.mesh = cloud ? nullptr : &meshes.back();
+    if (cloud) {  // its points (a sample of a big scan), never tessellated: it has no triangles
+      cloud::Points pts = cloud::from_shape(body_shape(doc, n->body_key), true, opt.cloud_budget);
+      it.point_spacing = pts.size() > 1 ? cloud::spacing(pts) : 0;
+      if (pts.has_normals()) it.point_normals = std::move(pts.normals);
+      if (pts.colored()) {
+        it.point_colors.resize(pts.rgb.size());
+        for (size_t k = 0; k < pts.rgb.size(); ++k) it.point_colors[k] = pts.rgb[k] / 255.0f;
+      }
+      it.points = std::move(pts.xyz);
+    }
     it.world = scene.world(bid);
     it.color = {static_cast<float>(n->color[0]), static_cast<float>(n->color[1]), static_cast<float>(n->color[2])};
     it.opacity = static_cast<float>(n->opacity);
@@ -564,7 +707,7 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
     // B9: edges and highlights.
     bool mine = false;
     for (const auto& h : opt.highlight) mine |= h.body == bid;
-    if (opt.edge_lines || mine) {
+    if (!cloud && (opt.edge_lines || mine)) {
       const auto polylines = edge_polylines(body_shape(doc, n->body_key), opt.tolerance);
       if (opt.edge_lines) it.lines = polylines;
       for (const auto& h : opt.highlight) {
@@ -575,12 +718,19 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
       }
     }
     items.push_back(it);
+    itemBodies.push_back(bid);
   }
+  const json heights = opt.cloud_color == "height" ? colour_by_height(doc, scene, opt, items, itemBodies) : json();
   for (const auto& e : opt.extra) {
     items.push_back(e);
     items.back().id = id++;
   }
-  return render_items(items, opt, receipt);
+  Image img = render_items(items, opt, receipt);
+  if (heights.is_object() && heights.contains("range_mm")) {
+    draw_legend(img, "HEIGHT", heights["range_mm"][0].get<double>(), heights["range_mm"][1].get<double>(), "mm");
+    if (receipt) (*receipt)["cloud_height"] = heights;
+  }
+  return img;
 }
 
 std::array<float, 3> result_color(double t) {

@@ -1225,7 +1225,7 @@ void DesignController::refitPick(const QString& input, opad::json ref, bool axis
 void DesignController::startAlignScan(const std::string& body) {
   const opad::Node* n = m_doc->node(body);
   if (!n || n->kind != opad::Node::Kind::Body) return;
-  const opad::json from = {{"fit", {{"body", body}, {"of", "scan_axes"}, {"base", 0}, {"turn", 0}, {"origin", "auto"}}}};
+  const opad::json from = {{"fit", {{"body", body}, {"of", "scan_axes"}, {"base", 0}, {"turn", 0}, {"origin", "auto"}, {"x", "outline"}}}};
   startFeature("align", {{"bodies", opad::json::array({{{"body", body}, {"kind", "body"}}})},
                          {"from", "plane"},
                          {"from_plane", from},

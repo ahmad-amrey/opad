@@ -198,6 +198,8 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(name=="render"){
     properties["fit"]=type("boolean");properties["ignore_visibility"]=type("boolean");properties["supersample"]={{"type","integer"},{"minimum",1},{"maximum",4}};
     for(const char* key:{"width","height"})properties[key]={{"type","integer"},{"minimum",16},{"maximum",4096}};
+    properties["cloud_color"]=choice({"own","height"});properties["cloud_color"]["description"]=command.args.at("cloud_color");
+    properties["height_plane"]={{"type","object"},{"description",command.args.at("height_plane")}};
   }
   if(live)properties.erase("save");
   auto out=object(properties,required);

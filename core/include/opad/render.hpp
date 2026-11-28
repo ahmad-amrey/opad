@@ -41,6 +41,11 @@ struct RenderItem {
   std::shared_ptr<const Picture> picture;
   // A result map (sim/fea.hpp): RGB per mesh vertex, blended across each triangle; empty: the item's colour.
   std::vector<float> vertex_colors;
+  // A point cloud (local xyz, mesh may be null), drawn as round splats sized from `point_spacing` (mm between neighbours of
+  // these points) with the depth test: lit by `point_normals` when given, coloured by `point_colors` (RGB 0..1 each; empty:
+  // the item's colour). Splats never outline (opt.edges): the gaps between them would.
+  std::vector<float> points, point_normals, point_colors;
+  double point_spacing = 0;
 };
 
 struct Camera {
@@ -74,6 +79,13 @@ struct RenderOptions {
   // Drawn besides the scene's bodies (a result map's surface; the caller keeps their meshes), and bodies left out.
   std::vector<RenderItem> extra;
   std::vector<std::string> hide;
+  // Point clouds (drawn as splats, at most `cloud_budget` points each): "" their own colours, "height" coloured by the
+  // signed distance from `height_plane` (any plane input: {"base": "xy"}, a face, a fit...; null = each cloud's own
+  // dominant plane, scan_axes' base 0, heights measured into the material) with a legend; the receipt's "cloud_height"
+  // says the range and the planes.
+  std::string cloud_color;
+  json height_plane;
+  size_t cloud_budget = 2'000'000;
 };
 
 Image render_items(const std::vector<RenderItem>& items, const RenderOptions& opt, json* receipt = nullptr);

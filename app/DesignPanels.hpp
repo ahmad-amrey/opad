@@ -186,7 +186,7 @@ class FeaturePanel : public QWidget {
     QLineEdit* fitTolerance = nullptr;
     QComboBox* fitKind = nullptr;
     QPushButton *fitBase = nullptr, *fitTurn = nullptr;
-    QCheckBox* fitCentre = nullptr;
+    QCheckBox *fitCentre = nullptr, *fitSquare = nullptr;
   };
   QString m_nextPlane;
   QLabel* m_resultNote = nullptr;

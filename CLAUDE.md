@@ -148,7 +148,10 @@ into lines. Commands `cloud` (read: info/points/region/slice) and `cloud_sketch`
 ply/xyz/pts/csv/e57. App: `BodyPrs::buildCloud` (worker) draws a stride sample of `cloudBudget` (8M) points, picks through
 `CloudPickSet` (runs of 32 points in Morton order under one BVH: mode 0 and the Vertex filter as `meshGroups[2]`, no owner
 per point); `Viewport::updateClouds` (from `refineVisible`) sets point sizes from spacing/pixel and, zoomed in, draws the
-visible part at full density (`setDisplayPrs`); `setCloudColorMode` (view/cloudColor); `setCloudColours(node, colours)`
+visible part at full density (`setDisplayPrs`); `setCloudColorMode` (view/cloudColor); headless renders (`render_scene`, viewport_image) draw a cloud as splats
+(`RenderItem::points`, a `from_shape(shape, true, most)` stride sample of `cloud_budget` 2M, radius 0.75 spacing on screen,
+never outlined), `cloud_color: "height"` against `height_plane` or the cloud's own `scan_axes` base 0 (2-98 percentile,
+legend, receipt `cloud_height`); `setCloudColours(node, colours)`
 (one 0xAARRGGBB a point, alpha 0 none; null clears) a display-only overlay per node (deviation maps), redrawn per node
 through every level-of-detail pass. Select points: lasso/box (NDC
 polygon, `cloud::in_polygon` on a worker), brush (spheres at navigation picks), overlay in Topmost; Keep/Delete = one
@@ -470,8 +473,15 @@ raw on clean CAD ones) plus "on the region's plane" for facets the noise turned;
 cylinder fitted so far (corner distances, normals square to the axis), so neither noise nor a rim stops or leaks them.
 `Quality.grade` (rms / extent, inlier share) tells a curved region taken for a plane. `scan_axes`: mean shift of the
 area-weighted (averaged) normals from a cube-map histogram, each direction's heaviest offset band fitted as a base, bases
-the scan lies behind first; walls by a doubled-angle histogram in the base plane, quarter turns offered; no flat over 4% =
-PCA. Align's `frame` input maps the From frame onto the To one. UI: a mesh triangle (face or edge pick) in the plane
+the scan lies behind first; walls by a doubled-angle histogram in the base plane, quarter turns offered. No flat over 4%
+(a cloud always: no facets) = `dominant_planes` (method "plane", base `kind` "plane"): a sample of 200k (triangle middles
+or points; a cloud's normals from its file, else local PCA over 12 neighbours), axial mean shift of the normals (20 deg),
+per mode the densest band, `fit_plane`, grown 3 robust sigmas at a time; kept when 5% of the sample, a fifth of the
+diagonal and flat (`sagitta`: a quadric's bow over the half extent within its rms, so a dome or an ellipsoid's cap is
+refused); then the principal bases; neither = method "pca", the least spread first (explicitly sorted). X: `x` "outline"
+(default; `outline_of`: nodes in the base plane, Akl-Toussaint octagon filter, monotone-chain hull, the minimum-area
+rectangle on a hull edge, long side as X, `turn_deg` from the walls' X) or "walls" (the old turns). `OPAD_SCANFIT_DEBUG=1`
+traces each dominant-plane candidate. Align's `frame` input maps the From frame onto the To one. UI: a mesh triangle (face or edge pick) in the plane
 picker or an axis input becomes a fit (`fitpick::fromPick`), a box of triangles `fromTriangles`, the picker's Fit to
 points `fromPoints`; `DesignController::refitPick` fits on a worker and the panel's fit row (tolerance, kind, Next base /
 Next X / Box centre) asks again; the preview waits for the fit (`FeaturePanel::complete`). `design.alignScan` = Align with

@@ -5,6 +5,23 @@ notes when the version reaches `main` (docs/releasing.md). Changes merged into `
 `## [Unreleased]`, which each development build shows as its notes. Entries are written for the people using OPAD, not
 as a commit log.
 
+## [Unreleased]
+
+### Changed
+- **Align scan to axes squares a scan to its outline.** X now runs along the long side of the smallest rectangle round
+  the scan's outline, seen from above its base, so a part scanned a couple of degrees off measures its true size instead
+  of a few millimetres more on every side. The panel shows the outline's size and how far it turned;
+  *Square to outline* off lines the walls up with X as before. AI assistants get the outline and the turn from
+  `scan_axes` and choose with `x`.
+- **Align scan to axes finds the flat a scan stands on more often.** When the facets' normals show no flat, as on a
+  point cloud or a scan with noisy normals, OPAD now fits the dominant plane from the points' positions instead of
+  falling back to the principal axes, and it works on point clouds too. When no plane is found either, the thinnest
+  direction stands up.
+
+### Fixed
+- Pictures that AI assistants take of the model (and `opad-cli render`) now draw point clouds, as points in their own
+  colours, and can colour them by their height above a plane.
+
 ## [0.11.0] - 2026-11-27
 
 OPAD now works with 3D scans: open the raw point cloud, line a scan up with the axes from fitted planes and axes, and

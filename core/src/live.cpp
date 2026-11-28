@@ -145,6 +145,8 @@ const json& live_tools() {
   render["edge_lines"]={{"type","boolean"},{"default",false},{"description","Draw the model's edges as dark lines, hidden behind nearer surfaces."}};
   render["highlight"]={{"type","array"},{"items",{{"type","string"}}},{"maxItems",200},{"description","Face and edge references to tint in orange, e.g. [\"<body>/face/3\", \"<body>/edge/7\"]."}};
   render["shading"]={{"type","string"},{"enum",{"flat","smooth"}},{"default","flat"},{"description","smooth shades with vertex normals, so curved surfaces look curved."}};
+  render["cloud_color"]={{"type","string"},{"enum",{"own","height"}},{"default","own"},{"description","Point clouds: own colours, or by height above height_plane (legend)."}};
+  render["height_plane"]={{"type","object"},{"description","Plane input for cloud_color height; default: each cloud's dominant plane. result.cloud_height gives the range."}};
   render["visible_ids"]={{"type","boolean"},{"default",false},{"description","List the rendered bodies' ids (result.visible_ids); by default only visible_count."}};
   json batchSteps=json::array();
   const std::set<std::string> batchCommands={"component","param","sketch","sketch_edit","align_sketch","feature","feature_edit","rename","reparent","appearance","transform","joint"};

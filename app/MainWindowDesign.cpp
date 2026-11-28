@@ -102,20 +102,20 @@ void MainWindow::buildDesignActions() {
   QAction* alignScan = addAction("design.alignScan", tr("Align scan to axes"), "align", QKeySequence(), [this] {
     std::string body;
     for (const auto& id : currentNodeIds())
-      if (const opad::Node* n = m_doc->node(id); n && n->kind == opad::Node::Kind::Body && n->representation == "mesh") {
+      if (const opad::Node* n = m_doc->node(id); n && n->kind == opad::Node::Kind::Body && (n->representation == "mesh" || n->representation == "points")) {
         body = id;
         break;
       }
     if (body.empty()) {
       std::vector<std::string> meshes;
       for (const auto& id : m_doc->scene.all_bodies())
-        if (const opad::Node* n = m_doc->node(id); n && n->representation == "mesh") meshes.push_back(id);
+        if (const opad::Node* n = m_doc->node(id); n && (n->representation == "mesh" || n->representation == "points")) meshes.push_back(id);
       if (meshes.size() == 1) body = meshes.front();
     }
-    if (body.empty()) throw opad::UserHint("Select the mesh body (a scan or an STL) to align first.", true);
+    if (body.empty()) throw opad::UserHint("Select the mesh body or point cloud (a scan or an STL) to align first.", true);
     if (requireEditable()) m_design->startAlignScan(body);
   });
-  alignScan->setProperty("shortcutHint", tr("Stand a scan on XY: its base flat down, a wall along X, centred; Next base and Next X offer the others."));
+  alignScan->setProperty("shortcutHint", tr("Stand a scan on XY: its base flat down, its outline's long side along X, centred; Next base and Next X offer the others."));
   shortcuts::updateTooltip(alignScan);
   addAction("sketch.cancel", tr("Cancel sketch"), "close", QKeySequence(), [this] { m_design->cancelSketch(); });
   addAction("sketch.node",tr("Spline node weights"),"spline",QKeySequence("Alt+W"),[this]{m_design->sketch()->editSplineNode();});

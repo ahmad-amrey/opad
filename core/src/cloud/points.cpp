@@ -103,7 +103,9 @@ size_t point_count(const TopoDS_Shape& shape) {
   return n;
 }
 
-Points from_shape(const TopoDS_Shape& shape, bool attributes) {
+Points from_shape(const TopoDS_Shape& shape, bool attributes) { return from_shape(shape, attributes, 0); }
+
+Points from_shape(const TopoDS_Shape& shape, bool attributes, size_t most) {
   Points out;
   std::vector<std::pair<Handle(Poly_Triangulation), TopLoc_Location>> parts;
   size_t n = 0;
@@ -121,6 +123,8 @@ Points from_shape(const TopoDS_Shape& shape, bool attributes) {
         if (t->UVNode(1).X() >= 0) colour = true;
         scalar = true;
       }
+  const size_t all = n, stride = most && all > most ? (all + most - 1) / most : 1;  // point g is kept when g % stride == 0
+  n = (all + stride - 1) / stride;
   out.xyz.resize(n * 3);
   if (colour) out.rgb.assign(n * 3, 200);
   if (normals && n) out.normals.resize(n * 3);
@@ -134,7 +138,9 @@ Points from_shape(const TopoDS_Shape& shape, bool attributes) {
     OSD_Parallel::For(0, (m + 65535) / 65536, [&](int block) {
       const int a = block * 65536, b = std::min(m, a + 65536);
       for (int i = a; i < b; ++i) {
-        const size_t k = (first + size_t(i)) * 3;
+        const size_t g = first + size_t(i);
+        if (g % stride) continue;
+        const size_t k = g / stride * 3;
         gp_Pnt q = t->Node(i + 1);
         if (moved) q.Transform(trsf);
         out.xyz[k] = float(q.X()), out.xyz[k + 1] = float(q.Y()), out.xyz[k + 2] = float(q.Z());
@@ -144,7 +150,7 @@ Points from_shape(const TopoDS_Shape& shape, bool attributes) {
             const uint32_t v = uint32_t(c.X());
             out.rgb[k] = uint8_t(v >> 16), out.rgb[k + 1] = uint8_t(v >> 8), out.rgb[k + 2] = uint8_t(v);
           }
-          if (scalar) out.scalar[first + size_t(i)] = float(c.Y());
+          if (scalar) out.scalar[g / stride] = float(c.Y());
         }
         if (!out.normals.empty()) {
           gp_Vec3f v;

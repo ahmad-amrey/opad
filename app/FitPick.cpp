@@ -4,6 +4,7 @@
 #include <QLocale>
 
 #include <algorithm>
+#include <cmath>
 
 #include "Units.hpp"
 #include "opad/scene.hpp"
@@ -98,11 +99,19 @@ QString quality(const opad::json& v) {
   if (r.value("of", std::string()) == "scan_axes") {
     parts << tr("base %1 of %2").arg(v["fit"].value("base", 0) % std::max(1, r.value("bases", 1)) + 1).arg(r.value("bases", 1));
     parts << tr("X %1 of %2").arg(v["fit"].value("turn", 0) % std::max(1, r.value("turns", 1)) + 1).arg(r.value("turns", 1));
-    if (r.value("method", std::string()) == "pca") {
+    // The outline squared: the smallest rectangle round it, and how far that turned X (Square to outline).
+    if (r.contains("outline") && r["outline"].contains("size_mm")) {
+      const opad::json& o = r["outline"];
+      parts << tr("outline %1 x %2").arg(units::format(units::Kind::Length, o["size_mm"][0].get<double>()), units::format(units::Kind::Length, o["size_mm"][1].get<double>()));
+      if (v["fit"].value("x", std::string("outline")) == "outline" && std::fabs(o.value("turn_deg", 0.0)) >= 0.01)
+        parts << tr("squared %1").arg(units::format(units::Kind::Angle, o.value("turn_deg", 0.0), 2));
+    }
+    const std::string kind = r.value("kind", r.value("method", std::string()) == "pca" ? std::string("pca") : std::string("flat"));
+    if (kind == "pca") {
       parts << tr("no flats: principal axes");
       return parts.join(QString::fromUtf8(" · "));
     }
-    parts << tr("%1% of the area").arg(qRound(100 * r.value("share", 0.0)));
+    parts << (kind == "plane" ? tr("dominant plane, %1% of the points") : tr("%1% of the area")).arg(qRound(100 * r.value("share", 0.0)));
   }
   parts << tr("rms %1").arg(units::format(units::Kind::Length, q.value("rms_mm", 0.0), 3));
   const int used = q.value("used", 0), total = q.value("total", 0);
