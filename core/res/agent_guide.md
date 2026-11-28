@@ -214,6 +214,26 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
 - Align's `frame` (to a plane): the From plane's frame onto the To plane's, origin, normal and x; `offset` and `angle`
   then lift and turn it about the To normal.
 
+## Meshes for printing
+
+- Mesh bodies (STL, OBJ, 3MF, PLY) are edited as meshes, never turned into solids: `scale` (meshes and solids; `mode`
+  factor | percent | axes (`factor_x/y/z`) | size (`size_x/y/z` mm, 0 keeps an axis; `lock` true scales all three by
+  the first given), of the picked bodies' box together; `about` origin | centre | bed: the middle of its bottom, it stays
+  on the bed), `mirror`, the patterns (`operation` new only) and `move` copies take meshes.
+- `combine` with a mesh among target and tools is a mesh Boolean: the result is a mesh (a solid target becomes one),
+  solids meshed at `tolerance` (0: automatic). A mesh with holes or non-manifold edges is refused: `mesh_repair` it first.
+- `split` on meshes: `keep` both | above | below (along the plane's normal); a closed mesh's cut is capped, an open one
+  (a scan) is clipped uncapped (result `uncapped`). `split_parts`: a mesh's disconnected shells (or a body's solids)
+  become bodies, the largest keeping the node.
+- `mesh_check` (read-only) per body: open edges and holes, non-manifold and flipped edges, degenerate and duplicate
+  triangles, self-intersections, `closed`, `printable`. `mesh_repair` {weld (mm), clean, orient, fill_holes,
+  max_hole_edges} stores its report (`repair`: before, after, counts) in the result; `mesh_simplify` {mode ratio
+  (percent) | count | tolerance (mm), keep_borders} reports before/after and the surface moved (`simplify`).
+- Print placement in the model: `drop_to_bed` {bodies, center} moves each body or component down (or up) until its
+  lowest point is at Z = 0 (placed as it is, nothing rebuilt). Lay flat is `align` with `from: "plane"` on the face that
+  goes down (a mesh triangle as a `fit` seed) onto `{"base": "xy"}`. Export-time placement (build_direction, drop_to_bed,
+  center_xy on an STL/3MF export) leaves the model as it is.
+
 ## Feature conventions
 
 - Primitives (box, cylinder, sphere, cone, torus, coil) sit on their `plane` at (`x`, `y`) in its frame and grow along

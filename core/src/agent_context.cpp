@@ -345,7 +345,7 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
      {"bins",{{"type","integer"},{"minimum",2}}},{"range",{{"type","number"},{"minimum",0}}},{"align",{{"type","boolean"}}},{"exact",{{"type","boolean"}}}},false},
     run([](const Document& d,const Scene& s,const json& a){return deviation::command(d,s,a);}));
   // Mesh bodies for printing (opad/mesh_edit.hpp): what keeps each from printing; the fixes are features (mesh_repair ...).
-  add({"mesh_check","Read-only check of mesh bodies (STL, OBJ, 3MF, PLY) before printing: per body triangles, shells, open edges and holes, non-manifold and flipped edges, degenerate and duplicate triangles, self-intersections (counted up to limit), volume, closed and printable. bodies: ids (default every mesh). Fix with feature mesh_repair; mesh_simplify reduces triangles.",
+  add({"mesh_check","Read-only printability of mesh bodies (default: every mesh): per body open edges, holes, non-manifold and flipped edges, degenerate and duplicate triangles, self-intersections (up to limit), shells, volume, closed, printable. Fix: feature mesh_repair.",
     {{"doc",{{"type","string"}}},{"bodies",group},{"self_intersections",{{"type","boolean"},{"default",true}}},{"limit",{{"type","integer"},{"minimum",1},{"default",1000}}}},false},
     run([](const Document& d,const Scene& s,const json& a){return meshops::check_command(d,s,a);}));
   // Fitted references (design/fit_refs.cpp): what a scan has instead of exact faces and edges, fitted on the worker that

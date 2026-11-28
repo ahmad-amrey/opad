@@ -269,8 +269,8 @@ std::vector<FeatureSpec> build_specs() {
       "Resize bodies and meshes: by a factor, a percentage, a factor per axis, or to a size in millimetres (0 keeps an axis as it is). "
       "About the origin, each body's centre, or the middle of its bottom (it stays on the bed).",
       {pick("bodies", "Bodies", "bodies", 1, 0), choice("mode", "Scale by", {"factor", "percent", "axes", "size"}), in("factor", "Factor", "number", "2", "mode=|factor"),
-       in("percent", "Percent", "number", "100", "mode=percent"), in("factor_x", "X factor", "number", "1", "mode=axes"),
-       in("factor_y", "Y factor", "number", "1", "mode=axes"), in("factor_z", "Z factor", "number", "1", "mode=axes"),
+       in("percent", "Percent", "number", "100", "mode=percent"), in("factor_x", "X scale", "number", "1", "mode=axes"),
+       in("factor_y", "Y scale", "number", "1", "mode=axes"), in("factor_z", "Z scale", "number", "1", "mode=axes"),
        in("size_x", "X size", "length", "0 mm", "mode=size"), in("size_y", "Y size", "length", "0 mm", "mode=size"),
        in("size_z", "Z size", "length", "0 mm", "mode=size"), in("lock", "Lock proportions", "bool", true, "mode=size"),
        choice("about", "About", {"origin", "centre", "bed"})});

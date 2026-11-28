@@ -117,6 +117,16 @@ void MainWindow::buildDesignActions() {
   });
   alignScan->setProperty("shortcutHint", tr("Stand a scan on XY: its base flat down, a wall along X, centred; Next base and Next X offer the others."));
   shortcuts::updateTooltip(alignScan);
+  // Lay flat (print prep): Align with a face of the picked bodies (a mesh's triangle gives its fitted flat) put face down on
+  // the bed, the XY plane; Drop to bed (a feature) then only moves it down.
+  QAction* layFlat = addAction("design.layFlat", tr("Lay flat"), "layFlat", QKeySequence(), [this] {
+    std::vector<std::string> bodies;
+    for (const auto& id : currentNodeIds())
+      if (const opad::Node* n = m_doc->node(id); n && (n->kind == opad::Node::Kind::Body || n->kind == opad::Node::Kind::Component)) bodies.push_back(id);
+    if (requireEditable()) m_design->startLayFlat(bodies);
+  });
+  layFlat->setProperty("shortcutHint", tr("Turn bodies so a face you click lies flat on the bed (the XY plane), facing down."));
+  shortcuts::updateTooltip(layFlat);
   addAction("sketch.cancel", tr("Cancel sketch"), "close", QKeySequence(), [this] { m_design->cancelSketch(); });
   addAction("sketch.node",tr("Spline node weights"),"spline",QKeySequence("Alt+W"),[this]{m_design->sketch()->editSplineNode();});
   addAction("sketch.openEnds",tr("Find open ends"),"point",QKeySequence("Alt+E"),[this]{m_design->sketch()->findOpenVertices();});
