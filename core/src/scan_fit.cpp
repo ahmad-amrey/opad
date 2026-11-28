@@ -1068,6 +1068,11 @@ std::vector<ScanBase> dominant_planes(const FitMesh& m, const std::function<void
   } else {
     modes.push_back(pca(s.p, s.w, all_of(n)).axis[0]);
   }
+  if (std::getenv("OPAD_SCANFIT_DEBUG")) {
+    std::fprintf(stderr, "scan_axes: dominant planes over %zu points, weight %.1f, normals %s, %zu directions:", n, total, normals ? "yes" : "no", modes.size());
+    for (const auto& d : modes) std::fprintf(stderr, " (%.4f %.4f %.4f)", d.X(), d.Y(), d.Z());
+    std::fprintf(stderr, "\n");
+  }
   // 2. Along each direction, the densest band of the points facing it (either way), fitted robustly, then grown to its
   // 3-sigma inliers among all the points; a second band (the other side of a slab) after it.
   const double step = std::max(m.diagonal / 1000, 1e-6), facing = std::cos(rad(25)), agree = std::cos(rad(30));
