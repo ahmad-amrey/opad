@@ -683,6 +683,12 @@ TEST(clouds_render_as_points_and_by_height) {
   const Scene s = resolve(d);
   const std::string body = s.all_bodies().front();
   CHECK(pc::from_shape(node_world_shape(d, s, body), true, 1000).size() <= 1000u);  // a sample of a big cloud
+  {  // the normals as the body store gives them back (the file's are 0 0 1)
+    const pc::Points back = pc::from_shape(node_world_shape(d, s, body), true);
+    std::printf("    stored cloud: %zu points, normals %s", back.size(), back.has_normals() ? "" : "none");
+    if (back.has_normals()) std::printf("%.3f %.3f %.3f", back.normals[0], back.normals[1], back.normals[2]);
+    std::printf("\n");
+  }
   RenderOptions o;
   o.width = 320, o.height = 200, o.supersample = 1;
   o.camera = Camera::preset("top");

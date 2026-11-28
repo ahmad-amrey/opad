@@ -1072,10 +1072,11 @@ std::vector<ScanBase> dominant_planes(const FitMesh& m, const std::function<void
   // 3-sigma inliers among all the points; a second band (the other side of a slab) after it.
   const double step = std::max(m.diagonal / 1000, 1e-6), facing = std::cos(rad(25)), agree = std::cos(rad(30));
   std::vector<char> taken(n, 0);
-  for (const gp_Dir& d : modes) {
+  // by_normals: whether the normals pick the members and the inliers (off for the fallback below, when they found nothing).
+  auto search = [&](const gp_Dir& d, bool by_normals) {
     std::vector<int> members;
     for (size_t i = 0; i < n; ++i)
-      if (!normals || s.n[i].SquareMagnitude() <= 0 || std::fabs(s.n[i].Dot(gp_Vec(d))) >= facing) members.push_back(int(i));
+      if (!by_normals || s.n[i].SquareMagnitude() <= 0 || std::fabs(s.n[i].Dot(gp_Vec(d))) >= facing) members.push_back(int(i));
     for (int round = 0; round < 2 && out.size() < 4; ++round) {
       check();
       std::unordered_map<long long, double> band;
@@ -1104,7 +1105,7 @@ std::vector<ScanBase> dominant_planes(const FitMesh& m, const std::function<void
       subset(in, bp, bw, bn);
       Plane pl;
       try {
-        pl = fit_plane(bp, bw, normals ? bn : std::vector<gp_Vec>{}, gp_Vec(d));
+        pl = fit_plane(bp, bw, by_normals ? bn : std::vector<gp_Vec>{}, gp_Vec(d));
       } catch (const Error&) {
         break;
       }
@@ -1117,7 +1118,7 @@ std::vector<ScanBase> dominant_planes(const FitMesh& m, const std::function<void
         std::vector<int> next;
         for (size_t i = 0; i < n; ++i) {
           if (taken[i] || std::fabs(gp_Vec(pl.origin, s.p[i]).Dot(gp_Vec(pl.normal))) > limit) continue;
-          if (normals && s.n[i].SquareMagnitude() > 0 && std::fabs(s.n[i].Dot(gp_Vec(pl.normal))) < agree) continue;
+          if (by_normals && s.n[i].SquareMagnitude() > 0 && std::fabs(s.n[i].Dot(gp_Vec(pl.normal))) < agree) continue;
           next.push_back(int(i));
         }
         if (next.size() < 10) break;
@@ -1134,13 +1135,13 @@ std::vector<ScanBase> dominant_planes(const FitMesh& m, const std::function<void
       subset(in, bp, bw, bn);
       Plane fp;
       try {
-        fp = fit_plane(bp, bw, normals ? bn : std::vector<gp_Vec>{}, gp_Vec(pl.normal));
+        fp = fit_plane(bp, bw, by_normals ? bn : std::vector<gp_Vec>{}, gp_Vec(pl.normal));
       } catch (const Error&) {
         continue;
       }
       const double bow = sagitta(s, in, fp);
       const bool flat = share >= 0.05 && fp.q.extent >= 0.2 * m.diagonal && bow <= std::max(fp.q.rms, 0.002 * fp.q.extent);
-      if (std::getenv("OPAD_SCANFIT_DEBUG")) std::fprintf(stderr, "scan_axes: dominant plane along %.3f %.3f %.3f round %d: %zu in, share %.3f, extent %.2f of %.2f, rms %.4f, bow %.4f -> %s\n", d.X(), d.Y(), d.Z(), round, in.size(), share, fp.q.extent, m.diagonal, fp.q.rms, bow, flat ? "flat" : "no");
+      if (std::getenv("OPAD_SCANFIT_DEBUG")) std::fprintf(stderr, "scan_axes: dominant plane along %.3f %.3f %.3f%s round %d: %zu in, share %.3f, extent %.2f of %.2f, rms %.4f, bow %.4f -> %s\n", d.X(), d.Y(), d.Z(), by_normals ? "" : " (normals ignored)", round, in.size(), share, fp.q.extent, m.diagonal, fp.q.rms, bow, flat ? "flat" : "no");
       if (!flat) continue;
       ScanBase b;
       b.normal = fp.normal;
@@ -1154,7 +1155,11 @@ std::vector<ScanBase> dominant_planes(const FitMesh& m, const std::function<void
         if (o.normal.Angle(b.normal) < rad(3) && std::fabs(gp_Vec(o.origin, b.origin).Dot(gp_Vec(o.normal))) < 3 * step) same = true;
       if (!same) out.push_back(b);
     }
-  }
+  };
+  for (const gp_Dir& d : modes) search(d, normals);
+  // Normals that lead nowhere (a reader's or a scanner's: sideways, flipped by patches) found no flat: the least spread
+  // direction by position, the normals ignored, as for a cloud without them.
+  if (out.empty() && normals) search(pca(s.p, s.w, all_of(n)).axis[0], false);
   rank_bases(m, out);
   return out;
 }

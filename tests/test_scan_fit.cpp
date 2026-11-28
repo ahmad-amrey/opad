@@ -785,15 +785,17 @@ TEST(fitted_axes_and_points_as_references) {
 
 TEST(scan_axes_of_a_stepped_sheet_cloud) {
   // A 60 x 40 sheet of points 0.5 mm apart with a 5 mm step at x = 36, no noise: the larger level is the dominant plane
-  // (base 0, facing out of the material), the other level next; with normals from the file, without, and unusable ones.
-  for (const std::string normals : {"given", "none", "zero"}) {
+  // (base 0, facing out of the material), the other level next; with normals from the file, without, unusable ones and
+  // misleading ones (all sideways: the search along them finds nothing, so the points' own thinnest direction is tried).
+  for (const std::string normals : {"given", "none", "zero", "sideways"}) {
     scanfit::FitMesh m;
     gp_XYZ sum(0, 0, 0);
     for (double x = 0; x <= 60; x += 0.5)
       for (double y = 0; y <= 40; y += 0.5) {
         m.nodes.emplace_back(x, y, x < 36 ? 0 : 5);
         sum += m.nodes.back().XYZ();
-        if (normals != "none") m.node_normal.emplace_back(0, 0, normals == "given" ? 1 : 0);
+        if (normals == "sideways") m.node_normal.emplace_back(1, 0, 0);
+        else if (normals != "none") m.node_normal.emplace_back(0, 0, normals == "given" ? 1 : 0);
       }
     m.centroid = gp_Pnt(sum / double(m.nodes.size()));
     m.diagonal = std::sqrt(60.0 * 60 + 40 * 40 + 5 * 5);
