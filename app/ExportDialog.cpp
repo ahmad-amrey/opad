@@ -25,6 +25,7 @@
 #include <QDir>
 #include <QStatusBar>
 #include <QTimer>
+#include <optional>
 #include <set>
 
 void MainWindow::exportDialog(std::vector<std::string> ids) {
@@ -47,9 +48,9 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   auto* grid = new QGridLayout();
   auto* group = new QButtonGroup(&dlg);
   struct Fmt { QString label, format, schema; };
-  QList<Fmt> fmts = {{"STEP AP214", "step", "AP214"}, {"STEP AP242", "step", "AP242"}, {"OBJ (+MTL)", "obj", ""}, {"STL", "stl", ""}, {"GLB", "glb", ""}, {"DXF (2D)", "dxf", ""}, {"SVG (2D)", "svg", ""}, {"DWG (converter)", "dwg", ""}, {"PDF (2D)", "pdf", ""}, {"PNG (2D)", "png", ""}};
+  QList<Fmt> fmts = {{"STEP AP214", "step", "AP214"}, {"STEP AP242", "step", "AP242"}, {"OBJ (+MTL)", "obj", ""}, {"STL", "stl", ""}, {"3MF", "3mf", ""}, {"PLY", "ply", ""}, {"GLB", "glb", ""}, {"DXF (2D)", "dxf", ""}, {"SVG (2D)", "svg", ""}, {"DWG (converter)", "dwg", ""}, {"PDF (2D)", "pdf", ""}, {"PNG (2D)", "png", ""}};
   for (const auto& f : opad::commands::exporter_formats())
-    if (f != "step" && f != "obj" && f != "stl" && f != "glb" && f != "dxf" && f != "svg" && f != "dwg" && f != "pdf" && f != "png") fmts << Fmt{QString::fromStdString(f).toUpper() + tr(" (plugin)"), QString::fromStdString(f), ""};
+    if (f != "step" && f != "obj" && f != "stl" && f != "3mf" && f != "ply" && f != "xyz" && f != "pts" && f != "csv" && f != "e57" && f != "glb" && f != "dxf" && f != "svg" && f != "dwg" && f != "pdf" && f != "png") fmts << Fmt{QString::fromStdString(f).toUpper() + tr(" (plugin)"), QString::fromStdString(f), ""};
   int i = 0;
   for (const auto& f : fmts) {
     auto* r = new QRadioButton(f.label, &dlg);
@@ -96,6 +97,39 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   auto* mtl = new QCheckBox(tr("Write material library (OBJ)"), &dlg);
   mtl->setChecked(true);
   v->addWidget(mtl);
+  // Mesh formats for a printer: turned so the chosen side is up (build_direction, as the print check takes it) or the
+  // selected face lies on the bed, dropped onto it and centred; choices remembered (the face only while one is selected).
+  auto* printLabel = new QLabel(tr("PRINT PLACEMENT"), &dlg);
+  printLabel->setObjectName("sectionHeader");
+  v->addWidget(printLabel);
+  auto* printForm = new QFormLayout();
+  auto* printUp = new QComboBox(&dlg);
+  printUp->setObjectName("export.printUp");
+  for (const auto& [id, label] : std::initializer_list<std::pair<const char*, QString>>{
+           {"", tr("As modelled")}, {"+z", tr("+Z up")}, {"-z", tr("−Z up")}, {"+x", tr("+X up")}, {"-x", tr("−X up")}, {"+y", tr("+Y up")}, {"-y", tr("−Y up")}})
+    printUp->addItem(label, QString(id));
+  std::optional<opad::Ref> bedFace;
+  for (const auto& r : m_selRefs)
+    if (r.kind == opad::Ref::Kind::Face) {
+      if (bedFace) { bedFace.reset(); break; }  // one face, or none
+      bedFace = r;
+    }
+  if (bedFace) printUp->addItem(tr("Selected face down on the bed"), QString("face"));
+  printUp->setCurrentIndex(std::max(0, printUp->findData(m_settings.value("export/printUp", "").toString())));
+  printForm->addRow(tr("Up from the bed"), printUp);
+  v->addLayout(printForm);
+  auto* dropToBed = new QCheckBox(tr("Drop onto the bed (lowest point at Z = 0)"), &dlg);
+  dropToBed->setObjectName("export.drop");
+  dropToBed->setChecked(m_settings.value("export/drop", false).toBool());
+  auto* centerXY = new QCheckBox(tr("Centre on the bed (X = Y = 0)"), &dlg);
+  centerXY->setObjectName("export.center");
+  centerXY->setChecked(m_settings.value("export/center", false).toBool());
+  v->addWidget(dropToBed);
+  v->addWidget(centerXY);
+  // Turning without dropping would leave the part under or over the bed: turning ticks Drop (it can be unticked).
+  connect(printUp, &QComboBox::currentIndexChanged, &dlg, [printUp, dropToBed](int) {
+    if (!printUp->currentData().toString().isEmpty()) dropToBed->setChecked(true);
+  });
   // 2D formats of solids and meshes: a hidden-line view of them (UI-87), choices remembered.
   auto* viewLabel = new QLabel(tr("2D VIEW"), &dlg);
   viewLabel->setObjectName("sectionHeader");
@@ -138,6 +172,7 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   footer->addWidget(ok);
   v->addLayout(footer);
   bool asView = false;  // a 2D format of solids or meshes: a view of them
+  bool printable = false;  // a mesh format of solids or meshes: print placement applies
   auto refresh = [&] {
     std::set<std::string> categories;
     int flat = 0;  // drawings and sketches in scope: a 3D format leaves them out (the export writes the solids and meshes)
@@ -156,9 +191,10 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
       const auto fmt=format->property("format").toString(); bool compatible=!categories.empty();
       for(const auto& cat:categories) {
         // A 3D format with drawings or sketches among the objects: they are left out, so they never disable it.
-        if((fmt=="step" || fmt=="stl" || fmt=="obj" || fmt=="glb") && cat=="drawing2d") compatible &= model;
+        if((fmt=="step" || fmt=="stl" || fmt=="3mf" || fmt=="ply" || fmt=="obj" || fmt=="glb") && cat=="drawing2d") compatible &= model;
         else if(fmt=="step") compatible &= cat=="solid";
-        else if(fmt=="stl" || fmt=="obj" || fmt=="glb") compatible &= cat=="solid" || cat=="mesh";
+        else if(fmt=="stl" || fmt=="3mf" || fmt=="obj" || fmt=="glb") compatible &= cat=="solid" || cat=="mesh";
+        else if(fmt=="ply") compatible &= cat=="solid" || cat=="mesh" || cat=="points";  // a cloud's PLY when there are clouds
         else if(fmt=="svg" || fmt=="dxf" || fmt=="dwg" || fmt=="pdf" || fmt=="png") compatible &= cat=="drawing2d" || cat=="solid" || cat=="mesh";  // solids: a view of them
       }
       format->setEnabled(compatible);
@@ -181,6 +217,9 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
     perBody->setVisible(fmt=="stl");singleFile->setVisible(fmt=="stl");
     ascii->setVisible(fmt=="stl");binary->setVisible(fmt=="stl");
     mtl->setVisible(fmt=="obj");
+    printable = (fmt=="stl" || fmt=="3mf" || fmt=="obj" || fmt=="ply") && !categories.count("points");
+    for(QWidget* w:{static_cast<QWidget*>(printLabel),static_cast<QWidget*>(dropToBed),static_cast<QWidget*>(centerXY)}) w->setVisible(printable);
+    printForm->setRowVisible(printUp,printable);
     form->setRowVisible(tol,fmt!="step" && !twoD);
     for(QWidget* w:{static_cast<QWidget*>(viewLabel),static_cast<QWidget*>(viewBox),static_cast<QWidget*>(hiddenLines),static_cast<QWidget*>(tangentEdges),static_cast<QWidget*>(viewNote)}) w->setVisible(asView);
     viewNote->setText(categories.count("drawing2d") ? tr("Drawings and sketches are left out of a view of the model.")
@@ -196,7 +235,11 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
   connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
   refresh();
-  if(const QString shot=qEnvironmentVariable("OPAD_BENCH_EXPORT_DIALOG");!shot.isEmpty()) QTimer::singleShot(150,&dlg,[&dlg,shot] { dlg.grab().save(shot); dlg.reject(); });
+  // OPAD_BENCH_EXPORT_DIALOG=<png> saves the dialog; OPAD_BENCH_EXPORT_DIALOG_FORMAT picks its format first (stl: the print placement).
+  if(const QString shot=qEnvironmentVariable("OPAD_BENCH_EXPORT_DIALOG");!shot.isEmpty()) QTimer::singleShot(150,&dlg,[&dlg,&refresh,group,shot] {
+    for(auto* r:group->buttons()) if(r->property("format").toString()==qEnvironmentVariable("OPAD_BENCH_EXPORT_DIALOG_FORMAT") && r->isEnabled()) { r->setChecked(true); refresh(); }
+    dlg.grab().save(shot); dlg.reject();
+  });
   if (dlg.exec() != QDialog::Accepted) return;
   auto* b = group->checkedButton();
   QString fmt = b->property("format").toString();
@@ -209,6 +252,16 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   opad::json args{{"format", fmt.toStdString()}, {"out", out.toStdString()}, {"tolerance", units::fromDisplay(units::Kind::Length, tol->value())}, {"ascii", ascii->isChecked()}, {"per_body", perBody->isChecked()}, {"mtl", mtl->isChecked()}};
   if (!b->property("schema").toString().isEmpty()) args["schema"] = b->property("schema").toString().toStdString();
   if (scopeSel->isChecked()) args["select"] = ids;
+  if (printable) {
+    const QString up = printUp->currentData().toString();
+    if (up == "face" && bedFace) args["bed_face"] = bedFace->to_json();
+    else if (!up.isEmpty()) args["build_direction"] = up.toStdString();
+    args["drop_to_bed"] = dropToBed->isChecked();
+    args["center_xy"] = centerXY->isChecked();
+    if (up != "face") m_settings.setValue("export/printUp", up);
+    m_settings.setValue("export/drop", dropToBed->isChecked());
+    m_settings.setValue("export/center", centerXY->isChecked());
+  }
   if (asView) {
     const QString view = viewBox->currentData().toString();
     const opad::json camera = view == "camera" ? m_viewport->cameraJson() : opad::json();

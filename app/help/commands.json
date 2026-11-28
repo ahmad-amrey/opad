@@ -366,9 +366,9 @@
   {
    "id": "file.export",
    "title": "Export",
-   "summary": "Writes the selection or the whole design to STEP, STL, OBJ, GLB, DXF, SVG, DWG, PDF or PNG.",
-   "details": "Choose the format and what to include in the dialog, then where the file goes. Mesh formats are tessellated from the exact shapes; the 2D formats write drawings and sketches, or a 2D view of solids with hidden lines.",
-   "keywords": ["save as step", "stl", "dxf", "svg", "write file", "output"],
+   "summary": "Writes the selection or the whole design to STEP, STL, 3MF, OBJ, PLY, GLB, DXF, SVG, DWG, PDF or PNG.",
+   "details": "Choose the format and what to include in the dialog, then where the file goes. Mesh formats are tessellated from the exact shapes and can be placed for printing: turned so the chosen side is up, or the selected face lies on the bed, dropped onto the bed and centred on it. The 2D formats write drawings and sketches, or a 2D view of solids with hidden lines.",
+   "keywords": ["save as step", "stl", "3mf", "dxf", "svg", "write file", "output", "3d print", "orient", "build plate"],
    "requires": "Open or create a document first."
   },
   {
@@ -1536,7 +1536,7 @@
    "id": "inspect.printcheck",
    "title": "Print check",
    "summary": "Checks a part for 3D printing: overhangs, build-plate contact and thin walls.",
-   "details": "Works on solids and on meshes such as STL and 3MF. It runs as the panel opens and again whenever the model changes, and lists each finding; on the part overhangs turn amber and thin walls red, seen through the model like a selection, until the panel closes. A clicked finding is selected.",
+   "details": "Works on solids and on meshes such as STL and 3MF. It runs as the panel opens and again whenever the model changes, and lists each finding; on the part overhangs turn amber and thin walls red, seen through the model like a selection, until the panel closes. A thin wall names the features whose surfaces come too close, and clicking it selects both sides; the sharp edge where a pocket comes out of a slanted face is not counted as a wall.",
    "keywords": ["3d print", "overhang", "support", "wall thickness", "stl"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },

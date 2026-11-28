@@ -8,6 +8,11 @@ as a commit log.
 ## [Unreleased]
 
 ### Added
+- **Export straight to the printer's bed.** Export now writes 3MF and PLY meshes as well as STL and OBJ, and places
+  them for printing: turn the part so the side you choose is up (or the selected face lies on the bed), drop it onto
+  the bed and centre it there, so the slicer opens it ready to print. With one STL file per body, each part lands on
+  the bed by itself. AI assistants get the same (`export` with `build_direction` or `bed_face`, `drop_to_bed`,
+  `center_xy`), using the build direction the print check takes.
 - **AI assistants can try a mechanism's pose before keeping it.** A trial joint position is now held as a preview
   that the assistant can picture and then apply or drop, so you see the pose it is weighing in the 3D view too.
 - **Hard stops are contacts, not collisions.** A motion study's clearance check takes a contact tolerance: faces that
@@ -31,10 +36,14 @@ as a commit log.
 - An assistant's batch of steps can pass through a broken state on the way (a cut moved off the part and back): only
   the end result is checked, and it is still one step to undo.
 - Sketch shapes an assistant draws take parameter expressions for their points and sizes, as dimensions already do.
+- **Thin walls say what makes them.** The print check names the two features whose surfaces come too close, a shell
+  against its block or a pocket against a rib, and clicking a thin wall selects both of its sides.
 
 ### Fixed
 - Pictures that AI assistants take of the model (and `opad-cli render`) now draw point clouds, as points in their own
   colours, and can colour them by their height above a plane.
+- **The print check no longer reports sharp edges as thin walls.** Where a pocket comes out of a slanted face, the
+  thin wedge along the edge was listed as a wall; it is left out now.
 
 ## [0.11.0] - 2026-11-27
 

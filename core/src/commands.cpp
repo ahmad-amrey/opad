@@ -19,6 +19,7 @@
 #include "opad/render.hpp"
 #include "opad/scene.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/checks.hpp"
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/drawing/display.hpp"
@@ -624,9 +625,13 @@ void register_builtins() {
         return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
       });
 
-  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg|pdf|png, point clouds to ply|xyz|pts|csv|e57, or a plugin format (2D of solids: a hidden-line view)",
-      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|pdf|png|ply|xyz|pts|csv|e57|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
+  reg("export", "Export selected objects (or everything) to step|obj|stl|3mf|ply|glb|dxf|svg|dwg|pdf|png, point clouds to ply|xyz|pts|csv|e57, or a plugin format (2D of solids: a hidden-line view; meshes: print placement)",
+      {{"doc", "path"}, {"format", "step|obj|stl|3mf|glb|dxf|svg|dwg|pdf|png|ply|xyz|pts|csv|e57|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
        {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"},
+       {"build_direction", "string - meshes: up from the bed, as validate print takes it; turned to +Z"},
+       {"bed_face", "object - meshes: a face ref laid on the bed"},
+       {"drop_to_bed", "bool - meshes: min Z = 0 (default on when turned)"},
+       {"center_xy", "bool - meshes: centre at X = Y = 0"},
        {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}, {"dpi", "int - PNG"}, {"sheet", "uuid|name|drawing:<name> - 2D: a sheet, or a drawing's"}, {"issue", "string - with sheet: as issued"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -1230,15 +1235,36 @@ json export_document(const Document& doc, const Scene& scene, const json& a, con
   o.sheet = a.value("sheet", "");
   o.issue = a.value("issue", "");
   o.progress = progress;
+  // Print placement (mesh formats): up from the bed as validate print takes build_direction, or a face to lie on the bed.
+  if (a.contains("build_direction") && a.contains("bed_face")) throw Error("export: give build_direction or bed_face, not both");
+  if (a.contains("build_direction")) o.print_up = parse_build_direction(a["build_direction"]);
+  if (a.contains("bed_face")) {
+    const json& f = a["bed_face"];
+    const Vec3 n = face_outward_normal(doc, scene, Ref::from_json(f.is_object() && f.contains("ref") ? f["ref"] : f));  // a reference token too
+    o.print_up = {-n[0], -n[1], -n[2]};
+  }
+  const bool oriented = a.contains("build_direction") || a.contains("bed_face");
+  o.drop_to_bed = a.value("drop_to_bed", oriented);
+  o.center_xy = a.value("center_xy", false);
   const std::string out = a.value("out", "");
   if (out.empty()) throw Error("export: \"out\" path required");
+  // PLY is a point cloud's format and a mesh's: the clouds in the selection (or the document) when there are any.
+  if (fmt == "ply") {
+    bool clouds = false;
+    std::vector<std::string> bodies = o.select.empty() ? scene.all_bodies() : std::vector<std::string>{};
+    for (const auto& id : o.select)
+      if (scene.node(id))
+        for (const auto& b : scene.bodies_under(id)) bodies.push_back(b);
+    for (const auto& id : bodies) clouds = clouds || (scene.node(id) && scene.node(id)->representation == "points");
+    if (!clouds) return export_selection(doc, scene, path_from_utf8(out), o).to_json();
+  }
   if (fmt == "ply" || fmt == "xyz" || fmt == "pts" || fmt == "csv" || fmt == "e57") return cloud::export_points(doc, scene, path_from_utf8(out), o.select);
   if (fmt == "svg" || fmt == "dxf" || fmt == "dwg" || fmt == "pdf" || fmt == "png") return export_drawing(doc, scene, path_from_utf8(out), o).to_json();
   return export_selection(doc, scene, path_from_utf8(out), o).to_json();
 }
 
 std::vector<std::string> exporter_formats() {
-  std::vector<std::string> out = {"step", "obj", "stl", "glb", "dxf", "svg", "dwg"};
+  std::vector<std::string> out = {"step", "obj", "stl", "3mf", "ply", "glb", "dxf", "svg", "dwg", "xyz", "pts", "csv", "e57"};
   if (drawing::can_paint()) out.insert(out.end(), {"pdf", "png"});
   auto& r = registry();
   std::lock_guard<std::recursive_mutex> lock(r.mu);

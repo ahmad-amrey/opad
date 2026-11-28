@@ -117,6 +117,13 @@ struct ExportOptions {
   std::string sheet;                  // 2D: a drawing sheet (id or name) as drawn, or "drawing:<name>": its sheets (PDF pages)
   std::string issue;                  // with sheet: as that revision was issued (its frozen linework; drawing/tables.hpp)
   std::function<bool(double, const std::string&)> progress;  // 2D views: return false to cancel
+  // Print placement (mesh formats: stl, 3mf, obj, ply): every body turned together so `print_up` (unit; zero = as
+  // modelled) points along +Z, then `drop_to_bed` moves the lowest point to Z = 0 and `center_xy` the box's middle to
+  // X = Y = 0. One STL file per body is placed file by file (the turn is shared). The result's details.placement says
+  // the turn, the move and the box written.
+  Vec3 print_up{0, 0, 0};
+  bool drop_to_bed = false;
+  bool center_xy = false;
 };
 
 struct ExportResult {
