@@ -106,6 +106,16 @@ using Cancel = std::function<bool()>;
 // every affected later op are computed. `strict`: an error in one of the *new* ops throws instead of being
 // recorded, so a wrong input never reaches the document; so does a plan that changes a locked body (locked_change).
 Plan plan_ops(const Document& doc, std::vector<json> new_ops, bool strict = true, const Cancel& cancel = {});
+// While one lives on this thread, strict plans record a failing new op (and a parameter it breaks) as non-strict ones do
+// instead of throwing; locked bodies still refuse. model_batch's validate "final" checks the batch's end state instead.
+class DeferErrors {
+ public:
+  DeferErrors();
+  ~DeferErrors();
+  DeferErrors(const DeferErrors&) = delete;
+  DeferErrors& operator=(const DeferErrors&) = delete;
+  static bool active();
+};
 // Recomputes whatever is out of date (after a merge, a hand edit, a tombstone). An empty plan = up to date.
 Plan plan_regenerate(const Document& doc, bool force = false, const Cancel& cancel = {});
 json commit(Document& doc, Plan&& plan, const std::string& author = {});
@@ -173,7 +183,8 @@ Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane);
 json fit_reference(const Document& doc, const Scene& scene, json ref, const std::string& as, const Cancel& cancel = {});
 // The candidates for standing a mesh body (a scan) on the main axes: its bases (flats, or the principal axes when it has
 // none) with their quality and X directions, and the Align inputs for the first one (fit "scan_axes", frame matched).
-json scan_axes_report(const Document& doc, const Scene& scene, const std::string& body, const Cancel& cancel = {});
+// `x`: "outline" (X squared to the outline's minimum-area rectangle, its size and turn in each base's "outline") or "walls".
+json scan_axes_report(const Document& doc, const Scene& scene, const std::string& body, const Cancel& cancel = {}, const std::string& x = "outline");
 // A plane chosen now for a sketch whose component has moved since it was made, as its op keeps it: where it was made
 // (its frame and world points and directions moved back by sketch.moved; TODO 11 UI-33). Unchanged otherwise.
 json plane_as_made(const SketchItem& sketch, json plane);

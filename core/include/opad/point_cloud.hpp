@@ -59,6 +59,8 @@ bool is_cloud(const TopoDS_Shape& shape);  // a mesh shape whose triangulations 
 size_t point_count(const TopoDS_Shape& shape);
 // The points of a cloud shape in the shape's own frame (its faces' locations applied). `attributes` false: positions only.
 Points from_shape(const TopoDS_Shape& shape, bool attributes = true);
+// Every k-th point only, so that at most `most` are copied (a picture of a 20M-point scan); `most` 0 = all of them.
+Points from_shape(const TopoDS_Shape& shape, bool attributes, size_t most);
 // What a cloud body's meta says about it: {"representation": "points", "points": N, "attributes": [...], "scalar": name}.
 json meta_of(const Points& points);
 json meta_of_shape(const TopoDS_Shape& shape);  // the same from a cloud shape, without copying its points

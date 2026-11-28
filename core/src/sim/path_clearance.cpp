@@ -10,6 +10,7 @@
 // collision's volume) are asked only to confirm: the closest approach, and the frames where two meshes meet.
 // OPAD_CLEARANCE_TRACE=1 prints each phase's time and the slow pairs.
 #include "opad/sim/study.hpp"
+#include "opad/sim/joints.hpp"
 
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
@@ -145,6 +146,10 @@ json path_clearance(const Document& doc, const Scene& scene, StudyRun& run, cons
   const json spec = given.is_object() ? given : json::object();
   const double clearance = spec.value("clearance_mm", 0.0);
   if (!(clearance >= 0) || !std::isfinite(clearance)) throw Error("clearance: clearance_mm is zero or more");
+  // Faces that touch, or overlap no deeper than this (a designed stop meshed and cut a hair into its seat), are a contact,
+  // not a collision. 0 (the default): every meet is a collision, as before.
+  const double contact_tolerance = spec.value("contact_tolerance_mm", 0.0);
+  if (!(contact_tolerance >= 0) || !std::isfinite(contact_tolerance)) throw Error("clearance: contact_tolerance_mm is zero or more");
   const size_t frames = run.poses.size();
   if (!frames) return json{{"frames", 0}, {"status", "clear"}};
   // Which part moves each body: the nearest of its ancestors (or itself) the mechanism places.
@@ -208,6 +213,7 @@ json path_clearance(const Document& doc, const Scene& scene, StudyRun& run, cons
       if (pairs.size() > 200000) throw Error("clearance: more than 200000 pairs of bodies: name smaller groups with a and b");
     }
   json out = {{"frames", frames}, {"bodies", items.size()}, {"pairs", pairs.size()}, {"clearance_mm", clearance}};
+  if (contact_tolerance > 0) out["contact_tolerance_mm"] = contact_tolerance;
   if (pairs.empty()) {
     out["status"] = "clear";
     out["note"] = "no pair of bodies in parts that move apart";
@@ -499,10 +505,44 @@ json path_clearance(const Document& doc, const Scene& scene, StudyRun& run, cons
   }
   std::sort(checks.begin(), checks.end());
   checks.erase(std::unique(checks.begin(), checks.end()), checks.end());
-  json first = nullptr;
-  size_t first_frame = frames, confirmed = 0;
+  // The joints held at a limit at a frame (deg / mm, as their limits are written), joining one of the pair's parts: a
+  // contact there is the designed stop.
+  struct Limited {
+    std::string joint, name, coord, side, base, part;
+    double limit;
+    std::vector<double> values;
+  };
+  std::vector<Limited> limited;
+  for (const auto& j : scene.joints) {
+    const JointKind* k = joint_kind(j.kind);
+    const auto l = j.def.find("limits");
+    if (!k || l == j.def.end() || !l->is_object()) continue;
+    std::vector<const Series*> values;  // value series in coordinate order (each coordinate pushes value, speed, acceleration)
+    for (const auto& s : run.series)
+      if (s.id == j.id && s.group == "value") values.push_back(&s);
+    for (size_t c = 0; c < k->coords.size() && c < values.size(); ++c) {
+      const auto lim = l->find(k->coords[c].name);
+      if (lim == l->end() || !lim->is_array() || lim->size() != 2) continue;
+      for (int side = 0; side < 2; ++side)
+        if ((*lim)[size_t(side)].is_number())
+          limited.push_back({j.id, j.name, k->coords[c].name, side ? "upper" : "lower", j.base, j.part, (*lim)[size_t(side)].get<double>(), values[c]->v});
+    }
+  }
+  auto part_of = [&](size_t item) { return items[item].group < 0 ? std::string() : run.parts[size_t(items[item].group)]; };
+  auto at_limit = [&](const Pair& p, size_t f) {
+    json out = json::array();
+    const std::string a = part_of(p.a), b = part_of(p.b);
+    for (const auto& l : limited) {
+      if (f >= l.values.size() || std::fabs(l.values[f] - l.limit) > 1e-6 * std::max(1.0, std::fabs(l.limit))) continue;
+      const bool joins = (!a.empty() && (l.part == a || l.base == a)) || (!b.empty() && (l.part == b || l.base == b));
+      if (joins) out.push_back({{"joint", l.joint}, {"name", l.name}, {"coordinate", l.coord}, {"limit", l.side}, {"value", l.limit}});
+    }
+    return out;
+  };
+  json first = nullptr, contacts = json::array();
+  size_t first_frame = frames, confirmed = 0, contact_count = 0;
   const auto confirming = std::chrono::steady_clock::now();
-  std::set<size_t> collided;
+  std::set<size_t> collided, contacted;
   for (const auto& [f, k] : checks) {
     if (f > first_frame || confirmed >= 48 || std::chrono::steady_clock::now() - confirming > std::chrono::seconds(15)) break;
     ++confirmed;
@@ -511,20 +551,42 @@ json path_clearance(const Document& doc, const Scene& scene, StudyRun& run, cons
     for (const auto& x : tasks)
       if (x.p == k && x.f == f) t = &x;
     std::string kind = "inside";
-    double volume = 0;
+    double volume = 0, depth = kInf;
     if (!t || !t->inside) {
       ++exact_checks;
       if (exact_at(p, f).value("value", kInf) > kTouch) continue;
-      kind = "touching";
+      kind = "touching", depth = 0;
       try {  // touching or crossing: the common volume says
         const TopoDS_Shape sa = place(items[p.a].exact, p.a, f), sb = place(items[p.b].exact, p.b, f);
         BRepAlgoAPI_Common common(sa, sb);
         if (common.IsDone() && TopExp_Explorer(common.Shape(), TopAbs_SOLID).More()) {
           const double v = volume_properties(common.Shape()).mass;
-          if (v > std::max(1e-9, 1e-6 * std::min(volume_properties(sa).mass, volume_properties(sb).mass))) kind = "intersecting", volume = v;
+          if (v > std::max(1e-9, 1e-6 * std::min(volume_properties(sa).mass, volume_properties(sb).mass))) {
+            kind = "intersecting", volume = v;
+            // How deep they overlap: a thin overlap's area is about twice its contact patch, so depth ~ 2 V / A.
+            const double area = area_properties(common.Shape()).mass;
+            depth = area > 0 ? 2 * v / area : kInf;
+          }
         }
       } catch (const Standard_Failure&) {
       }
+    }
+    const json limits = at_limit(p, f);
+    if (contact_tolerance > 0 && depth <= contact_tolerance) {  // a contact: listed, the pair followed no further
+      contacted.insert(k);
+      ++contact_count;
+      if (contacts.size() < 20) {
+        json e = names(p);
+        e["t"] = run.t[f];
+        e["frame"] = f;
+        e["kind"] = kind;
+        e["depth_mm"] = depth;
+        if (volume > 0) e["volume_mm3"] = volume;
+        if (!limits.empty()) e["at_limit"] = limits;
+        e["expected"] = !limits.empty();
+        contacts.push_back(e);
+      }
+      continue;
     }
     collided.insert(k);
     if (f < first_frame) {
@@ -534,6 +596,8 @@ json path_clearance(const Document& doc, const Scene& scene, StudyRun& run, cons
       first["frame"] = f;
       first["kind"] = kind;
       if (volume > 0) first["volume_mm3"] = volume;
+      if (std::isfinite(depth) && depth > 0) first["depth_mm"] = depth;
+      if (!limits.empty()) first["at_limit"] = limits;  // a joint at its stop: contact_tolerance_mm may call it a contact
     }
   }
   // Meets earlier than the first collision (or any, without one) left unconfirmed.
@@ -547,7 +611,7 @@ json path_clearance(const Document& doc, const Scene& scene, StudyRun& run, cons
   // minimum can sit at a neighbouring frame within the meshes' tolerance).
   std::vector<const Task*> nearest;
   for (const auto& t : tasks)
-    if (!t.above && !collided.count(t.p) && t.value < kInf) nearest.push_back(&t);
+    if (!t.above && !collided.count(t.p) && !contacted.count(t.p) && t.value < kInf) nearest.push_back(&t);
   std::stable_sort(nearest.begin(), nearest.end(), [](const Task* x, const Task* y) { return x->value < y->value; });
   json closest = nullptr;
   double closest_value = kInf;
@@ -580,7 +644,7 @@ json path_clearance(const Document& doc, const Scene& scene, StudyRun& run, cons
   if (clearance > 0) {
     std::map<size_t, const Task*> worst;
     for (const auto& t : tasks)
-      if (!t.above && t.value < clearance && (!worst.count(t.p) || t.value < worst[t.p]->value)) worst[t.p] = &t;
+      if (!t.above && t.value < clearance && !contacted.count(t.p) && (!worst.count(t.p) || t.value < worst[t.p]->value)) worst[t.p] = &t;
     std::vector<const Task*> list;
     for (const auto& [p, t] : worst) list.push_back(t);
     std::stable_sort(list.begin(), list.end(), [](const Task* x, const Task* y) { return x->value < y->value; });
@@ -599,7 +663,8 @@ json path_clearance(const Document& doc, const Scene& scene, StudyRun& run, cons
   size_t followed = 0;
   for (const auto& p : pairs) followed += p.followed;
   out["pairs"] = followed;
-  out["status"] = !first.is_null() ? "collision" : close_count ? "too_close" : "clear";
+  out["status"] = !first.is_null() ? "collision" : close_count ? "too_close" : contact_count ? "contact" : "clear";
+  if (contact_tolerance > 0) out["contacts"] = contacts, out["contact_pairs"] = contacted.size(), out["contact_frames"] = contact_count;
   out["first_collision"] = first;
   out["min_distance_mm"] = !first.is_null() ? json(0.0) : closest.is_null() ? json(nullptr) : json(closest_value);
   if (!closest.is_null()) out["closest"] = closest;

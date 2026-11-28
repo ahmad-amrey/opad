@@ -103,6 +103,10 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   `points`, `entities` and `constraints` it made (and for outline text the `profiles`: a point inside each letter).
 - Any point, entity or constraint without an `id` gets the next free one; `first_id` makes a shape's ids run
   consecutively from that number, so constraints in the same call can refer to them.
+- A pick's u or v, and the length options (`radius`, `diameter`, `width`, `height`, `distance`, `fillet`, `fillets`),
+  may be parameter expressions (`[["-w / 2", 0], ["w / 2", "h"]]`, `"radius": "r + 1 mm"`) as dimensions are. They are
+  evaluated once, when the sketch is made or edited: the curves keep the values, so add a dimension with `expr` where
+  the shape must follow a parameter later.
 - Kinds (picks, then options):
   - `point` [p]; `line` [a, b]; `circle` [centre] with `radius` or `diameter` (or [centre, point on it]);
   - `rect2` [corner, corner] and `rect_center` [centre, corner], axis-aligned; `rect3` [a, b, height point], turned;
@@ -160,14 +164,24 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   feature given face/edge indices answers with a warning that points to it.
 - Rule values that are lengths (`radius_min/max`, `length_min/max`, `at_plane`'s value, `bounds` coordinates) may be
   expressions of the parameters: `{"at_plane": {"axis": "z", "value": "height"}}` follows `height` when it changes.
-  `bounds_mode` "intersects" takes what reaches into the box, "outside" what stays out of it (default "inside": wholly
-  in it); a `null` coordinate leaves that side open (`"min": [null, null, 100]`). `length_min/max` (edges) and
+  `bounds_mode` "intersects" takes what reaches into the box, "outside" what stays wholly out of it (an arc that reaches
+  into the box is not outside, even when most of it is out), "not_inside" whatever is not wholly in it (default
+  "inside": wholly in it); the test is the entity's tight box. A `null` coordinate leaves that side open (`"min": [null,
+  null, 100]`). `length_min/max` (edges) and
   `area_min/max` (faces, mm²) tell the outer and inner rim of a ring apart by size; `"loop": "inner"` picks the edges on
   a hole of a face (a ring face's inner rim, a pocket's rim), `"outer"` every other edge.
+- `of_face` keeps the edges of the faces it names: a face index, or face filters (`{"normal": "+z", "at_plane":
+  {"axis": "z", "value": "height"}}`). With it, `loop` is those faces' own: `{"of_face": {"normal": "+z"}, "loop":
+  "outer"}` is the top face's outer rim (arcs and lines alike), `"inner"` the rims of its holes. Prefer it to a box
+  around the outline.
 - Recognised details as a rule (faces only): `"select": {"recognized": "hole", "diameter": 6, "through": true}` is
   every face of the body's holes of that size; also `fillet` (`radius`), `chamfer` (`distance`), `wall`
   (`thickness`), `boss`, `pocket`; hole `type` simple|counterbore|countersink, `depth`, `cb_diameter`,
   `cs_diameter`. `query_entities` takes the same keys in `filters`.
+- `query_entities` with `detail: "compact"` answers each item as its `ref` and a few rounded numbers (`curve` or
+  `surface`, `length` or `area`, `radius`, `start`/`end`, `center`, `normal`, `direction`, `point`: about a tenth of a full
+  item); the page's `reference` holds the body's `geometry` and `placement` once, the token of every item with its ref.
+  The live server counts those refs as given.
 - Live server: a face/edge/vertex input is accepted when the connection was given that reference (by
   `entity_details`, `query_entities`, the selection or a change list) and its body still has the same key and
   placement; otherwise put its token in the call's `references`. A token needs only `ref`, `geometry` and
@@ -202,17 +216,45 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   not that shape (a curved region taken for a plane): pick elsewhere or lower the tolerance. Pass the returned ref on
   as it is: a feature keeps `result` (with the body key it was fitted on) and never fits again while the mesh is the
   same; a feature given a `fit` without one fits it and stores it.
-- Standing a scan on the axes: `scan_axes {body}` lists the candidates, never one guess: `bases` (flats found by mean
-  shift of the area-weighted normals, the ones the whole scan lies behind first, then by area; `method: "pca"` when it
-  has no flats: the principal directions, the least spread standing up) with quality and share, each with its X
-  `turns` (the walls' main direction and its quarter turns). `align_inputs` is a ready Align: `from_plane: {"fit":
-  {"body", "of": "scan_axes", "base": 0, "turn": 0, "origin": "auto"}}` onto `{"base": "xy"}` with `"frame": true`
-  (origin and X onto the plane's too). Choose another with `base` / `turn`, `"flip": true` stands it the other way up,
-  `origin` "base" (centred, on its base) or "centre" (the box centre; pca's default).
+- Standing a scan on the axes: `scan_axes {body}` (a mesh or a point cloud) lists the candidates, never one guess:
+  `bases` with `kind`, quality and share. `method: "flats"`: flats found by mean shift of the area-weighted normals, the
+  ones the whole scan lies behind first, then by area. `method: "plane"` (no flat by the normals, as on a point cloud or
+  a scan with noisy normals): the dominant plane fitted by position (the densest band along the normals' main
+  direction, least median of squares, grown to its 3-sigma inliers, kept only when flat), then the principal
+  directions. `method: "pca"`: no plane either, the principal directions, the least spread first (the thin direction
+  stands up). Each base has its `outline` (`size_mm` of the outline's minimum-area rectangle seen square to the base,
+  `turn_deg` from the unsquared X to it, `unsquared_mm` the box the unsquared X gives; `squared: false` when the outline
+  has no one clear rectangle, round or oval, and X stays unsquared) and its X `turns`: with `x:
+  "outline"` (the default) the rectangle's long side and its quarter turns, then the wall directions; `x: "walls"` the
+  walls' main direction (else the longest direction) and its quarter turns. Squaring matters: a few degrees off adds
+  millimetres to every side of the part's box. `align_inputs` is a ready Align: `from_plane: {"fit": {"body", "of": "scan_axes",
+  "base": 0, "turn": 0, "origin": "auto", "x": "outline"}}` onto `{"base": "xy"}` with `"frame": true` (origin and X onto
+  the plane's too); its stored result keeps `outline`. Choose another with `base` / `turn` / `x`, `"flip": true` stands
+  it the other way up, `origin` "base" (centred, on its base) or "centre" (the box centre; a principal base's default).
 - Live server: a `seed` or `triangles` names no entity and needs no reference token (a triangle the user selected is
   the `n` of its `<body>/face/<n>`); vertex refs in `points` do, as any vertex input, so pass coordinates there.
 - Align's `frame` (to a plane): the From plane's frame onto the To plane's, origin, normal and x; `offset` and `angle`
   then lift and turn it about the To normal.
+
+## Meshes for printing
+
+- Mesh bodies (STL, OBJ, 3MF, PLY) are edited as meshes, never turned into solids: `scale` (meshes and solids; `mode`
+  factor | percent | axes (`factor_x/y/z`) | size (`size_x/y/z` mm, 0 keeps an axis; `lock` true scales all three by
+  the first given), of the picked bodies' box together; `about` origin | centre | bed: the middle of its bottom, it stays
+  on the bed), `mirror`, the patterns (`operation` new only) and `move` copies take meshes.
+- `combine` with a mesh among target and tools is a mesh Boolean: the result is a mesh (a solid target becomes one),
+  solids meshed at `tolerance` (0: automatic). A mesh with holes or non-manifold edges is refused: `mesh_repair` it first.
+- `split` on meshes: `keep` both | above | below (along the plane's normal); a closed mesh's cut is capped, an open one
+  (a scan) is clipped uncapped (result `uncapped`). `split_parts`: a mesh's disconnected shells (or a body's solids)
+  become bodies, the largest keeping the node.
+- `mesh_check` (read-only) per body: open edges and holes, non-manifold and flipped edges, degenerate and duplicate
+  triangles, self-intersections, `closed`, `printable`. `mesh_repair` {weld (mm), clean, orient, fill_holes,
+  max_hole_edges} stores its report (`repair`: before, after, counts) in the result; `mesh_simplify` {mode ratio
+  (percent) | count | tolerance (mm), keep_borders} reports before/after and the surface moved (`simplify`).
+- Print placement in the model: `drop_to_bed` {bodies, center} moves each body or component down (or up) until its
+  lowest point is at Z = 0 (placed as it is, nothing rebuilt). Lay flat is `align` with `from: "plane"` on the face that
+  goes down (a mesh triangle as a `fit` seed) onto `{"base": "xy"}`. Export-time placement (build_direction, drop_to_bed,
+  center_xy on an STL/3MF export) leaves the model as it is.
 
 ## Feature conventions
 
@@ -290,6 +332,11 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   and the error); inputs and backward references are checked before anything runs. Every step's new and changed solids
   must pass solid validation, as a single `feature` call's do, so an invalid body fails the step that made it even when
   a later step would have used it up.
+- `validate: "final"` checks only the batch's end state, for a change that passes through a broken state (a cut moved
+  off the part and back, a parameter changed before the sketch that follows it): the steps record their regenerate
+  errors instead of failing (a step's result lists them in `errors`), and at the end every feature, sketch and parameter
+  must be as sound as before the batch and every changed solid valid. A failure there is `failed_step: "final"` with
+  `final_check.errors` naming each item that failed and why; it is still one atomic step, nothing is kept.
 
 ## History and files
 
@@ -300,6 +347,12 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   need `expected_revision` and `request_id`, and not during a transaction.
 - `export` inside a transaction writes its staged state; outside, the document. STEP files are reproducible: the
   header carries the document's last change time and the file's name, so the same document exports the same bytes.
+- Meshes for a printer (`stl`, `3mf`, `obj`, `ply`; world mm, 3MF and PLY with shared vertices): `build_direction`
+  (as `validate` print takes it: "+x".."-z" or [x, y, z], up from the bed) is turned to +Z, or `bed_face` (a face
+  reference) is laid down on the bed; `drop_to_bed` puts the lowest point at Z = 0 (the default once turned) and
+  `center_xy` the box's middle at X = Y = 0. Everything exported turns together; `per_body` STL files are dropped and
+  centred one by one. The result's `placement` gives `up`, `rotation` (3x3 rows), `translation` and the `bbox`
+  written (per file under `files`). Check first with `validate` print and the same `build_direction`.
 - Exploded views: `explode` lists the units (what moves together) and their moves at `t` (0 assembled, 1 exploded).
   `levels` is how deep components split (0 = all); `keep` holds a component together (a PCB), `split` spreads its
   parts beyond the level (screws), `groups` move node lists as one, small parts ride on what they touch; `mode`
@@ -388,7 +441,10 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   it with `at`, `part` or `base` (parts, values, poses and limits stay; `base` is kept unless given).
 - `joint_set` drives joints (`values: {joint: 30}` or `[rotation, translation]`, null leaves one free) or drags a part
   (`part` + world `matrix`); every other part follows through the joints and one pose op is written (`preview: true` only
-  reports). A position the joints cannot reach is refused with the joints that cannot all be met.
+  reports). A position the joints cannot reach is refused with the joints that cannot all be met. Live, a preview is
+  also staged (state `staged`, `preview_id`, no revision or request id needed): `viewport_image` with that `preview_id`
+  renders the trial pose, `preview_commit` applies it, `preview_cancel` or the next write drops it. Inside a
+  transaction (or with view-only access) a preview only reports.
 - `mechanism` lists joints, values, which coordinates are free, degrees of freedom and redundant equations (the
   ground's are not counted; `redundant_joints` names the joints that repeat others, e.g. the one closing a loop).
 - Gears for mechanisms: `feature kind=gear` (`type` spur | internal | rack, `module`, `teeth`, `width`, `bore`,
@@ -401,11 +457,15 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
     `traces: [{"part", "point": [x, y, z] now, "name"}]`. Without drivers, joints with a position or speed `drive` run.
     Returns each coordinate's range, speed and acceleration, and the traced paths. `clearance: true` (or `{"a", "b",
     "ignore", "clearance_mm"}`: bodies or components; a alone: against the mechanism's other bodies) checks every frame:
-    `clearance.status` collision | too_close | clear, `first_collision` (t, pair, kind intersecting | touching | inside),
-    `min_distance_mm` and `closest` (exact), `too_close` pairs, and the series "Minimum distance" (meshes: within
+    `clearance.status` collision | too_close | clear, `first_collision` (t, pair, kind intersecting | touching | inside,
+    `volume_mm3`, `depth_mm`, `at_limit`: joints of the pair held at a limit then), `min_distance_mm` and `closest`
+    (exact), `too_close` pairs, and the series "Minimum distance" (meshes: within
     `mesh_tolerance_mm`, over 1 mm up to 5% high). Pairs already touching at the start (a pin in its bore)
     are listed in `in_contact_at_start` and not followed; collisions between frames are not seen (raise `frames` for
-    fast motion).
+    fast motion). `contact_tolerance_mm` (default 0) makes faces that touch, or overlap no deeper than that (a hard
+    stop meshed a hair into its seat), a contact instead of a collision: `contacts` (pair, t, frame, kind,
+    `depth_mm`, `at_limit`, `expected` when a joint of the pair is at its limit), `contact_pairs`, and status `contact`
+    when nothing else is found; the closest approach leaves those pairs out. 0.05 mm suits printed and machined stops.
   - `id` with `settings` merges them key by key (an array, such as drivers, is replaced whole; null removes a key).
   - `dynamic` (Project Chrono): masses and inertias from the solids and their materials (steel when none, said in
     warnings), `gravity` (true: 9.81 m/s2 down -Z; false; or [x, y, z] mm/s2), joints with their `drive` (`mode`
@@ -504,6 +564,11 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   plane resolved to.
 - Live write results include `changes.bodies`: for each body that command made, changed or moved, its tight
   `bbox` (min, max, size), `volume_mm3` and `valid`, so no `validate` round trip is needed after each step.
+- A refused live edit names what failed, applied directly or with `preview: true` alike: a later feature it breaks
+  ("A feature fails after this change: fillet 'Fillet 2' (<id>) failed: ..."), or an invalid body with the feature
+  that last made it and the kernel's reasons ("Generated body failed solid validation: 'Arm' (<id>), made by fillet
+  'Fillet 2' (<op>): self intersecting wire on 1 face"). A `sketch_edit` is refused when a feature downstream of the
+  sketch fails this way.
 
 - `validate` checks solids and reports volumes; `context` summarises the document (sections `nodes`, `features`,
   `sketches`, `parameters`, `errors`); `entity_details` and `query_entities` describe faces and edges with their
@@ -523,7 +588,12 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   `clearance_mm`, pairs closer than that (`ignore` lists pairs meant to overlap); `checks: ["print"]` reports, per
   body, faces overhanging more than `overhang_deg` (default 45, from vertical) against `build_direction` ("+z"),
   the build-plate contact area, walls thinner than `min_wall_mm` (0.8) and thin features. Add "solid" for the usual
-  validity page.
+  validity page. A thin wall names both sides: `face` and `opposite_face` (with `point` and `opposite_point`), and
+  `between`, each side's face with `created_by` (the feature or import that made it, as `entity_details` says), so
+  `features` lists the features whose surfaces come too close (a shell against its block, a pocket against a rib).
+  Sharp edges are not walls: a ray that leaves through a face sharing an edge with its own measures that edge's wedge
+  (a pocket coming out of a slanted face), so it is left out (counted in `knife_edges`) unless the two faces are
+  within 10 degrees of parallel.
 - `clearance` (read-only) between two groups `a` and `b` (bodies or components): `min_distance_mm` and the closest
   pair, then the pairs across that intersect (overlap volume and box), touch, or come closer than `clearance_mm`,
   worst first and paged; `status` intersecting|touching|too_close|clear. An enclosure against a board assembly.
@@ -555,6 +625,11 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   lists every cell's camera); `edges: true` (viewport_image) or `edge_lines: true` (render; there `edges` is the
   silhouette outline, on by default) draws the model's edges; `highlight: [refs]` tints faces and edges orange;
   `shading: "smooth"` shades curved surfaces smoothly. All are off by default.
+- Point clouds are drawn as points (round splats sized from their spacing, lit by their normals, in their own colours).
+  `cloud_color: "height"` colours them by height above a plane, blue low to red high with a legend: `height_plane` (any
+  plane input; default each cloud's own dominant plane from `scan_axes`, heights into the material) ; the result's
+  `cloud_height` gives `range_mm` (2nd to 98th percentile) and the plane(s). It shows a scan's flat as one colour and
+  what stands off it, before and after an Align.
 
 ## Point clouds
 
@@ -583,6 +658,8 @@ sections; `guide_section: "<id>"` returns one, `"all"` the whole guide.
   them; `sketch_id` and `profile` {polylines, lines, points} come back): fit arcs, constraints and dimensions to them
   with `sketch_edit`, then extrude or revolve as usual.
 - `export` writes clouds as `ply` (binary, every attribute), `xyz`, `pts`, `csv` or `e57` (metres), world mm.
+- Standing a cloud on the axes: `scan_axes {body}` works on clouds too (their dominant plane by position, X squared to the
+  outline); `viewport_image` / `render` draw them as points, `cloud_color: "height"` by height above a plane.
 
 ## Drawings
 

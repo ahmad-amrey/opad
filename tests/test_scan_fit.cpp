@@ -10,15 +10,20 @@
 #include <TopTools_ListOfShape.hxx>
 #include <gp_Pln.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
+#include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRep_Tool.hxx>
 #include <Poly_Triangulation.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Pnt2d.hxx>
+#include <gp_Vec2d.hxx>
 #include <gp_GTrsf.hxx>
 
 #include <cstdint>
@@ -32,6 +37,7 @@
 #include "opad/design/feature.hpp"
 #include "opad/document.hpp"
 #include "opad/geometry.hpp"
+#include "opad/point_cloud.hpp"
 #include "opad/scan_fit.hpp"
 #include "opad/scene.hpp"
 #include "opad/drawing_io.hpp"
@@ -210,6 +216,91 @@ TopoDS_Shape in_cells(const TopoDS_Shape& s, double step, const gp_Pnt& lo, cons
 Document noisy_plate() {
   static const std::vector<Tri> tris = triangles_of(in_cells(cover_plate(), 1.25, gp_Pnt(0.6, 0.6, 0.6), gp_Pnt(100, 60, 12)), 0.03, 1);
   return scan_document(tris, 0.03, [](const gp_Pnt& p) { return p.Distance(gp_Pnt(100, 60, 4)) < 9; });
+}
+
+// A flat-backed slab as a scanner's cloud, 140 x 64 (corners rounded 8): a flat back on z = 0 rounded into the sides (3 mm),
+// walls up to z = 6 and a domed top (8 at the middle), points about `step` apart with 0.05 mm noise, tilted. Normals: "noisy"
+// (turned some 20 degrees at random and half of them the wrong way round, as some scanning apps write them), "none", or exact.
+// `lingered` adds points on the top near one corner, as a scanner held there makes: the principal axes turn, the outline
+// does not.
+cloud::Points slab_cloud(const std::string& normals, bool lingered, double step = 0.6) {
+  const double A = 70, B = 32, R = 8, E = 3, wall = 6;
+  auto inside = [](double u, double v, double a, double b, double r) {
+    const double du = std::max(0.0, std::fabs(u) - (a - r)), dv = std::max(0.0, std::fabs(v) - (b - r));
+    return du * du + dv * dv <= r * r;
+  };
+  std::vector<std::pair<gp_Pnt, gp_Vec>> pts;
+  for (double u = -A; u <= A; u += step)
+    for (double v = -B; v <= B; v += step) {
+      if (inside(u, v, A - E, B - E, R - E)) pts.push_back({gp_Pnt(u, v, 0), gp_Vec(0, 0, -1)});
+      if (inside(u, v, A, B, R)) {
+        const double z = 8 - (u / A) * (u / A) - (v / B) * (v / B);
+        pts.push_back({gp_Pnt(u, v, z), gp_Vec(2 * u / (A * A), 2 * v / (B * B), 1).Normalized()});
+      }
+    }
+  if (lingered)
+    for (double u = 35; u <= 66; u += step / 2)
+      for (double v = 9; v <= 28; v += step / 2) pts.push_back({gp_Pnt(u + 0.1, v + 0.1, 8 - (u / A) * (u / A) - (v / B) * (v / B)), gp_Vec(0, 0, 1)});
+  // The rim: round the inset outline (half sizes A - E, B - E, corner R - E) by arc length, the edge's quarter round then the wall.
+  const double a = A - R, b = B - R, r = R - E;
+  const double sides[4] = {2 * a, 2 * b, 2 * a, 2 * b}, corner = kPi / 2 * r;
+  const double perimeter = 2 * (2 * a + 2 * b) + 4 * corner;
+  for (double s = 0; s < perimeter; s += step) {
+    // Walk: four straight sides each followed by a corner, anticlockwise from (a, -b - r).
+    double t = s;
+    gp_Pnt2d at;
+    gp_Vec2d out;
+    const gp_Pnt2d starts[4] = {gp_Pnt2d(-a, -b - r), gp_Pnt2d(a + r, -b), gp_Pnt2d(a, b + r), gp_Pnt2d(-a - r, b)};
+    const gp_Vec2d dirs[4] = {gp_Vec2d(1, 0), gp_Vec2d(0, 1), gp_Vec2d(-1, 0), gp_Vec2d(0, -1)};
+    const gp_Vec2d outs[4] = {gp_Vec2d(0, -1), gp_Vec2d(1, 0), gp_Vec2d(0, 1), gp_Vec2d(-1, 0)};
+    const gp_Pnt2d centres[4] = {gp_Pnt2d(a, -b), gp_Pnt2d(a, b), gp_Pnt2d(-a, b), gp_Pnt2d(-a, -b)};
+    for (int k = 0; k < 4; ++k) {
+      if (t < sides[k]) {
+        at = starts[k].Translated(dirs[k] * t), out = outs[k];
+        break;
+      }
+      t -= sides[k];
+      if (t < corner) {
+        const double ang = std::atan2(outs[k].Y(), outs[k].X()) + t / r;
+        out = gp_Vec2d(std::cos(ang), std::sin(ang));
+        at = centres[k].Translated(out * r);
+        break;
+      }
+      t -= corner;
+    }
+    for (double phi = 0; phi <= kPi / 2 + 1e-9; phi += step / E) {
+      const gp_Vec n(out.X() * std::sin(phi), out.Y() * std::sin(phi), -std::cos(phi));
+      pts.push_back({gp_Pnt(at.X() + out.X() * E * std::sin(phi), at.Y() + out.Y() * E * std::sin(phi), E * (1 - std::cos(phi))), n});
+    }
+    for (double z = E + step; z <= wall; z += step) pts.push_back({gp_Pnt(at.X() + out.X() * E, at.Y() + out.Y() * E, z), gp_Vec(out.X(), out.Y(), 0)});
+  }
+  cloud::Points c;
+  const gp_Trsf t = tilt();
+  for (auto& [p, n] : pts) {
+    const gp_Pnt q = p.Transformed(t).Translated(noise_at(p, 0.05));
+    c.xyz.insert(c.xyz.end(), {float(q.X()), float(q.Y()), float(q.Z())});
+    gp_Vec m = n;
+    if (normals == "noisy") {
+      m = (n + noise_at(gp_Pnt(p.X() * 3.1, p.Y() * 1.7, p.Z() + 11), 0.3)).Normalized();
+      if (noise_at(gp_Pnt(p.Y(), p.Z(), p.X()), 1).X() < 0) m.Reverse();
+    }
+    m.Transform(t);
+    if (normals != "none") c.normals.insert(c.normals.end(), {float(m.X()), float(m.Y()), float(m.Z())});
+  }
+  return c;
+}
+
+// A box 140 x 64 x 8 with every edge rounded 3, as a noisy scan's mesh.
+Document slab_mesh() {
+  const TopoDS_Shape box = BRepPrimAPI_MakeBox(gp_Pnt(-70, -32, 0), 140, 64, 8).Shape();
+  BRepFilletAPI_MakeFillet round(box);
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(box, TopAbs_EDGE, edges);
+  for (int i = 1; i <= edges.Extent(); ++i) round.Add(3, TopoDS::Edge(edges(i)));
+  round.Build();
+  if (!round.IsDone()) throw Error("the slab's edges could not be rounded");
+  static const std::vector<Tri> tris = triangles_of(round.Shape(), 0.1, 2);
+  return scan_document(tris, 0.05);
 }
 
 }  // namespace
@@ -403,8 +494,18 @@ TEST(scan_axes_of_an_organic_blob) {
   std::printf("    blob: %d triangles, method %s\n", m->triangles(), axes.method.c_str());
   CHECK(axes.method == "pca");
   CHECK(axes.bases.size() == 6);
+  // The least spread direction first (the thin one stands up), then the middle, then the longest.
   CHECK(angle_to(axes.bases[0].normal, tilted(gp_Dir(0, 0, 1))) < 1);
+  CHECK(angle_to(axes.bases[2].normal, tilted(gp_Dir(0, 1, 0))) < 1);
+  CHECK(angle_to(axes.bases[4].normal, tilted(gp_Dir(1, 0, 0))) < 1);
+  CHECK(axes.bases[0].kind == "pca");
+  // An oval outline has no one clear rectangle (its least one turns with the tessellation and the noise): X stays the
+  // longest direction, not squared.
+  const scanfit::ScanOutline o = scanfit::scan_outline(*m, axes, 0);
   const auto turns = scanfit::scan_turns(*m, axes, 0);
+  std::printf("    blob outline %.2f x %.2f, squared %d, turn %.3f deg, X off %.3f deg\n", o.length, o.width, int(o.squared), o.turn_deg, angle_to(turns[0], tilted(gp_Dir(1, 0, 0))));
+  CHECK(!o.squared);
+  CHECK(o.turn_deg == 0);
   CHECK(angle_to(turns[0], tilted(gp_Dir(1, 0, 0))) < 1);
   const scanfit::ScanFrame f = scanfit::scan_frame(*m, axes, 0, 0, "auto");
   CHECK(f.origin.Distance(tilted(gp_Pnt(0, 0, 0))) < 0.5);  // the box centre
@@ -423,10 +524,124 @@ TEST(a_point_cloud_has_nodes_and_principal_axes) {
   CHECK(m->triangles() == 0 && m->nodes.size() == 4000u);
   const scanfit::Plane p = scanfit::fit_plane(m->nodes);
   CHECK(angle_to(p.normal, tilted(gp_Dir(0, 0, 1))) < 0.5);
+  // A flat sheet is one dominant plane (fitted by position: the cloud has no facets to take normals from).
   const scanfit::ScanAxes axes = scanfit::scan_axes(*m);
-  CHECK(axes.method == "pca");
+  CHECK(axes.method == "plane");
   CHECK(angle_to(axes.bases[0].normal, tilted(gp_Dir(0, 0, 1))) < 0.5);
   CHECK(angle_to(scanfit::scan_turns(*m, axes, 0)[0], tilted(gp_Dir(1, 0, 0))) < 0.5);
+}
+
+TEST(scan_axes_finds_the_flat_back_of_a_noisy_slab_cloud) {
+  // A cloud has no facets for the normals' modes: its dominant plane by position is the back, with noisy unoriented normals
+  // and without any (estimated from the neighbours). PCA alone stood it on its long axis.
+  for (const char* normals : {"noisy", "none"}) {
+    const cloud::Points pts = slab_cloud(normals, false);
+    const auto m = scanfit::fit_mesh(cloud::to_shape(pts));
+    CHECK_EQ(m->node_normal.empty(), std::string(normals) == "none");
+    const scanfit::ScanAxes axes = scanfit::scan_axes(*m);
+    const scanfit::ScanBase& b = axes.bases.front();
+    std::printf("    slab cloud (%s normals, %zu points): method %s, %zu bases, base 0 %s off %.3f deg, share %.2f, rms %.4f\n", normals,
+                pts.size(), axes.method.c_str(), axes.bases.size(), b.kind.c_str(), angle_to(b.normal, tilted(gp_Dir(0, 0, 1))), b.share, b.q.rms);
+    CHECK(axes.method == "plane");
+    CHECK(b.kind == "plane");
+    CHECK(angle_to(b.normal, tilted(gp_Dir(0, 0, 1))) < 0.2);
+    CHECK(b.normal.Dot(tilted(gp_Dir(0, 0, -1))) > 0);  // out of the back: the slab stands on it
+    CHECK(std::fabs(gp_Vec(tilted(gp_Pnt(0, 0, 0)), b.origin).Dot(gp_Vec(b.normal))) < 0.05);
+    CHECK(b.q.rms < 0.08);
+    CHECK(b.share > 0.25);
+    // The domed top is no base (a quadric bows over it); the principal directions follow, none along the back's normal.
+    for (size_t i = 1; i < axes.bases.size(); ++i)
+      if (axes.bases[i].kind == "plane") CHECK(angle_to(axes.bases[i].normal, tilted(gp_Dir(0, 0, 1))) > 1);
+    // Standing on it: the frame's origin on the back under the outline's middle, X along the long side.
+    const scanfit::ScanFrame f = scanfit::scan_frame(*m, axes, 0, 0, "auto");
+    CHECK(f.origin.Distance(tilted(gp_Pnt(0, 0, 0))) < 0.3);
+    CHECK(angle_to(f.x, tilted(gp_Dir(1, 0, 0))) < 0.2);
+  }
+}
+
+TEST(scan_axes_dominant_plane_of_a_noisy_slab_mesh) {
+  // The same search on a mesh (forced: the normals' modes find this slab's flats themselves), and those modes by default.
+  const Document doc = slab_mesh();
+  const auto m = mesh_of(doc, mesh_node(doc));
+  const scanfit::ScanAxes planes = scanfit::scan_axes(*m, {}, 1.0);
+  std::printf("    slab mesh: %d triangles, forced method %s, base 0 off %.3f deg, share %.2f, rms %.4f\n", m->triangles(), planes.method.c_str(),
+              angle_to(planes.bases[0].normal, tilted(gp_Dir(0, 0, 1))), planes.bases[0].share, planes.bases[0].q.rms);
+  CHECK(planes.method == "plane");
+  CHECK(angle_to(planes.bases[0].normal, tilted(gp_Dir(0, 0, 1))) < 0.2);
+  CHECK(planes.bases[0].q.rms < 0.08);
+  CHECK(planes.bases[0].share > 0.3);
+  const scanfit::ScanAxes flats = scanfit::scan_axes(*m);
+  CHECK(flats.method == "flats");
+  CHECK(angle_to(flats.bases[0].normal, tilted(gp_Dir(0, 0, 1))) < 0.2);
+  const scanfit::ScanOutline o = scanfit::scan_outline(*m, flats, 0);
+  CHECK(std::fabs(o.length - 140) < 0.4 && std::fabs(o.width - 64) < 0.4);
+}
+
+TEST(square_a_scan_to_its_outline) {
+  // A scanner lingered over one corner: the principal directions turn a few degrees, the outline's minimum-area rectangle
+  // does not. X squared to it (the default) gives the slab's true size; the walls' / longest direction a bigger box.
+  const cloud::Points pts = slab_cloud("noisy", true);
+  const auto m = scanfit::fit_mesh(cloud::to_shape(pts));
+  const scanfit::ScanAxes axes = scanfit::scan_axes(*m);
+  CHECK(axes.method == "plane");
+  const auto walls = scanfit::scan_turns(*m, axes, 0, "walls");
+  const scanfit::ScanOutline o = scanfit::scan_outline(*m, axes, 0);
+  std::printf("    outline %.2f x %.2f, turn %.2f deg; unsquared %.2f x %.2f, off %.2f deg\n", o.length, o.width, o.turn_deg, o.unsquared_length,
+              o.unsquared_width, angle_to(walls[0], tilted(gp_Dir(1, 0, 0))));
+  CHECK(angle_to(walls[0], tilted(gp_Dir(1, 0, 0))) > 1);  // what X was before
+  CHECK(o.squared);
+  CHECK(angle_to(o.x, tilted(gp_Dir(1, 0, 0))) < 0.15);
+  CHECK(std::fabs(o.length - 140) < 0.4);
+  CHECK(std::fabs(o.width - 64) < 0.4);
+  CHECK(std::fabs(std::fabs(o.turn_deg) - angle_to(walls[0], tilted(gp_Dir(1, 0, 0)))) < 0.2);
+  CHECK(o.unsquared_length > o.length + 1 && o.unsquared_width > o.width + 2);
+  CHECK(o.centre.Distance(tilted(gp_Pnt(0, 0, 0))) < 0.3);
+  // The default turns: the outline's long side, then its quarter turns.
+  const auto turns = scanfit::scan_turns(*m, axes, 0);
+  CHECK(turns.size() >= 4);
+  CHECK(angle_to(turns[0], o.x) < 1e-9);
+  CHECK(angle_to(turns[1], tilted(gp_Dir(0, 1, 0))) < 0.15);
+  CHECK_THROWS(scanfit::scan_turns(*m, axes, 0, "nope"));
+
+  // Through the document: scan_axes reports the outline, and its Align inputs stand the slab on XY at its true size.
+  static Files files;
+  const auto path = files.dir / ("slab-" + new_uuid() + ".ply");
+  cloud::write_file(path, pts);
+  Document doc = Document::create();
+  import_file(doc, path);
+  std::string scan;
+  for (const auto& id : resolve(doc).all_bodies()) scan = id;
+  const json report = design::scan_axes_report(doc, resolve(doc), scan);
+  CHECK(report.value("method", "") == "plane");
+  CHECK(report.value("x", "") == "outline");
+  const json& outline = report["bases"][0]["outline"];
+  CHECK_NEAR(outline["size_mm"][0].get<double>(), 140, 0.4);
+  CHECK_NEAR(outline["size_mm"][1].get<double>(), 64, 0.4);
+  CHECK(std::fabs(outline["turn_deg"].get<double>()) > 1);
+  CHECK(outline.value("squared", false));
+  CHECK(report["align_inputs"]["from_plane"]["fit"].value("x", "") == "outline");
+  const json r = commands::run("feature", {{"kind", "align"}, {"inputs", report["align_inputs"]}}, &doc);
+  CHECK(!r.contains("error"));
+  const json& stored = doc.ops.back().data.at("inputs").at("from_plane").at("result");
+  CHECK(stored.contains("outline"));
+  CHECK(stored.value("kind", "") == "plane");
+  const Scene s = resolve(doc);
+  const cloud::Points moved = cloud::from_shape(node_world_shape(doc, s, scan));
+  const auto box = cloud::bounds(moved);
+  std::printf("    aligned: %.2f x %.2f x %.2f, z from %.3f\n", box[1][0] - box[0][0], box[1][1] - box[0][1], box[1][2] - box[0][2], box[0][2]);
+  CHECK(std::fabs((box[1][0] - box[0][0]) - 140) < 0.4);
+  CHECK(std::fabs((box[1][1] - box[0][1]) - 64) < 0.4);
+  CHECK(std::fabs(box[0][2]) < 0.25);
+  CHECK(std::fabs(box[0][0] + box[1][0]) < 0.4 && std::fabs(box[0][1] + box[1][1]) < 0.4);
+  // x "walls" keeps the old X: the box comes out bigger.
+  Document other = Document::create();
+  import_file(other, path);
+  std::string scan2;
+  for (const auto& id : resolve(other).all_bodies()) scan2 = id;
+  const json walled = design::scan_axes_report(other, resolve(other), scan2, {}, "walls");
+  commands::run("feature", {{"kind", "align"}, {"inputs", walled["align_inputs"]}}, &other);
+  const auto wbox = cloud::bounds(cloud::from_shape(node_world_shape(other, resolve(other), scan2)));
+  CHECK((wbox[1][0] - wbox[0][0]) > 141.5);
 }
 
 // ---------------------------------------------------------------- as references (design)
@@ -565,6 +780,36 @@ TEST(fitted_axes_and_points_as_references) {
   CHECK(kept["plane"].contains("result") && kept["plane2"].contains("result"));
   // A fit on a solid body is refused with a reason.
   CHECK_THROWS(design::fit_reference(doc, after, {{"fit", {{"body", "nope"}, {"seed", 0}}}}, "plane"));
+}
+
+
+TEST(scan_axes_of_a_stepped_sheet_cloud) {
+  // A 60 x 40 sheet of points 0.5 mm apart with a 5 mm step at x = 36, no noise: the larger level is the dominant plane
+  // (base 0, facing out of the material), the other level next; with normals from the file, without, unusable ones and
+  // misleading ones (all sideways: the search along them finds nothing, so the points' own thinnest direction is tried).
+  for (const std::string normals : {"given", "none", "zero", "sideways"}) {
+    scanfit::FitMesh m;
+    gp_XYZ sum(0, 0, 0);
+    for (double x = 0; x <= 60; x += 0.5)
+      for (double y = 0; y <= 40; y += 0.5) {
+        m.nodes.emplace_back(x, y, x < 36 ? 0 : 5);
+        sum += m.nodes.back().XYZ();
+        if (normals == "sideways") m.node_normal.emplace_back(1, 0, 0);
+        else if (normals != "none") m.node_normal.emplace_back(0, 0, normals == "given" ? 1 : 0);
+      }
+    m.centroid = gp_Pnt(sum / double(m.nodes.size()));
+    m.diagonal = std::sqrt(60.0 * 60 + 40 * 40 + 5 * 5);
+    const scanfit::ScanAxes axes = scanfit::scan_axes(m);
+    std::printf("    stepped sheet (%s normals): method %s, base 0 %s at z %.4f, normal %.4f %.4f %.4f\n", normals.c_str(), axes.method.c_str(),
+                axes.bases[0].kind.c_str(), axes.bases[0].origin.Z(), axes.bases[0].normal.X(), axes.bases[0].normal.Y(), axes.bases[0].normal.Z());
+    CHECK(axes.method == "plane");
+    CHECK(axes.bases.size() >= 2);
+    CHECK(axes.bases[0].kind == "plane" && axes.bases[1].kind == "plane");
+    CHECK(std::fabs(axes.bases[0].origin.Z()) < 1e-6);
+    CHECK(axes.bases[0].normal.Z() < -0.999999);
+    CHECK(std::fabs(axes.bases[1].origin.Z() - 5) < 1e-6);
+    CHECK(axes.bases[1].normal.Z() > 0.999999);
+  }
 }
 
 CHECK_MAIN()

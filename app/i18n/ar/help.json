@@ -1270,5 +1270,17 @@
  "Scan": "مسح",
  "Changes": "التغييرات",
  "2 140 moved": "2 140 منقولة",
- "Step EditPoints1": "الخطوة EditPoints1"
+ "Step EditPoints1": "الخطوة EditPoints1",
+ "Select the body and start Lay flat": "حدّد الجسم وابدأ «وضع على وجه»",
+ "Click the face that goes on the bed": "انقر الوجه الذي يستقر على السرير",
+ "It turns face down onto the bed; {fixed:enter} keeps it": "يدور ليستقر وجهه على السرير؛ و{fixed:enter} يُبقيه",
+ "Select the bodies above (or below) the bed": "حدّد الأجسام التي فوق السرير (أو تحته)",
+ "{fixed:enter}: each moves down until it stands on Z = 0": "{fixed:enter}: ينزل كلٌّ منها حتى يستقر على Z = 0",
+ "Select a mesh of several separate pieces": "حدّد شبكة من عدة قطع منفصلة",
+ "{fixed:enter}: each piece becomes a body of its own": "{fixed:enter}: تصبح كل قطعة جسمًا مستقلًا",
+ "Select a mesh with a hole or flipped triangles": "حدّد شبكة فيها ثقب أو مثلثات مقلوبة",
+ "The panel says what is wrong with it": "تذكر اللوحة ما فيها من عيوب",
+ "{fixed:enter}: welded, turned outward and closed": "{fixed:enter}: تُلحم وتُوجَّه إلى الخارج وتُغلق",
+ "Select the mesh and choose how far: a percent, a count or a tolerance": "حدّد الشبكة واختر المقدار: نسبة مئوية أو عدد أو تفاوت",
+ "{fixed:enter}: fewer triangles, the same shape": "{fixed:enter}: مثلثات أقل والشكل نفسه"
 }

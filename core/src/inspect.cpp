@@ -367,37 +367,61 @@ json describe_entity(const TopoDS_Shape& sub, const json& filters) {
   return j;
 }
 
-std::function<json(const TopoDS_Shape&)> entity_describer(const TopoDS_Shape& body, const json& filters) {
+std::function<json(const TopoDS_Shape&)> entity_describer(const TopoDS_Shape& body, const json& filters, double tolerance) {
   // The edges on a hole of some face: every wire of a face but its outer one.
   auto inner = std::make_shared<TopTools_IndexedMapOfShape>();
   const bool loops = filters.is_object() && filters.contains("loop");
-  if (loops)
+  const bool of_face = filters.is_object() && filters.contains("of_face");
+  // of_face: the edges of the faces it names, and of those the ones on the faces' outer wires.
+  auto on_faces = std::make_shared<TopTools_IndexedMapOfShape>(), on_outer = std::make_shared<TopTools_IndexedMapOfShape>();
+  if (of_face) {
+    const json& of = filters["of_face"];
+    if (!of.is_number_integer() && !of.is_object())
+      throw Error("of_face is a face's index or face filters such as {\"normal\": \"+z\", \"at_plane\": {\"axis\": \"z\", \"value\": 10}}");
+    if (of.is_object() && (of.contains("loop") || of.contains("of_face"))) throw Error("of_face takes face filters: loop and of_face are edge filters");
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(body, TopAbs_FACE, faces);
+    for (int i = 1; i <= faces.Extent(); ++i) {
+      const bool picked = of.is_number_integer() ? i - 1 == of.get<int>() : entity_matches(describe_entity(faces(i), of), of, tolerance);
+      if (!picked) continue;
+      const TopoDS_Face& face = TopoDS::Face(faces(i));
+      TopExp::MapShapes(face, TopAbs_EDGE, *on_faces);
+      if (const TopoDS_Wire outer = BRepTools::OuterWire(face); !outer.IsNull()) TopExp::MapShapes(outer, TopAbs_EDGE, *on_outer);
+    }
+    if (on_faces->IsEmpty()) throw Error("of_face " + of.dump() + " matches no face of the body");
+  } else if (loops)
     for (TopExp_Explorer f(body, TopAbs_FACE); f.More(); f.Next()) {
       const TopoDS_Face& face = TopoDS::Face(f.Current());
       const TopoDS_Wire outer = BRepTools::OuterWire(face);
       for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next())
         if (!w.Current().IsSame(outer)) TopExp::MapShapes(w.Current(), TopAbs_EDGE, *inner);
     }
-  return [inner, loops, filters](const TopoDS_Shape& sub) {
+  return [inner, on_faces, on_outer, loops, of_face, filters](const TopoDS_Shape& sub) {
     json j = describe_entity(sub, filters);
-    if (loops && sub.ShapeType() == TopAbs_EDGE) j["loop"] = inner->Contains(sub) ? "inner" : "outer";
+    if (sub.ShapeType() != TopAbs_EDGE) return j;
+    if (of_face) {
+      j["of_face"] = on_faces->Contains(sub);
+      if (loops) j["loop"] = on_outer->Contains(sub) ? "outer" : on_faces->Contains(sub) ? "inner" : "";
+    } else if (loops)
+      j["loop"] = inner->Contains(sub) ? "inner" : "outer";
     return j;
   };
 }
 
 bool entity_matches(const json& detail, const json& filters, double tolerance) {
   static const std::set<std::string> known = {"curve", "surface", "radius_min", "radius_max", "length_min", "length_max", "area_min", "area_max",
-                                              "parallel_to", "normal", "at_plane", "bounds", "bounds_mode", "loop"};
+                                              "parallel_to", "normal", "at_plane", "bounds", "bounds_mode", "loop", "of_face"};
   for (const auto& [key, value] : filters.items())
     if (!known.count(key))
       throw Error("unknown filter \"" + key + "\" (curve, surface, radius_min, radius_max, length_min, length_max, area_min, area_max, parallel_to, normal, "
-                  "at_plane, bounds, bounds_mode, loop)");
+                  "at_plane, bounds, bounds_mode, loop, of_face)");
   for (const auto& [key, value] : filters.items())  // an expression a rule selector did not evaluate (query_entities does)
     if (value.is_string() && key != "curve" && key != "surface" && key != "parallel_to" && key != "normal" && key != "bounds_mode" && key != "loop")
       throw Error("filter \"" + key + "\" takes a number here, not \"" + value.get<std::string>() + "\"");
   const std::string bounds_mode = filters.value("bounds_mode", "inside");
-  if (bounds_mode != "inside" && bounds_mode != "intersects" && bounds_mode != "outside")
-    throw Error("bounds_mode is \"inside\" (the whole entity in the box, the default), \"intersects\" (any part of it) or \"outside\" (none of it)");
+  if (bounds_mode != "inside" && bounds_mode != "intersects" && bounds_mode != "outside" && bounds_mode != "not_inside")
+    throw Error("bounds_mode is \"inside\" (the whole entity in the box, the default), \"intersects\" (any part of it), \"outside\" (none of it: "
+                "an arc reaching into the box is not outside) or \"not_inside\" (any part out of the box)");
   if (filters.contains("bounds_mode") && !filters.contains("bounds")) throw Error("bounds_mode needs bounds {min, max}");
   if (filters.contains("loop") && filters["loop"] != "inner" && filters["loop"] != "outer")
     throw Error("loop is \"inner\" (edges on a hole of one of the body's faces) or \"outer\" (every other edge)");
@@ -434,6 +458,7 @@ bool entity_matches(const json& detail, const json& filters, double tolerance) {
   };
   if (!in_range("length", "length_min", "length_max", tolerance)) return false;
   if (!in_range("area", "area_min", "area_max", tolerance * tolerance)) return false;
+  if (filters.contains("of_face") && !detail.value("of_face", false)) return false;
   if (filters.contains("loop") && detail.value("loop", "") != filters["loop"].get<std::string>()) return false;
   if (filters.contains("parallel_to")) {
     if (!detail.contains("direction")) return false;
@@ -463,7 +488,7 @@ bool entity_matches(const json& detail, const json& filters, double tolerance) {
         if (b0 < lo - tolerance || b1 > hi + tolerance) inside = false;
         if (b1 < lo - tolerance || b0 > hi + tolerance) touches = false;
       }
-      if (bounds_mode == "inside" ? !inside : bounds_mode == "intersects" ? !touches : touches) return false;
+      if (bounds_mode == "inside" ? !inside : bounds_mode == "intersects" ? !touches : bounds_mode == "not_inside" ? inside : touches) return false;
     }
   }
   return true;

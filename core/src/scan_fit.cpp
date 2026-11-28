@@ -4,6 +4,7 @@
 #include "opad/scan_fit.hpp"
 
 #include <BRep_Tool.hxx>
+#include <OSD_Parallel.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -12,6 +13,8 @@
 #include <Eigen/Dense>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -22,6 +25,7 @@
 #include <unordered_map>
 
 #include "meshsolid/meshsolid.hpp"
+#include "opad/point_cloud.hpp"
 #include "opad/util.hpp"
 
 namespace opad::scanfit {
@@ -150,6 +154,7 @@ std::shared_ptr<const FitMesh> fit_mesh(const TopoDS_Shape& shape, const std::fu
   auto check = [&] {
     if (cancelled && cancelled()) throw Error("cancelled");
   };
+  bool normals = true;  // every part of a cloud has its normals (else none are kept)
   for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {  // as opad::subshape numbers a mesh
     const TopoDS_Face face = TopoDS::Face(f.Current());
     TopLoc_Location loc;
@@ -158,6 +163,18 @@ std::shared_ptr<const FitMesh> fit_mesh(const TopoDS_Shape& shape, const std::fu
     const gp_Trsf tr = loc.Transformation();
     const int first = int(m->nodes.size());
     for (int i = 1; i <= t->NbNodes(); ++i) m->nodes.push_back(loc.IsIdentity() ? t->Node(i) : t->Node(i).Transformed(tr));
+    normals = normals && t->NbTriangles() == 0 && t->HasNormals();
+    if (normals)
+      for (int i = 1; i <= t->NbNodes(); ++i) {
+        gp_Vec3f v;
+        t->Normal(i, v);
+        gp_Vec d(v.x(), v.y(), v.z());
+        if (d.Magnitude() > 1e-12) {
+          d.Normalize();
+          if (!loc.IsIdentity()) d.Transform(tr);
+        }
+        m->node_normal.push_back(d);
+      }
     const bool reversed = face.Orientation() == TopAbs_REVERSED;
     for (int i = 1; i <= t->NbTriangles(); ++i) {
       int a, b, c;
@@ -167,6 +184,7 @@ std::shared_ptr<const FitMesh> fit_mesh(const TopoDS_Shape& shape, const std::fu
     }
   }
   if (m->tri.empty() && m->nodes.empty()) throw Error("the body has no triangles to fit to");
+  if (!normals || m->node_normal.size() != m->nodes.size()) m->node_normal.clear();
   if (m->tri.empty()) {  // a point cloud (nodes, no triangles): its points only, fitted by "vertices" ranges
     gp_XYZ sum(0, 0, 0);
     for (const auto& p : m->nodes) sum += p.XYZ();
@@ -876,6 +894,27 @@ int sphere_bin(const gp_Vec& d, int n) {
   return (face * n + i) * n + j;
 }
 
+// The bins at least `floor` heavy that no neighbour on their cube face outweighs, heaviest first.
+std::vector<int> bin_peaks(const std::vector<double>& bins, int R, double floor, size_t most) {
+  std::vector<int> starts;
+  for (int f = 0; f < 6; ++f)
+    for (int i = 0; i < R; ++i)
+      for (int j = 0; j < R; ++j) {
+        const int b = (f * R + i) * R + j;
+        if (bins[size_t(b)] < floor) continue;
+        bool peak = true;
+        for (int di = -1; di <= 1 && peak; ++di)
+          for (int dj = -1; dj <= 1 && peak; ++dj) {
+            const int ii = i + di, jj = j + dj;
+            if ((di || dj) && ii >= 0 && jj >= 0 && ii < R && jj < R && bins[size_t((f * R + ii) * R + jj)] > bins[size_t(b)]) peak = false;
+          }
+        if (peak) starts.push_back(b);
+      }
+  std::stable_sort(starts.begin(), starts.end(), [&](int a, int b) { return bins[size_t(a)] > bins[size_t(b)]; });
+  if (starts.size() > most) starts.resize(most);
+  return starts;
+}
+
 // How much of the mesh lies behind the plane (on the side away from its normal), by node count.
 double behind(const FitMesh& m, const gp_Pnt& o, const gp_Dir& n) {
   const double tol = std::max(1e-6, m.diagonal * 0.01);
@@ -886,151 +925,286 @@ double behind(const FitMesh& m, const gp_Pnt& o, const gp_Dir& n) {
   return total ? double(count) / double(total) : 0;
 }
 
-}  // namespace
+// Bases the whole scan stands behind first (a plate's top and bottom, not a rib's top), then by share.
+void rank_bases(const FitMesh& m, std::vector<ScanBase>& bases) {
+  std::vector<std::pair<double, ScanBase>> ranked;
+  for (const auto& b : bases) ranked.push_back({behind(m, b.origin, b.normal) >= 0.97 ? 1.0 + b.share : b.share, b});
+  std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+  bases.clear();
+  for (auto& [s, b] : ranked) bases.push_back(b);
+}
 
-ScanAxes scan_axes(const FitMesh& m, const std::function<bool()>& cancelled, double min_share) {
-  auto check = [&] {
-    if (cancelled && cancelled()) throw Error("cancelled");
-  };
-  const size_t n = size_t(m.triangles());
-  ScanAxes out;
-  const double total = std::max(m.total_area, 1e-300);
-  // 1. Area-weighted normals binned on the sphere; the bins heavier than their neighbours start a mean shift.
-  constexpr int R = 24;
-  std::vector<double> bins(6 * R * R, 0);
-  std::vector<gp_Vec> sums(6 * R * R, gp_Vec(0, 0, 0));
-  for (size_t t = 0; t < n; ++t) {
-    if (m.area[t] <= 0) continue;
-    const int b = sphere_bin(m.smooth[t], R);
-    if (b < 0) continue;
-    bins[size_t(b)] += m.area[t];
-    sums[size_t(b)] += m.smooth[t] * m.area[t];
-  }
-  check();
-  std::vector<int> starts;
-  for (int f = 0; f < 6; ++f)
-    for (int i = 0; i < R; ++i)
-      for (int j = 0; j < R; ++j) {
-        const int b = (f * R + i) * R + j;
-        if (bins[size_t(b)] < 0.004 * total) continue;
-        bool peak = true;
-        for (int di = -1; di <= 1 && peak; ++di)
-          for (int dj = -1; dj <= 1 && peak; ++dj) {
-            const int ii = i + di, jj = j + dj;
-            if ((di || dj) && ii >= 0 && jj >= 0 && ii < R && jj < R && bins[size_t((f * R + ii) * R + jj)] > bins[size_t(b)]) peak = false;
-          }
-        if (peak) starts.push_back(b);
-      }
-  std::sort(starts.begin(), starts.end(), [&](int a, int b) { return bins[size_t(a)] > bins[size_t(b)]; });
-  if (starts.size() > 16) starts.resize(16);
-  struct Mode {
-    gp_Dir d;
-    double weight;
-  };
-  std::vector<Mode> modes;
-  const double kernel = std::cos(rad(6)), reach = std::cos(rad(25));
-  for (int b : starts) {
-    check();
-    if (sums[size_t(b)].Magnitude() <= 0) continue;
-    gp_Dir d(sums[size_t(b)]);
-    std::vector<int> near;
-    for (size_t t = 0; t < n; ++t)
-      if (m.area[t] > 0 && m.smooth[t].Dot(gp_Vec(d)) >= reach) near.push_back(int(t));
-    double weight = 0;
-    for (int it = 0; it < 20; ++it) {
-      gp_Vec s(0, 0, 0);
-      weight = 0;
-      for (int t : near)
-        if (m.smooth[size_t(t)].Dot(gp_Vec(d)) >= kernel) s += m.smooth[size_t(t)] * m.area[size_t(t)], weight += m.area[size_t(t)];
-      if (s.Magnitude() <= 0) break;
-      const gp_Dir next(s);
-      const bool still = next.Angle(d) < rad(0.01);
-      d = next;
-      if (still) break;
+// What the dominant-plane search looks at: every k-th triangle (its middle, averaged normal and area) or point of a cloud
+// (its normal from the file, else estimated from its neighbours in the sample), at most `most`.
+struct Sample {
+  std::vector<gp_Pnt> p;
+  std::vector<gp_Vec> n;  // unit; zero when unknown
+  std::vector<double> w;
+};
+
+Sample scan_sample(const FitMesh& m, size_t most, const std::function<void()>& check) {
+  Sample s;
+  const bool cloud = m.triangles() == 0;
+  const size_t count = cloud ? m.nodes.size() : size_t(m.triangles());
+  const size_t stride = std::max<size_t>(1, (count + most - 1) / most);
+  for (size_t i = 0; i < count; i += stride) {
+    if (cloud) {
+      s.p.push_back(m.nodes[i]);
+      s.n.push_back(m.node_normal.empty() ? gp_Vec(0, 0, 0) : m.node_normal[i]);
+      s.w.push_back(1.0);
+    } else if (m.area[i] > 0) {
+      s.p.push_back(m.centre[i]);
+      s.n.push_back(m.smooth[i]);
+      s.w.push_back(m.area[i]);
     }
-    bool merged = false;
-    for (auto& mo : modes)
-      if (mo.d.Angle(d) < rad(4)) {
-        if (weight > mo.weight) mo = {d, weight};
-        merged = true;
-      }
-    if (!merged && weight > 0) modes.push_back({d, weight});
   }
-  std::sort(modes.begin(), modes.end(), [](const Mode& a, const Mode& b) { return a.weight > b.weight; });
-  // 2. Each direction's largest flat: the triangles facing that way, by their distance along it, the heaviest band fitted.
-  const double strongest = modes.empty() ? 0 : modes.front().weight / total;
-  if (strongest >= min_share) {
-    out.method = "flats";
-    for (const auto& mo : modes) {
+  if (cloud && m.node_normal.empty() && s.p.size() >= 20) {
+    // Each point's normal: the least spread direction of it and its 12 nearest neighbours (no sign: a cloud's normals have
+    // none to trust anyway).
+    cloud::Points pts;
+    pts.xyz.resize(s.p.size() * 3);
+    for (size_t i = 0; i < s.p.size(); ++i)
+      pts.xyz[3 * i] = float(s.p[i].X()), pts.xyz[3 * i + 1] = float(s.p[i].Y()), pts.xyz[3 * i + 2] = float(s.p[i].Z());
+    check();
+    const cloud::Grid grid(pts);
+    check();
+    constexpr size_t kBlock = 4096;
+    OSD_Parallel::For(0, int((s.p.size() + kBlock - 1) / kBlock), [&](int block) {
+      std::vector<uint32_t> nearby;
+      const size_t a = size_t(block) * kBlock, b = std::min(s.p.size(), a + kBlock);
+      for (size_t i = a; i < b; ++i) {
+        grid.nearest(&pts.xyz[3 * i], 12, nearby, nullptr, int64_t(i));
+        if (nearby.size() < 4) continue;
+        Eigen::Vector3d mean(s.p[i].X(), s.p[i].Y(), s.p[i].Z());
+        for (uint32_t j : nearby) mean += Eigen::Vector3d(s.p[j].X(), s.p[j].Y(), s.p[j].Z());
+        mean /= double(nearby.size() + 1);
+        Eigen::Matrix3d c = Eigen::Matrix3d::Zero();
+        auto add = [&](const gp_Pnt& q) {
+          const Eigen::Vector3d d = Eigen::Vector3d(q.X(), q.Y(), q.Z()) - mean;
+          c += d * d.transpose();
+        };
+        add(s.p[i]);
+        for (uint32_t j : nearby) add(s.p[j]);
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(c);
+        const Eigen::Vector3d v = es.eigenvectors().col(0);
+        if (v.norm() > 0) s.n[i] = gp_Vec(v.x(), v.y(), v.z()).Normalized();
+      }
+    });
+  }
+  return s;
+}
+
+// How far a quadric through the inliers bows over their extent (mm): a flat's is about its noise, a curved cap's is its
+// height. The quadric's second order terms over the half extent, their largest eigenvalue.
+double sagitta(const Sample& s, const std::vector<int>& use, const Plane& p) {
+  const gp_Vec n(p.normal), e1(p.x), e2 = n.Crossed(e1);
+  const double half = std::max(p.q.extent / 2, 1e-9);
+  Eigen::Matrix<double, 6, 6> A = Eigen::Matrix<double, 6, 6>::Zero();
+  Eigen::Matrix<double, 6, 1> r = Eigen::Matrix<double, 6, 1>::Zero();
+  for (int i : use) {
+    const gp_Vec d(p.origin, s.p[size_t(i)]);
+    const double u = d.Dot(e1) / half, v = d.Dot(e2) / half, h = d.Dot(n);
+    Eigen::Matrix<double, 6, 1> phi;
+    phi << u * u, v * v, u * v, u, v, 1;
+    A += s.w[size_t(i)] * phi * phi.transpose();
+    r += s.w[size_t(i)] * phi * h;
+  }
+  const Eigen::Matrix<double, 6, 1> c = A.ldlt().solve(r);
+  Eigen::Matrix2d H;
+  H << c(0), c(2) / 2, c(2) / 2, c(1);
+  const Eigen::Vector2d e = Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d>(H).eigenvalues();
+  return std::max(std::fabs(e(0)), std::fabs(e(1)));
+}
+
+// The dominant planes (scan_axes when the normals' modes found no flat): see the header.
+std::vector<ScanBase> dominant_planes(const FitMesh& m, const std::function<void()>& check) {
+  std::vector<ScanBase> out;
+  const Sample s = scan_sample(m, 200000, check);
+  const size_t n = s.p.size();
+  if (n < 30) return out;
+  double total = 0;
+  bool normals = false;
+  for (size_t i = 0; i < n; ++i) total += s.w[i], normals = normals || s.n[i].SquareMagnitude() > 0;
+  check();
+  // 1. Directions: the normals' axial modes (both signs binned, peaks shifted to the mean of the normals within 20 deg
+  // either way round); without normals, the least spread principal direction.
+  std::vector<gp_Dir> modes;
+  if (normals) {
+    constexpr int R = 12;
+    std::vector<double> bins(6 * R * R, 0);
+    std::vector<gp_Vec> sums(6 * R * R, gp_Vec(0, 0, 0));
+    for (size_t i = 0; i < n; ++i) {
+      if (s.n[i].SquareMagnitude() <= 0) continue;
+      for (double sign : {1.0, -1.0}) {
+        const int b = sphere_bin(s.n[i] * sign, R);
+        if (b < 0) continue;
+        bins[size_t(b)] += s.w[i];
+        sums[size_t(b)] += s.n[i] * sign * s.w[i];
+      }
+    }
+    const double kernel = std::cos(rad(20));
+    for (int b : bin_peaks(bins, R, 0.02 * total, 12)) {
       check();
-      if (mo.weight / total < 0.01 || out.bases.size() >= 10) break;
-      std::vector<int> facing;
-      for (size_t t = 0; t < n; ++t)
-        if (m.area[t] > 0 && m.smooth[t].Dot(gp_Vec(mo.d)) >= kernel) facing.push_back(int(t));
-      if (facing.size() < 1) continue;
-      const double step = std::max(m.diagonal / 500, 1e-6);
+      if (sums[size_t(b)].Magnitude() <= 0) continue;
+      gp_Dir d(sums[size_t(b)]);
+      for (int it = 0; it < 30; ++it) {
+        gp_Vec sum(0, 0, 0);
+        for (size_t i = 0; i < n; ++i) {
+          const double c = s.n[i].Dot(gp_Vec(d));
+          if (std::fabs(c) >= kernel) sum += s.n[i] * (c < 0 ? -s.w[i] : s.w[i]);
+        }
+        if (sum.Magnitude() <= 0) break;
+        const gp_Dir next(sum);
+        const bool still = next.Angle(d) < rad(0.01);
+        d = next;
+        if (still) break;
+      }
+      bool known = false;
+      for (const auto& mo : modes)
+        if (std::fabs(mo.Dot(d)) > std::cos(rad(5))) known = true;
+      if (!known) modes.push_back(d);
+      if (modes.size() >= 3) break;
+    }
+  } else {
+    modes.push_back(pca(s.p, s.w, all_of(n)).axis[0]);
+  }
+  if (std::getenv("OPAD_SCANFIT_DEBUG")) {
+    std::fprintf(stderr, "scan_axes: dominant planes over %zu points, weight %.1f, normals %s, %zu directions:", n, total, normals ? "yes" : "no", modes.size());
+    for (const auto& d : modes) std::fprintf(stderr, " (%.4f %.4f %.4f)", d.X(), d.Y(), d.Z());
+    std::fprintf(stderr, "\n");
+  }
+  // 2. Along each direction, the densest band of the points facing it (either way), fitted robustly, then grown to its
+  // 3-sigma inliers among all the points; a second band (the other side of a slab) after it.
+  const double step = std::max(m.diagonal / 1000, 1e-6), facing = std::cos(rad(25)), agree = std::cos(rad(30));
+  std::vector<char> taken(n, 0);
+  // by_normals: whether the normals pick the members and the inliers (off for the fallback below, when they found nothing).
+  auto search = [&](const gp_Dir& d, bool by_normals) {
+    std::vector<int> members;
+    for (size_t i = 0; i < n; ++i)
+      if (!by_normals || s.n[i].SquareMagnitude() <= 0 || std::fabs(s.n[i].Dot(gp_Vec(d))) >= facing) members.push_back(int(i));
+    for (int round = 0; round < 2 && out.size() < 4; ++round) {
+      check();
       std::unordered_map<long long, double> band;
-      for (int t : facing) band[std::llround(gp_Vec(m.centre[size_t(t)].XYZ()).Dot(gp_Vec(mo.d)) / step)] += m.area[size_t(t)];
+      for (int i : members)
+        if (!taken[size_t(i)]) band[std::llround(gp_Vec(s.p[size_t(i)].XYZ()).Dot(gp_Vec(d)) / step)] += s.w[size_t(i)];
+      if (band.empty()) break;
       long long peak = 0;
       double heaviest = -1;
       for (const auto& [k, a] : band) {
-        double around = 0;  // the band and its neighbours: noise spreads one flat over a few
-        for (long long d = -2; d <= 2; ++d)
-          if (auto it = band.find(k + d); it != band.end()) around += it->second;
+        double around = 0;
+        for (long long e = -2; e <= 2; ++e)
+          if (auto it = band.find(k + e); it != band.end()) around += it->second;
         if (around > heaviest || (around == heaviest && k < peak)) heaviest = around, peak = k;
       }
-      std::vector<int> flat;
-      for (int t : facing)
-        if (std::llabs(std::llround(gp_Vec(m.centre[size_t(t)].XYZ()).Dot(gp_Vec(mo.d)) / step) - peak) <= 3) flat.push_back(t);
-      if (flat.empty()) continue;
+      std::vector<int> in;
+      for (int i : members)
+        if (!taken[size_t(i)] && std::llabs(std::llround(gp_Vec(s.p[size_t(i)].XYZ()).Dot(gp_Vec(d)) / step) - peak) <= 3) in.push_back(i);
+      if (in.size() < 10) break;
+      auto subset = [&](const std::vector<int>& use, std::vector<gp_Pnt>& p, std::vector<double>& w, std::vector<gp_Vec>& nv) {
+        p.clear(), w.clear(), nv.clear();
+        for (int i : use) p.push_back(s.p[size_t(i)]), w.push_back(s.w[size_t(i)]), nv.push_back(s.n[size_t(i)]);
+      };
+      std::vector<gp_Pnt> bp;
+      std::vector<double> bw;
+      std::vector<gp_Vec> bn;
+      subset(in, bp, bw, bn);
+      Plane pl;
+      try {
+        pl = fit_plane(bp, bw, by_normals ? bn : std::vector<gp_Vec>{}, gp_Vec(d));
+      } catch (const Error&) {
+        break;
+      }
+      // Grown: the noise a band cut short is found again in a few rounds (each takes in 3 robust sigmas).
+      for (int grow = 0; grow < 8; ++grow) {
+        std::vector<std::pair<double, double>> r;
+        r.reserve(in.size());
+        for (int i : in) r.push_back({std::fabs(gp_Vec(pl.origin, s.p[size_t(i)]).Dot(gp_Vec(pl.normal))), s.w[size_t(i)]});
+        const double limit = std::max(3 * 1.4826 * weighted_median(r), m.diagonal * 1e-6);
+        std::vector<int> next;
+        for (size_t i = 0; i < n; ++i) {
+          if (taken[i] || std::fabs(gp_Vec(pl.origin, s.p[i]).Dot(gp_Vec(pl.normal))) > limit) continue;
+          if (by_normals && s.n[i].SquareMagnitude() > 0 && std::fabs(s.n[i].Dot(gp_Vec(pl.normal))) < agree) continue;
+          next.push_back(int(i));
+        }
+        if (next.size() < 10) break;
+        const bool still = next.size() == in.size();
+        in.swap(next);
+        const Pca f = pca(s.p, s.w, in);
+        pl.origin = f.mean;
+        pl.normal = gp_Vec(f.axis[0]).Dot(gp_Vec(d)) < 0 ? f.axis[0].Reversed() : f.axis[0];
+        if (still) break;
+      }
+      double share = 0;
+      for (int i : in) share += s.w[size_t(i)], taken[size_t(i)] = 1;
+      share /= total;
+      subset(in, bp, bw, bn);
+      Plane fp;
+      try {
+        fp = fit_plane(bp, bw, by_normals ? bn : std::vector<gp_Vec>{}, gp_Vec(pl.normal));
+      } catch (const Error&) {
+        continue;
+      }
+      const double bow = sagitta(s, in, fp);
+      const bool flat = share >= 0.05 && fp.q.extent >= 0.2 * m.diagonal && bow <= std::max(fp.q.rms, 0.002 * fp.q.extent);
+      if (std::getenv("OPAD_SCANFIT_DEBUG")) std::fprintf(stderr, "scan_axes: dominant plane along %.3f %.3f %.3f%s round %d: %zu in, share %.3f, extent %.2f of %.2f, rms %.4f, bow %.4f -> %s\n", d.X(), d.Y(), d.Z(), by_normals ? "" : " (normals ignored)", round, in.size(), share, fp.q.extent, m.diagonal, fp.q.rms, bow, flat ? "flat" : "no");
+      if (!flat) continue;
       ScanBase b;
-      const Plane p = fit_plane_region(m, flat);
-      b.normal = p.normal;
-      b.origin = p.origin;
-      b.q = p.q;
-      b.share = heaviest / total;
+      b.normal = fp.normal;
+      b.origin = fp.origin;
+      b.q = fp.q;
+      b.share = share;
+      b.kind = "plane";
       if (gp_Vec(b.origin, m.centroid).Dot(gp_Vec(b.normal)) > 0) b.normal.Reverse();  // the body lies behind its base
       bool same = false;
-      for (const auto& o : out.bases)
+      for (const auto& o : out)
         if (o.normal.Angle(b.normal) < rad(3) && std::fabs(gp_Vec(o.origin, b.origin).Dot(gp_Vec(o.normal))) < 3 * step) same = true;
-      if (!same) out.bases.push_back(b);
+      if (!same) out.push_back(b);
     }
-    // Bases the whole scan stands behind first (a plate's top and bottom, not a rib's top), then by area.
-    std::vector<std::pair<double, ScanBase>> ranked;
-    for (const auto& b : out.bases) ranked.push_back({behind(m, b.origin, b.normal) >= 0.97 ? 1.0 + b.share : b.share, b});
-    std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-    out.bases.clear();
-    for (auto& [s, b] : ranked) out.bases.push_back(b);
-  }
-  if (out.bases.empty()) {
-    // 3. No flats (an organic scan): the principal axes of the surface, the least spread one standing up first (a point
-    // cloud, which has no facets: of its points).
-    out.method = "pca";
-    std::vector<double> w(m.area.begin(), m.area.end());
-    const Pca p = n ? pca(m.centre, w, all_of(n)) : pca(m.nodes, {}, all_of(m.nodes.size()));
-    for (int k : {0, 1, 2})
-      for (int s : {-1, 1}) {
-        ScanBase b;
-        gp_Dir d = canonical(p.axis[k]);
-        if (s < 0) d.Reverse();
-        b.normal = d;
-        b.origin = p.mean;
-        b.q.grade = "pca";
-        b.q.total = b.q.used = int(n);
-        b.q.extent = m.diagonal;
-        out.bases.push_back(b);
-      }
-  }
+  };
+  for (const gp_Dir& d : modes) search(d, normals);
+  // Normals that lead nowhere (a reader's or a scanner's: sideways, flipped by patches) found no flat: the least spread
+  // direction by position, the normals ignored, as for a cloud without them.
+  if (out.empty() && normals) search(pca(s.p, s.w, all_of(n)).axis[0], false);
+  rank_bases(m, out);
   return out;
 }
 
-std::vector<gp_Dir> scan_turns(const FitMesh& m, const ScanAxes& axes, int base) {
+// The six principal directions, the least spread first (a slab's thickness stands up), each both ways.
+std::vector<ScanBase> principal_bases(const FitMesh& m) {
+  const size_t n = size_t(m.triangles());
+  std::vector<double> w(m.area.begin(), m.area.end());
+  const Pca p = n ? pca(m.centre, w, all_of(n)) : pca(m.nodes, {}, all_of(m.nodes.size()));
+  int order[3] = {0, 1, 2};
+  std::stable_sort(order, order + 3, [&](int a, int b) { return p.value[a] < p.value[b]; });
+  std::vector<ScanBase> out;
+  for (int k : order)
+    for (int s : {-1, 1}) {
+      ScanBase b;
+      gp_Dir d = canonical(p.axis[k]);
+      if (s < 0) d.Reverse();
+      b.normal = d;
+      b.origin = p.mean;
+      b.kind = "pca";
+      b.q.grade = "pca";
+      b.q.total = b.q.used = int(n ? n : m.nodes.size());
+      b.q.extent = m.diagonal;
+      out.push_back(b);
+    }
+  return out;
+}
+
+const ScanBase& base_at(const ScanAxes& axes, int base) {
   if (axes.bases.empty()) throw Error("the scan has no base to stand on");
-  const ScanBase& b = axes.bases[size_t(((base % int(axes.bases.size())) + int(axes.bases.size())) % int(axes.bases.size()))];
+  const int nb = int(axes.bases.size());
+  return axes.bases[size_t(((base % nb) + nb) % nb)];
+}
+
+// The X directions from the walls (else the longest direction), in turn order: scan_turns' "walls".
+std::vector<gp_Dir> wall_turns(const FitMesh& m, const ScanBase& b) {
   const gp_Dir n = b.normal, e1 = plane_x(n), e2(gp_Vec(n).Crossed(gp_Vec(e1)));
   const size_t count = size_t(m.triangles());
   std::vector<double> peaks;  // angles in the base plane (from e1 about n)
-  if (axes.method == "flats") {
+  if (b.kind != "pca") {
     // Walls: upright facets; their normals laid in the plane, histogram of the doubled angle (opposite walls agree).
     constexpr int B = 720;
     std::vector<double> h(B, 0);
@@ -1108,18 +1282,275 @@ std::vector<gp_Dir> scan_turns(const FitMesh& m, const ScanAxes& axes, int base)
   return out;
 }
 
-ScanFrame scan_frame(const FitMesh& m, const ScanAxes& axes, int base, int turn, const std::string& origin) {
-  if (axes.bases.empty()) throw Error("the scan has no base to stand on");
-  const int nb = int(axes.bases.size());
-  const ScanBase& b = axes.bases[size_t(((base % nb) + nb) % nb)];
-  const std::vector<gp_Dir> turns = scan_turns(m, axes, base);
-  const int nt = int(turns.size());
+double cross2(const Eigen::Vector2d& o, const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
+  return (a.x() - o.x()) * (b.y() - o.y()) - (a.y() - o.y()) * (b.x() - o.x());
+}
+
+// The outline squared: the nodes in the base plane, their convex hull (the points inside the octagon of the eight
+// extreme ones left out first: Akl-Toussaint), the rectangle of least area, which has a side on a hull edge. Taken only
+// when it is clear: every hull edge more than 2 degrees (modulo quarter turns) from its side gives a rectangle at least
+// 1% larger. A rectangle's grows by about (L/W + W/L) x the turn (9% at 2 degrees for 140 x 64), an ellipse's only with
+// the turn squared (0.07% for 100 x 60), so an oval's least rectangle lies wherever its tessellation and noise put it.
+ScanOutline outline_of(const FitMesh& m, const ScanBase& b, const gp_Dir& x0) {
+  const gp_Vec n(b.normal), e1(plane_x(b.normal)), e2 = n.Crossed(e1);
+  const size_t stride = std::max<size_t>(1, m.nodes.size() / 4'000'000);
+  auto uv = [&](size_t i) {
+    const gp_Vec d(b.origin, m.nodes[i]);
+    return Eigen::Vector2d(d.Dot(e1), d.Dot(e2));
+  };
+  Eigen::Vector2d dirs[8], ext[8];
+  double best[8];
+  for (int k = 0; k < 8; ++k) dirs[k] = Eigen::Vector2d(std::cos(k * kPi / 4), std::sin(k * kPi / 4)), best[k] = -1e300;
+  for (size_t i = 0; i < m.nodes.size(); i += stride) {
+    const Eigen::Vector2d q = uv(i);
+    for (int k = 0; k < 8; ++k)
+      if (const double v = dirs[k].dot(q); v > best[k]) best[k] = v, ext[k] = q;
+  }
+  std::vector<Eigen::Vector2d> oct;
+  for (int k = 0; k < 8; ++k)
+    if (best[k] > -1e300 && (oct.empty() || (oct.back() - ext[k]).norm() > 0)) oct.push_back(ext[k]);
+  while (oct.size() > 1 && (oct.front() - oct.back()).norm() <= 0) oct.pop_back();
+  double octArea = 0;
+  for (size_t k = 0; k < oct.size(); ++k) octArea += cross2(Eigen::Vector2d::Zero(), oct[k], oct[(k + 1) % oct.size()]);
+  std::vector<Eigen::Vector2d> cand = oct;
+  for (size_t i = 0; i < m.nodes.size(); i += stride) {
+    const Eigen::Vector2d q = uv(i);
+    bool inside = oct.size() >= 3 && octArea > 0;
+    for (size_t k = 0; k < oct.size() && inside; ++k) inside = cross2(oct[k], oct[(k + 1) % oct.size()], q) > 0;
+    if (!inside) cand.push_back(q);
+  }
+  // Andrew's monotone chain, anticlockwise.
+  std::sort(cand.begin(), cand.end(), [](const Eigen::Vector2d& a, const Eigen::Vector2d& c) { return a.x() < c.x() || (a.x() == c.x() && a.y() < c.y()); });
+  cand.erase(std::unique(cand.begin(), cand.end()), cand.end());
+  std::vector<Eigen::Vector2d> hull;
+  if (cand.size() >= 3) {
+    hull.resize(2 * cand.size());
+    size_t k = 0;
+    for (size_t i = 0; i < cand.size(); ++i) {
+      while (k >= 2 && cross2(hull[k - 2], hull[k - 1], cand[i]) <= 0) --k;
+      hull[k++] = cand[i];
+    }
+    for (size_t i = cand.size() - 1, t = k + 1; i > 0; --i) {
+      while (k >= t && cross2(hull[k - 2], hull[k - 1], cand[i - 1]) <= 0) --k;
+      hull[k++] = cand[i - 1];
+    }
+    hull.resize(k - 1);
+  } else {
+    hull = cand;
+  }
+  ScanOutline o;
+  const Eigen::Vector2d u0(gp_Vec(x0).Dot(e1), gp_Vec(x0).Dot(e2));
+  auto extents = [&](const Eigen::Vector2d& u, double lo[2], double hi[2]) {
+    const Eigen::Vector2d v(-u.y(), u.x());
+    lo[0] = lo[1] = 1e300, hi[0] = hi[1] = -1e300;
+    for (const auto& q : hull) {
+      const double a = u.dot(q), c = v.dot(q);
+      lo[0] = std::min(lo[0], a), hi[0] = std::max(hi[0], a), lo[1] = std::min(lo[1], c), hi[1] = std::max(hi[1], c);
+    }
+  };
+  if (hull.size() < 2 || u0.norm() <= 0) {
+    o.x = x0;
+    o.centre = b.origin;
+    return o;
+  }
+  {
+    double lo[2], hi[2];
+    extents(u0.normalized(), lo, hi);
+    o.unsquared_length = std::max(hi[0] - lo[0], hi[1] - lo[1]);
+    o.unsquared_width = std::min(hi[0] - lo[0], hi[1] - lo[1]);
+  }
+  double area = 1e300, blo[2] = {0, 0}, bhi[2] = {0, 0};
+  Eigen::Vector2d bu = u0.normalized();
+  std::vector<std::pair<Eigen::Vector2d, double>> sides;  // each hull edge's direction and its rectangle's area
+  sides.reserve(hull.size());
+  for (size_t k = 0; k < hull.size(); ++k) {
+    Eigen::Vector2d u = hull[(k + 1) % hull.size()] - hull[k];
+    if (u.norm() <= 0) continue;
+    u.normalize();
+    double lo[2], hi[2];
+    extents(u, lo, hi);
+    const double a = (hi[0] - lo[0]) * (hi[1] - lo[1]);
+    sides.push_back({u, a});
+    if (a < area * (1 - 1e-12)) area = a, bu = u, std::copy(lo, lo + 2, blo), std::copy(hi, hi + 2, bhi);
+  }
+  for (const auto& [u, a] : sides) {
+    const double off = std::fabs(std::remainder(std::atan2(bu.x() * u.y() - bu.y() * u.x(), bu.dot(u)), kPi / 2));
+    if (off > rad(2) && a < 1.01 * area) {
+      o.x = x0;
+      o.length = o.unsquared_length, o.width = o.unsquared_width;
+      double lo[2], hi[2];
+      const Eigen::Vector2d w = u0.normalized(), wv(-w.y(), w.x());
+      extents(w, lo, hi);
+      const Eigen::Vector2d mid = w * ((lo[0] + hi[0]) / 2) + wv * ((lo[1] + hi[1]) / 2);
+      o.centre = b.origin.Translated(e1 * mid.x() + e2 * mid.y());
+      return o;
+    }
+  }
+  o.squared = true;
+  const Eigen::Vector2d bv(-bu.y(), bu.x());
+  const Eigen::Vector2d mid = bu * ((blo[0] + bhi[0]) / 2) + bv * ((blo[1] + bhi[1]) / 2);
+  o.centre = b.origin.Translated(e1 * mid.x() + e2 * mid.y());
+  Eigen::Vector2d along = bu;
+  o.length = bhi[0] - blo[0], o.width = bhi[1] - blo[1];
+  if (o.width > o.length) along = bv, std::swap(o.length, o.width);
+  if (along.dot(u0) < 0) along = -along;  // the long side's way nearer the unsquared X
+  o.x = gp_Dir(e1 * along.x() + e2 * along.y());
+  const double turn = std::atan2(gp_Vec(x0).Crossed(gp_Vec(o.x)).Dot(n), gp_Vec(x0).Dot(gp_Vec(o.x)));
+  o.turn_deg = std::remainder(turn, kPi / 2) * 180 / kPi;
+  return o;
+}
+
+std::vector<gp_Dir> turns_of(const FitMesh& m, const ScanAxes& axes, int base, const std::string& x, ScanOutline* outline) {
+  const ScanBase& b = base_at(axes, base);
+  std::vector<gp_Dir> walls = wall_turns(m, b);
+  if (x != "outline" && x != "walls" && !x.empty()) throw Error("a scan's X is \"outline\" (squared to it) or \"walls\", not \"" + x + "\"");
+  const ScanOutline o = outline_of(m, b, walls.front());
+  if (outline) *outline = o;
+  if (x == "walls") return walls;
+  std::vector<gp_Dir> out;
+  gp_Dir d = o.x;
+  for (int k = 0; k < 4; ++k, d = gp_Dir(gp_Vec(b.normal).Crossed(gp_Vec(d)))) out.push_back(d);
+  for (const gp_Dir& w : walls) {
+    const double a = std::atan2(gp_Vec(o.x).Crossed(gp_Vec(w)).Dot(gp_Vec(b.normal)), gp_Vec(o.x).Dot(gp_Vec(w)));
+    if (std::fabs(std::remainder(a, kPi / 2)) >= rad(3)) out.push_back(w);
+  }
+  return out;
+}
+
+}  // namespace
+
+ScanAxes scan_axes(const FitMesh& m, const std::function<bool()>& cancelled, double min_share) {
+  auto check = [&] {
+    if (cancelled && cancelled()) throw Error("cancelled");
+  };
+  const size_t n = size_t(m.triangles());
+  ScanAxes out;
+  const double total = std::max(m.total_area, 1e-300);
+  // 1. Area-weighted normals binned on the sphere; the bins heavier than their neighbours start a mean shift.
+  constexpr int R = 24;
+  std::vector<double> bins(6 * R * R, 0);
+  std::vector<gp_Vec> sums(6 * R * R, gp_Vec(0, 0, 0));
+  for (size_t t = 0; t < n; ++t) {
+    if (m.area[t] <= 0) continue;
+    const int b = sphere_bin(m.smooth[t], R);
+    if (b < 0) continue;
+    bins[size_t(b)] += m.area[t];
+    sums[size_t(b)] += m.smooth[t] * m.area[t];
+  }
+  check();
+  const std::vector<int> starts = n ? bin_peaks(bins, R, 0.004 * total, 16) : std::vector<int>{};
+  struct Mode {
+    gp_Dir d;
+    double weight;
+  };
+  std::vector<Mode> modes;
+  const double kernel = std::cos(rad(6)), reach = std::cos(rad(25));
+  for (int b : starts) {
+    check();
+    if (sums[size_t(b)].Magnitude() <= 0) continue;
+    gp_Dir d(sums[size_t(b)]);
+    std::vector<int> nearby;
+    for (size_t t = 0; t < n; ++t)
+      if (m.area[t] > 0 && m.smooth[t].Dot(gp_Vec(d)) >= reach) nearby.push_back(int(t));
+    double weight = 0;
+    for (int it = 0; it < 20; ++it) {
+      gp_Vec s(0, 0, 0);
+      weight = 0;
+      for (int t : nearby)
+        if (m.smooth[size_t(t)].Dot(gp_Vec(d)) >= kernel) s += m.smooth[size_t(t)] * m.area[size_t(t)], weight += m.area[size_t(t)];
+      if (s.Magnitude() <= 0) break;
+      const gp_Dir next(s);
+      const bool still = next.Angle(d) < rad(0.01);
+      d = next;
+      if (still) break;
+    }
+    bool merged = false;
+    for (auto& mo : modes)
+      if (mo.d.Angle(d) < rad(4)) {
+        if (weight > mo.weight) mo = {d, weight};
+        merged = true;
+      }
+    if (!merged && weight > 0) modes.push_back({d, weight});
+  }
+  std::sort(modes.begin(), modes.end(), [](const Mode& a, const Mode& b) { return a.weight > b.weight; });
+  // 2. Each direction's largest flat: the triangles facing that way, by their distance along it, the heaviest band fitted.
+  const double strongest = modes.empty() ? 0 : modes.front().weight / total;
+  if (strongest >= min_share) {
+    out.method = "flats";
+    for (const auto& mo : modes) {
+      check();
+      if (mo.weight / total < 0.01 || out.bases.size() >= 10) break;
+      std::vector<int> facing;
+      for (size_t t = 0; t < n; ++t)
+        if (m.area[t] > 0 && m.smooth[t].Dot(gp_Vec(mo.d)) >= kernel) facing.push_back(int(t));
+      if (facing.size() < 1) continue;
+      const double step = std::max(m.diagonal / 500, 1e-6);
+      std::unordered_map<long long, double> band;
+      for (int t : facing) band[std::llround(gp_Vec(m.centre[size_t(t)].XYZ()).Dot(gp_Vec(mo.d)) / step)] += m.area[size_t(t)];
+      long long peak = 0;
+      double heaviest = -1;
+      for (const auto& [k, a] : band) {
+        double around = 0;  // the band and its neighbours: noise spreads one flat over a few
+        for (long long d = -2; d <= 2; ++d)
+          if (auto it = band.find(k + d); it != band.end()) around += it->second;
+        if (around > heaviest || (around == heaviest && k < peak)) heaviest = around, peak = k;
+      }
+      std::vector<int> flat;
+      for (int t : facing)
+        if (std::llabs(std::llround(gp_Vec(m.centre[size_t(t)].XYZ()).Dot(gp_Vec(mo.d)) / step) - peak) <= 3) flat.push_back(t);
+      if (flat.empty()) continue;
+      ScanBase b;
+      const Plane p = fit_plane_region(m, flat);
+      b.normal = p.normal;
+      b.origin = p.origin;
+      b.q = p.q;
+      b.share = heaviest / total;
+      b.kind = "flat";
+      if (gp_Vec(b.origin, m.centroid).Dot(gp_Vec(b.normal)) > 0) b.normal.Reverse();  // the body lies behind its base
+      bool same = false;
+      for (const auto& o : out.bases)
+        if (o.normal.Angle(b.normal) < rad(3) && std::fabs(gp_Vec(o.origin, b.origin).Dot(gp_Vec(o.normal))) < 3 * step) same = true;
+      if (!same) out.bases.push_back(b);
+    }
+    rank_bases(m, out.bases);
+  }
+  if (out.bases.empty()) {
+    // 3. No flat by the normals' modes (noisy normals, a point cloud): the dominant planes by position, then the principal
+    // axes; neither (an organic scan): the principal axes alone, the least spread one standing up first.
+    std::vector<ScanBase> planes = dominant_planes(m, check);
+    const std::vector<ScanBase> principal = principal_bases(m);
+    out.method = planes.empty() ? "pca" : "plane";
+    out.bases = std::move(planes);
+    for (const auto& p : principal) {
+      bool nearby = false;
+      for (const auto& b : out.bases)
+        if (b.kind != "pca" && b.normal.Angle(p.normal) < rad(10)) nearby = true;
+      if (!nearby) out.bases.push_back(p);
+    }
+  }
+  return out;
+}
+
+ScanOutline scan_outline(const FitMesh& m, const ScanAxes& axes, int base) {
+  const ScanBase& b = base_at(axes, base);
+  return outline_of(m, b, wall_turns(m, b).front());
+}
+
+std::vector<gp_Dir> scan_turns(const FitMesh& m, const ScanAxes& axes, int base, const std::string& x) {
+  return turns_of(m, axes, base, x, nullptr);
+}
+
+ScanFrame scan_frame(const FitMesh& m, const ScanAxes& axes, int base, int turn, const std::string& origin, const std::string& x) {
+  const ScanBase& b = base_at(axes, base);
   ScanFrame f;
+  const std::vector<gp_Dir> turns = turns_of(m, axes, base, x, &f.outline);
+  const int nt = int(turns.size());
   f.normal = b.normal;
   f.x = turns[size_t(((turn % nt) + nt) % nt)];
-  f.bases = nb;
+  f.bases = int(axes.bases.size());
   f.turns = nt;
   f.method = axes.method;
+  f.kind = b.kind;
   f.q = b.q;
   f.share = b.share;
   // The box in the frame the scan will stand in: X along x, Z out of the base into the material, Y = Z x X.
@@ -1130,8 +1561,9 @@ ScanFrame scan_frame(const FitMesh& m, const ScanAxes& axes, int base, int turn,
     const double c[3] = {d.Dot(X), d.Dot(Y), d.Dot(Z)};
     for (int k = 0; k < 3; ++k) lo[k] = std::min(lo[k], c[k]), hi[k] = std::max(hi[k], c[k]);
   }
-  const bool centre = origin == "centre" || ((origin.empty() || origin == "auto") && axes.method == "pca");
-  const double z = centre ? (lo[2] + hi[2]) / 2 : axes.method == "pca" ? lo[2] : 0.0;
+  const bool principal = b.kind == "pca";
+  const bool centre = origin == "centre" || ((origin.empty() || origin == "auto") && principal);
+  const double z = centre ? (lo[2] + hi[2]) / 2 : principal ? lo[2] : 0.0;
   f.origin = b.origin.Translated(X * ((lo[0] + hi[0]) / 2) + Y * ((lo[1] + hi[1]) / 2) + Z * z);
   return f;
 }

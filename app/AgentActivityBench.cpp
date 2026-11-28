@@ -641,12 +641,33 @@ bool AgentBridge::benchActivity(const QString& prefix, std::function<QString(con
         tool("joint_set", {{"values", {{st->joint, 30}}}, {"preview", true}});  // a read: no revision or request id needed
         return true;
       },
-      [=, this] {  // #26: a preview writes nothing, so it has no id
+      [=, this] {  // #26: a preview writes nothing, so it has no id; it is staged, so its preview_id renders the pose
         if (!answered() || !idle()) return false;
         require(!st->reply.value("isError", false), "joint_set preview: " + QString::fromStdString(st->reply.dump()).left(400));
         const json& out = st->reply["structuredContent"]["result"];
         require(out.contains("values") && !out.contains("id") && m_doc->doc.ops.size() == st->opsCount,
                 "joint_set preview reports values, no id, no op: " + QString::fromStdString(out.dump()).left(300));
+        st->transaction = st->reply["structuredContent"].value("preview_id", "");
+        require(st->reply["structuredContent"].value("state", "") == "staged" && !st->transaction.empty() && m_prepared && m_prepared->id == st->transaction,
+                "joint_set preview is staged with a preview_id: " + QString::fromStdString(st->reply["structuredContent"].dump()).left(300));
+        tool("viewport_image", {{"preview_id", st->transaction}, {"width", 160}, {"height", 120}, {"fit", true}});
+        return true;
+      },
+      [=, this] {  // the trial pose rendered by its preview_id, then dropped: the document never changed
+        if (!answered() || !idle()) return false;
+        const json& out = st->reply["structuredContent"]["result"];
+        bool image = false;
+        for (const auto& c : st->reply.value("content", json::array())) image = image || c.value("type", "") == "image";
+        require(!st->reply.value("isError", false) && image && out.value("preview_id", "") == st->transaction,
+                "viewport_image of the joint_set preview: " + QString::fromStdString(st->reply["structuredContent"].dump()).left(300));
+        tool("preview_cancel", {{"id", st->transaction}});
+        return true;
+      },
+      [=, this] {
+        if (!answered() || !idle()) return false;
+        require(!st->reply.value("isError", false) && !m_prepared && m_doc->doc.ops.size() == st->opsCount,
+                "preview_cancel drops the trial pose: " + QString::fromStdString(st->reply.dump()).left(300));
+        pass("a joint_set preview is staged: viewport_image renders its preview_id");
         tool("ops", {{"limit", 1}});  // the agent's cached copy has no pose op either
         return true;
       },

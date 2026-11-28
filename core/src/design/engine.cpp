@@ -26,6 +26,7 @@
 
 #include "opad/assets.hpp"
 #include "opad/geometry.hpp"
+#include "opad/mesh_edit.hpp"
 #include "opad/point_cloud.hpp"
 #include "opad/inspect.hpp"
 #include "opad/recognize.hpp"
@@ -189,6 +190,23 @@ TopoDS_Shape Ctx::node_shape(const std::string& node) const {
   return t.Form() == gp_Identity ? proto : proto.Moved(TopLoc_Location(t));
 }
 
+bool Ctx::is_mesh(const std::string& node) const {
+  const Node* n = scene.node(node);
+  if (!n || n->kind != Node::Kind::Body) return false;
+  if (n->representation == "mesh") return true;
+  if (n->representation == "points" || n->body_missing) return false;
+  return is_mesh_shape(key_shape(n->body_key));
+}
+
+TopoDS_Shape Ctx::any_shape(const std::string& node) const {
+  const Node* n = scene.node(node);
+  if (!n || n->kind != Node::Kind::Body) throw Error("a referenced body no longer exists");
+  if (n->representation == "points") throw Error("Point clouds are measured, not modelled on: slice the cloud and sketch over the slice, or mesh it");
+  TopoDS_Shape proto = key_shape(n->body_key);
+  const gp_Trsf t = node_trsf(node);
+  return t.Form() == gp_Identity ? proto : proto.Moved(TopLoc_Location(t));
+}
+
 json ref_hint(const TopoDS_Shape& body_world, const TopoDS_Shape& sub) {
   gp_Pnt c;
   double size = 0;
@@ -303,6 +321,7 @@ json evaluate_rule_filters(const ParamTable& params, const json& filters) {
     for (const char* side : {"min", "max"})
       if (out["bounds"].contains(side) && out["bounds"][side].is_array())
         for (auto& v : out["bounds"][side]) length(v, std::string("bounds ") + side);
+  if (out.contains("of_face") && out["of_face"].is_object()) out["of_face"] = evaluate_rule_filters(params, out["of_face"]);
   return out;
 }
 
@@ -321,7 +340,8 @@ std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
   const auto [recognition, given] = split_recognized(filters);
   const json rest = evaluate_rule_filters(ctx.params, given);  // expressions follow the parameters
   if (rest.contains("loop") && kind != Ref::Kind::Edge) throw Error("a \"loop\" rule picks edges: give kind \"edge\"");
-  const auto describe = entity_describer(shape, rest);
+  if (rest.contains("of_face") && kind != Ref::Kind::Edge) throw Error("an \"of_face\" rule picks edges: give kind \"edge\"");
+  const auto describe = entity_describer(shape, rest, tolerance);
   std::vector<int> candidates;
   if (!recognition.is_null()) {
     if (kind != Ref::Kind::Face) throw Error("a \"recognized\" rule picks faces: give kind \"face\"");
@@ -897,6 +917,7 @@ struct Walk {
         entry["new"] = true;
       }
       const bool points = cloud::is_cloud(b.shape);
+      const bool mesh = !points && is_mesh_shape(b.shape);
       TopoDS_Shape local = b.shape;
       std::string brep, key;
       if (points) {
@@ -916,6 +937,17 @@ struct Walk {
         brep = cloud::to_brep(local);
         key = sha256_hex(brep);
         entry["representation"] = "points";
+      } else if (mesh) {
+        // A mesh: its triangles are the geometry, mapped into the entry's frame by hand (BRepBuilderAPI_Transform copies a
+        // face without a surface badly) and stored with the triangulation, as import stores one.
+        if (to_local.Form() != gp_Identity || !b.shape.Location().IsIdentity()) {
+          meshops::Mesh m = meshops::from_shape(b.shape);
+          if (to_local.Form() != gp_Identity) meshops::transform(m, gp_GTrsf(to_local));
+          local = meshops::to_shape(m);
+        }
+        brep = meshops::to_brep(local);
+        key = sha256_hex(brep);
+        entry["representation"] = "mesh";
       } else {
         if (to_local.Form() != gp_Identity) local = BRepBuilderAPI_Transform(b.shape, to_local, Standard_True).Shape();
         // Locations are baked in so the entry is the same text whichever way the body was moved about.
@@ -932,7 +964,7 @@ struct Walk {
       std::string was;
       for (const auto& p : previous.value("bodies", json::array()))
         if (p.value("id", "") == entry["id"].get<std::string>()) was = p.value("key", "");
-      if (!points && !was.empty() && was != key && doc.has_body(was)) {
+      if (!points && !mesh && !was.empty() && was != key && doc.has_body(was)) {
         const TopoDS_Shape old = body_shape(doc, was);
         if (same_geometry(local, old)) {
           key = was;
@@ -941,12 +973,13 @@ struct Walk {
       }
       entry["key"] = key;
       if (stored.IsNull() && !doc.has_body(key) && !fresh.count(key)) {
-        stored = points ? local : shape_from_brep(brep);
+        stored = points ? local : shape_from_brep(brep);  // a mesh too: the text keeps 15 digits, so later features see what a reopened file has
         NewBody nb;
         nb.key = key;
         nb.brep = std::move(brep);
         nb.meta = {{"name", entry.value("name", std::string("Body"))}, {"units", "mm"}, {"source", "design"}};
         if (points) nb.meta.update(cloud::meta_of_shape(local));
+        if (mesh) nb.meta["representation"] = "mesh";
         nb.shape = std::make_shared<TopoDS_Shape>(stored);
         plan.bodies.push_back(std::move(nb));
       }
@@ -1080,6 +1113,7 @@ struct Walk {
   }
 
   Plan run(bool strict) {
+    const bool refuse = strict && !DeferErrors::active();  // a failing new op or a broken parameter throws
     std::vector<Op> temp;
     temp.reserve(new_ops.size());
     for (size_t i = 0; i < new_ops.size(); ++i) {
@@ -1104,7 +1138,7 @@ struct Walk {
     for (const auto& e : ops)
       if (e.op->type == "param") defs.push_back({e.op->id, e.data().value("name", ""), e.data().value("expr", ""), e.data().value("comment", "")});
     const ParamTable params(defs);
-    if (strict) check_params(params, ops);
+    if (refuse) check_params(params, ops);
     // What is locked now stays as it is (TODO 11 UI-37); the replay to compare with only when something is locked.
     std::optional<Scene> locked_before;
     if (strict && has_locks(doc)) locked_before = resolve(doc);
@@ -1142,7 +1176,7 @@ struct Walk {
         errors.push_back({{"op", d.id}, {"name", d.name}, {"expr", d.expr}, {"error", now}});
         broken += (broken.empty() ? "" : "; ") + now;
       }
-      if (strict && !broken.empty()) throw Error("the change makes a parameter fail: " + broken);
+      if (refuse && !broken.empty()) throw Error("the change makes a parameter fail: " + broken);
     }
     SceneBuilder builder(doc);
     for (const auto& e : ops) {
@@ -1294,8 +1328,9 @@ struct Walk {
         direct.insert(op["id"].get<std::string>());
         if (op.value("op", "") == "edit") direct.insert(op.value("target", ""));
       }
-      for (const auto& err : errors)
-        if (direct.count(err["op"].get<std::string>())) throw Error(err["error"].get<std::string>());
+      if (refuse)
+        for (const auto& err : errors)
+          if (direct.count(err["op"].get<std::string>())) throw Error(err["error"].get<std::string>());
       if (locked_before)
         if (const auto why = locked_change(*locked_before, builder.scene())) throw *why;
     }
@@ -1343,6 +1378,13 @@ struct Walk {
 };
 
 }  // namespace
+
+namespace {
+thread_local int deferring = 0;
+}
+DeferErrors::DeferErrors() { ++deferring; }
+DeferErrors::~DeferErrors() { --deferring; }
+bool DeferErrors::active() { return deferring > 0; }
 
 bool same_shapes(const TopoDS_Shape& a, const TopoDS_Shape& b) { return same_geometry(a, b); }
 

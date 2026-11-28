@@ -109,4 +109,62 @@ class Zip {
   std::vector<std::pair<std::string, Entry>> m_order;
 };
 
+// A zip archive of the given members (name, bytes), each deflated, in that order (3MF export). No zip64: an archive past
+// 4 GB is refused. The time stamps are 1980-01-01, so the same members make the same bytes.
+inline std::string zip_archive(const std::vector<std::pair<std::string, std::string>>& members) {
+  std::string out, directory;
+  auto put16 = [](std::string& s, uint32_t v) { s.push_back(char(v & 0xFF)), s.push_back(char((v >> 8) & 0xFF)); };
+  auto put32 = [&](std::string& s, uint64_t v) {
+    if (v > 0xFFFFFFFFull) throw Error("the 3MF file would pass 4 GB");
+    put16(s, uint32_t(v & 0xFFFF)), put16(s, uint32_t(v >> 16));
+  };
+  for (const auto& [name, data] : members) {
+    z_stream z{};
+    if (deflateInit2(&z, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY) != Z_OK) throw Error("cannot compress " + name);
+    std::string packed(deflateBound(&z, static_cast<uLong>(data.size())), '\0');
+    z.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(data.data()));
+    z.avail_in = static_cast<uInt>(data.size());
+    z.next_out = reinterpret_cast<Bytef*>(packed.data());
+    z.avail_out = static_cast<uInt>(packed.size());
+    const int r = deflate(&z, Z_FINISH);
+    packed.resize(z.total_out);
+    deflateEnd(&z);
+    if (r != Z_STREAM_END) throw Error("cannot compress " + name);
+    const uint32_t crc = static_cast<uint32_t>(crc32(0L, reinterpret_cast<const Bytef*>(data.data()), static_cast<uInt>(data.size())));
+    const uint64_t local = out.size();
+    auto header = [&](std::string& s, bool central) {
+      put32(s, central ? 0x02014b50 : 0x04034b50);
+      if (central) put16(s, 20);  // made by
+      put16(s, 20);               // needed
+      put16(s, 0);                // flags
+      put16(s, 8);                // deflate
+      put16(s, 0);                // time
+      put16(s, 0x21);             // date: 1980-01-01
+      put32(s, crc);
+      put32(s, packed.size());
+      put32(s, data.size());
+      put16(s, uint32_t(name.size()));
+      put16(s, 0);  // extra
+      if (central) {
+        put16(s, 0), put16(s, 0), put16(s, 0);  // comment, disk, internal attributes
+        put32(s, 0);                            // external attributes
+        put32(s, local);
+      }
+      s += name;
+    };
+    header(out, false);
+    out += packed;
+    header(directory, true);
+  }
+  const uint64_t at = out.size();
+  out += directory;
+  put32(out, 0x06054b50);
+  put16(out, 0), put16(out, 0);
+  put16(out, uint32_t(members.size())), put16(out, uint32_t(members.size()));
+  put32(out, directory.size());
+  put32(out, at);
+  put16(out, 0);
+  return out;
+}
+
 }  // namespace opad::detail

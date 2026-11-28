@@ -19,6 +19,7 @@
 #include "opad/render.hpp"
 #include "opad/scene.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/checks.hpp"
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/drawing/display.hpp"
@@ -134,6 +135,13 @@ void apply_picture_options(RenderOptions& o, const json& a) {
     o.views.push_back(v);
   }
   if (o.views.size() > 9) throw Error("at most 9 views in one image");
+  o.cloud_color = a.value("cloud_color", std::string());
+  if (o.cloud_color == "own") o.cloud_color.clear();
+  if (!o.cloud_color.empty() && o.cloud_color != "height") throw Error("cloud_color is own or height");
+  if (a.contains("height_plane") && !a["height_plane"].is_null()) {
+    if (o.cloud_color.empty()) o.cloud_color = "height";
+    o.height_plane = a["height_plane"];
+  }
 }
 
 namespace {
@@ -617,9 +625,13 @@ void register_builtins() {
         return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
       });
 
-  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg|pdf|png, point clouds to ply|xyz|pts|csv|e57, or a plugin format (2D of solids: a hidden-line view)",
-      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|pdf|png|ply|xyz|pts|csv|e57|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
+  reg("export", "Export selected objects (or everything) to step|obj|stl|3mf|ply|glb|dxf|svg|dwg|pdf|png, point clouds to ply|xyz|pts|csv|e57, or a plugin format (2D of solids: a hidden-line view; meshes: print placement)",
+      {{"doc", "path"}, {"format", "step|obj|stl|3mf|glb|dxf|svg|dwg|pdf|png|ply|xyz|pts|csv|e57|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
        {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"},
+       {"build_direction", "string - meshes: up from the bed, as validate print takes it; turned to +Z"},
+       {"bed_face", "object - meshes: a face ref laid on the bed"},
+       {"drop_to_bed", "bool - meshes: min Z = 0 (default on when turned)"},
+       {"center_xy", "bool - meshes: centre at X = Y = 0"},
        {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}, {"dpi", "int - PNG"}, {"sheet", "uuid|name|drawing:<name> - 2D: a sheet, or a drawing's"}, {"issue", "string - with sheet: as issued"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -627,11 +639,13 @@ void register_builtins() {
         return export_document(doc, resolve(doc), a);
       });
 
-  reg("render", "Headless screenshot (PNG). views puts several fitted views in one labelled grid; edge_lines draws the model's edges; highlight tints faces and edges; shading smooth uses vertex normals",
+  reg("render", "Headless screenshot (PNG). views puts several fitted views in one labelled grid; edge_lines draws the model's edges; highlight tints faces and edges; shading smooth uses vertex normals; point clouds are drawn as points (cloud_color height: by height above a plane)",
       {{"doc", "path"}, {"out", "path - .png"}, {"view", "iso|top|bottom|front|back|left|right"}, {"camera", "object - {eye,target,up,projection,scale}"},
        {"width", "int"}, {"height", "int"}, {"select", "array|csv - node uuids"}, {"edges", "bool - silhouette outlines (default true)"}, {"background", "[r,g,b] 0..1"}, {"tolerance", "number"},
        {"views", "array|csv - e.g. iso,front,top,right: one labelled grid"}, {"edge_lines", "bool - the model's edges as lines"}, {"highlight", "array - face/edge references to tint"},
-       {"shading", "flat|smooth"}, {"explode", "uuid|object - an exploded view: a view op id or an explode spec"},
+       {"shading", "flat|smooth"}, {"cloud_color", "own|height - point clouds in their own colours, or by height above a plane"},
+       {"height_plane", "object - a plane input the heights are measured from (default: each cloud's own dominant plane)"},
+       {"explode", "uuid|object - an exploded view: a view op id or an explode spec"},
        {"joints", "object - {joint: value}: the mechanism there"}, {"study", "object - {id, t | frame | mode, field (von_mises | displacement | failure_index | temperature | air_speed), streamlines, hide, ghost (body ids: left out, see-through), scale, max}: a study's frame or result map"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -1221,15 +1235,36 @@ json export_document(const Document& doc, const Scene& scene, const json& a, con
   o.sheet = a.value("sheet", "");
   o.issue = a.value("issue", "");
   o.progress = progress;
+  // Print placement (mesh formats): up from the bed as validate print takes build_direction, or a face to lie on the bed.
+  if (a.contains("build_direction") && a.contains("bed_face")) throw Error("export: give build_direction or bed_face, not both");
+  if (a.contains("build_direction")) o.print_up = parse_build_direction(a["build_direction"]);
+  if (a.contains("bed_face")) {
+    const json& f = a["bed_face"];
+    const Vec3 n = face_outward_normal(doc, scene, Ref::from_json(f.is_object() && f.contains("ref") ? f["ref"] : f));  // a reference token too
+    o.print_up = {-n[0], -n[1], -n[2]};
+  }
+  const bool oriented = a.contains("build_direction") || a.contains("bed_face");
+  o.drop_to_bed = a.value("drop_to_bed", oriented);
+  o.center_xy = a.value("center_xy", false);
   const std::string out = a.value("out", "");
   if (out.empty()) throw Error("export: \"out\" path required");
+  // PLY is a point cloud's format and a mesh's: the clouds in the selection (or the document) when there are any.
+  if (fmt == "ply") {
+    bool clouds = false;
+    std::vector<std::string> bodies = o.select.empty() ? scene.all_bodies() : std::vector<std::string>{};
+    for (const auto& id : o.select)
+      if (scene.node(id))
+        for (const auto& b : scene.bodies_under(id)) bodies.push_back(b);
+    for (const auto& id : bodies) clouds = clouds || (scene.node(id) && scene.node(id)->representation == "points");
+    if (!clouds) return export_selection(doc, scene, path_from_utf8(out), o).to_json();
+  }
   if (fmt == "ply" || fmt == "xyz" || fmt == "pts" || fmt == "csv" || fmt == "e57") return cloud::export_points(doc, scene, path_from_utf8(out), o.select);
   if (fmt == "svg" || fmt == "dxf" || fmt == "dwg" || fmt == "pdf" || fmt == "png") return export_drawing(doc, scene, path_from_utf8(out), o).to_json();
   return export_selection(doc, scene, path_from_utf8(out), o).to_json();
 }
 
 std::vector<std::string> exporter_formats() {
-  std::vector<std::string> out = {"step", "obj", "stl", "glb", "dxf", "svg", "dwg"};
+  std::vector<std::string> out = {"step", "obj", "stl", "3mf", "ply", "glb", "dxf", "svg", "dwg", "xyz", "pts", "csv", "e57"};
   if (drawing::can_paint()) out.insert(out.end(), {"pdf", "png"});
   auto& r = registry();
   std::lock_guard<std::recursive_mutex> lock(r.mu);

@@ -6,6 +6,7 @@
 #include <limits>
 #include <set>
 
+#include "opad/design/expr.hpp"
 #include "opad/design/sketch_create.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_modify.hpp"
@@ -63,10 +64,34 @@ void offset_shape(Sketch& sk, const json& options, const json& earlier) {
   sk = std::move(result);
 }
 
-std::pair<double, double> pick(const json& p, size_t shape, size_t i) {
-  if (!p.is_array() || p.size() != 2 || !p[0].is_number() || !p[1].is_number())
-    throw Error("shapes[" + std::to_string(shape) + "].picks[" + std::to_string(i) + "] must be [u, v] in sketch mm");
-  return {p[0].get<double>(), p[1].get<double>()};
+// A length as written: a number (mm) or an expression of the document's parameters.
+double length_of(const json& v, const ParamTable* params, const std::string& what) {
+  if (v.is_number()) return v.get<double>();
+  if (!v.is_string()) throw Error(what + " must be a number (mm) or an expression such as \"width / 2\"");
+  if (!params) throw Error(what + ": the expression \"" + v.get<std::string>() + "\" needs the document's parameters");
+  try {
+    return params->length(v.get<std::string>());
+  } catch (const std::exception& e) {
+    throw Error(what + ": " + e.what());
+  }
+}
+
+std::pair<double, double> pick(const json& p, size_t shape, size_t i, const ParamTable* params) {
+  const std::string what = "shapes[" + std::to_string(shape) + "].picks[" + std::to_string(i) + "]";
+  if (!p.is_array() || p.size() != 2) throw Error(what + " must be [u, v] in sketch mm (numbers or expressions)");
+  return {length_of(p[0], params, what + "[0]"), length_of(p[1], params, what + "[1]")};
+}
+
+// The length options written as expressions, as numbers.
+json evaluate_options(json options, const ParamTable* params, size_t shape) {
+  if (!options.is_object()) return options;
+  const std::string where = "shapes[" + std::to_string(shape) + "].options.";
+  for (const char* key : {"radius", "diameter", "width", "height", "distance", "fillet"})
+    if (options.contains(key) && options[key].is_string()) options[key] = length_of(options[key], params, where + key);
+  if (options.contains("fillets") && options["fillets"].is_array())
+    for (size_t k = 0; k < options["fillets"].size(); ++k)
+      if (options["fillets"][k].is_string()) options["fillets"][k] = length_of(options["fillets"][k], params, where + "fillets[" + std::to_string(k) + "]");
+  return options;
 }
 
 }  // namespace
@@ -78,7 +103,7 @@ const std::vector<std::string>& sketch_shape_kinds() {
   return kinds;
 }
 
-json expand_sketch_shapes(const json& geometry_in, json* id_map) {
+json expand_sketch_shapes(const json& geometry_in, json* id_map, const ParamTable* params) {
   json geometry = geometry_in.is_object() ? geometry_in : json::object();
   const json shapes = geometry.value("shapes", json::array());
   geometry.erase("shapes");
@@ -115,13 +140,13 @@ json expand_sketch_shapes(const json& geometry_in, json* id_map) {
       for (const auto& p : sk.points) points.insert(p.id);
       for (const auto& e : sk.entities) entities.insert(e.id);
       for (const auto& c : sk.constraints) constraints.insert(c.id);
-      const json options = shape.value("options", json::object());
+      const json options = evaluate_options(shape.value("options", json::object()), params, i);
       if (kind == "offset") {
         offset_shape(sk, options, map);
       } else {
         std::vector<std::pair<double, double>> picks;
         const json list = shape.value("picks", json::array());
-        for (size_t k = 0; k < list.size(); ++k) picks.push_back(pick(list[k], i, k));
+        for (size_t k = 0; k < list.size(); ++k) picks.push_back(pick(list[k], i, k, params));
         create_primitive(sk, kind, picks, options);
       }
       json entry = {{"shape", i}, {"kind", kind}, {"points", json::array()}, {"entities", json::array()}, {"constraints", json::array()}};
@@ -144,7 +169,7 @@ json expand_sketch_shapes(const json& geometry_in, json* id_map) {
         TextOptions t;
         t.height = options.value("height", 10.0);
         t.align = options.value("align", "left");
-        const auto origin = pick(shape.value("picks", json::array()).at(0), i, 0);
+        const auto origin = pick(shape.value("picks", json::array()).at(0), i, 0, params);
         std::set<int> seen;
         entry["profiles"] = json::array();
         for (const auto& [x, y] : text_stroke_points(options.value("text", std::string()), origin.first, origin.second, t))

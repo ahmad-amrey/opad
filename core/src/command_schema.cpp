@@ -51,8 +51,8 @@ json sketch_geometry() {
     {"refs",array(id,1)},{"anchors",array(id)},{"value",type("number")},{"expr",type("string")},{"reference",type("boolean")},{"signed",type("boolean")},{"pos",vector(2)}},{"type","refs"});
   constraint["description"]="refs are point/entity IDs in this sketch. Dimensions require value (numeric initial value) and optionally expr (e.g. width or thickness/2). hdistance/vdistance: [point, point] is the size of the difference, or with signed: true the signed q - p; [point] is its coordinate from the sketch origin, signed. An ellipse takes major_radius (centre to the end of its major axis) and minor_radius (its r), not radius or diameter.";
   json kinds=json::array();for(const auto& k:design::sketch_shape_kinds())kinds.push_back(k);
-  auto shape=object({{"kind",choice(kinds)},{"picks",array(vector(2))},{"options",type("object")},{"first_id",id}},{"kind"});
-  shape["description"]="Expanded into ordinary points, entities and constraints (the result's id_map lists them per shape). picks are [u,v] in sketch mm. point [p]; line [a,b]; circle [centre] + options.radius|diameter; rect2 [corner,corner]; rect_center [centre,corner]; rect3 [a,b,height point]; rounded_rect [corner,corner] + options.radius (options.center: [centre,corner]); arc3 [start,middle,end]; arc_radius [start,end] + options.radius, direction ccw|cw, large; slot [centre,centre] + options.width; path [points...] + options.closed (default true), fillet (radius at every straight corner), fillets [per point], segments [per segment: line|tangent|tangent_next|signed radius]; offset + options.shape (index of an earlier shape) or entity|entities, distance (+ outward, - inward), round; text [baseline start] + options.text, height, style outline|stroke, weight, align left|center|right. first_id: this shape's ids run consecutively from it.";
+  auto shape=object({{"kind",choice(kinds)},{"picks",array(array({{"type",{"number","string"}}},2,2))},{"options",type("object")},{"first_id",id}},{"kind"});
+  shape["description"]="Expanded into ordinary points, entities and constraints (the result's id_map lists them per shape). picks are [u,v] in sketch mm, numbers or parameter expressions (as are length options), evaluated once. point [p]; line [a,b]; circle [centre] + options.radius|diameter; rect2 [corner,corner]; rect_center [centre,corner]; rect3 [a,b,height point]; rounded_rect [corner,corner] + options.radius (options.center: [centre,corner]); arc3 [start,middle,end]; arc_radius [start,end] + options.radius, direction ccw|cw, large; slot [centre,centre] + options.width; path [points...] + options.closed (default true), fillet (radius at every straight corner), fillets [per point], segments [per segment: line|tangent|tangent_next|signed radius]; offset + options.shape (index of an earlier shape) or entity|entities, distance (+ outward, - inward), round; text [baseline start] + options.text, height, style outline|stroke, weight, align left|center|right. first_id: this shape's ids run consecutively from it.";
   auto out=object({{"points",array(point)},{"entities",array(entity)},{"constraints",array(constraint)},{"shapes",array(shape)},{"images",array(type("object"))},{"patterns",array(type("object"))},{"id_watermark",type("integer")}});
   out["description"]="Every id is unique across the whole sketch: points, entities, constraints, images and patterns share one id space, so point 1 and entity 1 collide (number them e.g. points 1-99, entities 100-199, constraints 200+). An item without an id gets the next free one. shapes are added after the listed items.";
   return out;
@@ -179,7 +179,11 @@ json command_schema(const commands::CommandInfo& command,bool live) {
     json kinds=json::array();for(const auto& spec:design::feature_specs())kinds.push_back(spec.kind);
     properties["kind"]=choice(kinds);properties["inputs"]={{"type","object"},{"description","Request feature_schema for this kind before supplying inputs. Unknown input names are rejected."}};
   }
-  if(name=="export")properties["format"]=choice(commands::exporter_formats());
+  if(name=="export"){properties["format"]=choice(commands::exporter_formats());
+    // As validate print takes it (the print check's build_direction).
+    properties["build_direction"]={{"anyOf",{{{"type","string"},{"enum",{"+x","-x","+y","-y","+z","-z"}}},{{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}}}},
+                                   {"description",command.args.at("build_direction")}};
+    properties["bed_face"]={{"type",{"string","object"}},{"description",command.args.at("bed_face")}};}
   if(name.starts_with("sheet")){for(const char* key:{"at","place"})if(properties.contains(key)){auto d=properties[key]["description"];properties[key]=vector(2);properties[key]["description"]=d;}
     if(properties.contains("aspects"))properties["aspects"]=array(choice({"start","end","mid","center"}));
     if(name=="sheet_item")properties["refs"]={{"type","array"},{"items",{{"type",{"string","object"}}}},{"maxItems",2},{"description",command.args.at("refs")}};}
@@ -198,6 +202,8 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(name=="render"){
     properties["fit"]=type("boolean");properties["ignore_visibility"]=type("boolean");properties["supersample"]={{"type","integer"},{"minimum",1},{"maximum",4}};
     for(const char* key:{"width","height"})properties[key]={{"type","integer"},{"minimum",16},{"maximum",4096}};
+    properties["cloud_color"]=choice({"own","height"});properties["cloud_color"]["description"]=command.args.at("cloud_color");
+    properties["height_plane"]={{"type","object"},{"description",command.args.at("height_plane")}};
   }
   if(live)properties.erase("save");
   auto out=object(properties,required);

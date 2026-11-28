@@ -1225,7 +1225,7 @@ void DesignController::refitPick(const QString& input, opad::json ref, bool axis
 void DesignController::startAlignScan(const std::string& body) {
   const opad::Node* n = m_doc->node(body);
   if (!n || n->kind != opad::Node::Kind::Body) return;
-  const opad::json from = {{"fit", {{"body", body}, {"of", "scan_axes"}, {"base", 0}, {"turn", 0}, {"origin", "auto"}}}};
+  const opad::json from = {{"fit", {{"body", body}, {"of", "scan_axes"}, {"base", 0}, {"turn", 0}, {"origin", "auto"}, {"x", "outline"}}}};
   startFeature("align", {{"bodies", opad::json::array({{{"body", body}, {"kind", "body"}}})},
                          {"from", "plane"},
                          {"from_plane", from},
@@ -1235,6 +1235,16 @@ void DesignController::startAlignScan(const std::string& body) {
   if (!m_featureOn || !m_form->spec() || m_form->spec()->kind != "align") return;
   m_form->activate(QString());
   refitPick("from_plane", from, false);
+}
+
+void DesignController::startLayFlat(const std::vector<std::string>& bodies) {
+  opad::json picked = opad::json::array();
+  for (const auto& id : bodies) picked.push_back({{"body", id}, {"kind", "body"}});
+  std::vector<std::pair<QString, opad::json>> given = {{"from", "plane"}, {"to", "plane"}, {"to_plane", {{"base", "xy"}}}, {"motion", "move_and_rotate"}};
+  if (!picked.empty()) given.insert(given.begin(), {"bodies", picked});
+  startFeature("align", given);
+  if (!m_featureOn || !m_form->spec() || m_form->spec()->kind != "align") return;
+  m_form->activate(picked.empty() ? QString("bodies") : QString("from_plane"));  // then the face that goes down
 }
 
 void DesignController::inputsSettled() {
@@ -1782,8 +1792,11 @@ void DesignController::runPreview(bool commit, bool keep) {
     m_viewport->setPreviewMotion(*motions);  // moved as they are (Move, Align): their own objects drawn elsewhere
     {  // Align 3-2-1: what is still free after the steps given (slides along, turns about), or fully fixed
       QString note;
-      for (const auto& result : resultsFor(*plan, target, editResult))
-        if (result.is_object() && result.contains("free")) note = freedomText(result["free"]);
+      for (const auto& result : resultsFor(*plan, target, editResult)) {
+        if (!result.is_object()) continue;
+        if (result.contains("free")) note = freedomText(result["free"]);
+        else if (const QString mesh = meshResultText(result); !mesh.isEmpty()) note = mesh;  // Repair / Simplify mesh say what they did
+      }
       m_form->setResultNote(note);
     }
     if (!m_form->pairInputs().first.isEmpty()) {  // point pairs: the residuals in the list, the markers moved with the bodies
@@ -2400,6 +2413,46 @@ void DesignController::creaseHover() {
     }
     emit status(tr("Crease: %1 · click to take it").arg(fitpick::quality(m_crease)));
   });
+}
+
+// What Repair mesh found and left (per body: before -> after), what Simplify mesh did, what a mesh cut could not cap.
+QString DesignController::meshResultText(const opad::json& result) {
+  auto loc = [](size_t n) { return QLocale().toString(static_cast<qulonglong>(n)); };
+  auto faults = [&](const opad::json& r) {
+    QStringList f;
+    auto n = [&](const char* k) { return r.value(k, size_t(0)); };
+    if (n("open_edges")) f << tr("%1 open edges in %2 holes").arg(loc(n("open_edges")), loc(n("holes")));
+    if (n("non_manifold_edges")) f << tr("%1 non-manifold edges").arg(loc(n("non_manifold_edges")));
+    if (n("flipped_edges")) f << tr("%1 edges between triangles facing opposite ways").arg(loc(n("flipped_edges")));
+    if (n("degenerate_triangles")) f << tr("%1 degenerate triangles").arg(loc(n("degenerate_triangles")));
+    if (n("duplicate_triangles")) f << tr("%1 duplicate triangles").arg(loc(n("duplicate_triangles")));
+    if (n("self_intersections")) f << tr("%1 self-intersections").arg(loc(n("self_intersections")) + (r.value("self_intersections_capped", false) ? "+" : ""));
+    return f;
+  };
+  QStringList lines;
+  if (result.contains("repair") && result["repair"].is_array()) {
+    for (const auto& r : result["repair"]) {
+      const QStringList before = r.contains("before") ? faults(r["before"]) : QStringList();
+      const QStringList after = r.contains("after") ? faults(r["after"]) : QStringList();
+      lines << (before.isEmpty() ? tr("Found nothing to repair.") : tr("Found: %1.").arg(before.join(", ")));
+      QStringList done;
+      if (r.value("welded_vertices", 0)) done << tr("%1 vertices welded").arg(loc(r["welded_vertices"]));
+      if (r.value("removed_degenerate", 0) || r.value("removed_duplicates", 0))
+        done << tr("%1 triangles removed").arg(loc(r.value("removed_degenerate", size_t(0)) + r.value("removed_duplicates", size_t(0))));
+      if (r.value("flipped_triangles", 0)) done << tr("%1 triangles turned").arg(loc(r["flipped_triangles"]));
+      if (r.value("holes_filled", 0)) done << tr("%1 holes closed").arg(loc(r["holes_filled"]));
+      if (!done.isEmpty()) lines << tr("Done: %1.").arg(done.join(", "));
+      const bool ok = r.contains("after") && r["after"].value("printable", false);
+      lines << (ok ? tr("Printable: closed, outward, no crossings.") : tr("Left: %1.").arg(after.isEmpty() ? tr("not closed") : after.join(", ")));
+    }
+  }
+  if (result.contains("simplify") && result["simplify"].is_array())
+    for (const auto& r : result["simplify"])
+      lines << tr("%1 triangles to %2 (surface moved up to %3)")
+                   .arg(loc(r.value("before", size_t(0))), loc(r.value("after", size_t(0))), units::format(units::Kind::Length, r.value("error_mm", 0.0)));
+  if (result.value("uncapped", false)) lines << tr("An open mesh (a scan) is cut without caps: Repair mesh closes it.");
+  if (result.value("already", false)) lines << tr("Already on the bed: nothing moves.");
+  return lines.join("\n");
 }
 
 // What a 3-2-1 Align leaves free, in words: "Free: slide along X, turn about Z" (a direction named by its world axis when it

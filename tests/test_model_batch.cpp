@@ -2,6 +2,8 @@
 // step's own choices.
 #include "opad/model_batch.hpp"
 #include "opad/core.hpp"
+#include "opad/design/feature.hpp"
+#include "opad/geometry.hpp"
 #include "check.hpp"
 #include <algorithm>
 #include <set>
@@ -109,6 +111,90 @@ TEST(batch_parent_warns_only_steps_that_set_their_own_style) {
   CHECK(!warned(1));
   CHECK(!warned(2));  // a join made no body: the batch's parent was not the step's choice, so no warning
   CHECK(warned(3));   // this step chose a colour itself, and it was not used
+}
+
+// A sketch edit that leaves a downstream feature's body invalid is reported with that feature and the kernel's reason
+// (the live bridge's refusal used to say only "Generated body failed solid validation").
+TEST(an_invalid_body_names_the_feature_that_made_it_and_why) {
+  Document doc = Document::create();
+  json straight = path_step()["arguments"];
+  for (auto& p : straight["geometry"]["points"]) p["y"] = 0;
+  const std::string path = commands::run("sketch", straight, &doc)["ids"][0];
+  const std::string profile = commands::run("sketch", profile_step()["arguments"], &doc)["ids"][0];
+  const json made = commands::run("feature", {{"kind", "sweep"}, {"name", "Arm"}, {"inputs", sweep_inputs(profile, path)}}, &doc);
+  const Scene before = resolve(doc);
+  const std::string body = made["body_ids"][0], feature = made["feature_id"];
+  CHECK(agent::invalid_changed_solids(doc, Scene{}, before).empty());
+  CHECK(agent::invalid_solid_reason(node_world_shape(doc, before, body)).empty());
+  commands::run("sketch_edit", {{"target", path}, {"geometry", path_step()["arguments"]["geometry"]}}, &doc);
+  const Scene after = resolve(doc);
+  const auto invalid = agent::invalid_changed_solids(doc, before, after);
+  CHECK_EQ(invalid.size(), size_t(1));
+  const Feature* maker = agent::feature_that_made(after, body);
+  CHECK(maker && maker->id == feature);
+  const std::string said = agent::describe_invalid_solid(doc, after, body);
+  CHECK(contains(said, "made by sweep 'Arm' (" + feature + ")"));
+  CHECK(contains(said, " on "));  // a BRepCheck status with the sub-shapes it is on
+  Feature broken = *maker;
+  broken.error = "the cut does not touch any body";
+  CHECK_EQ(agent::describe_feature_error(broken), "sweep 'Arm' (" + feature + ") failed: the cut does not touch any body");
+}
+
+// Finding: a cut moved away and back in one batch failed at the first step; validate "final" checks only the end state.
+TEST(validate_final_lets_steps_pass_through_a_broken_state) {
+  Document base = Document::create();
+  commands::run("feature", {{"kind", "box"}, {"name", "Block"}, {"inputs", {{"length", 20}, {"width", 20}, {"height", 10}}}}, &base);
+  const std::string cut = commands::run("feature", {{"kind", "box"}, {"name", "Pocket"},
+                                                    {"inputs", {{"length", 4}, {"width", 4}, {"height", 20}, {"operation", "cut"}}}}, &base)["feature_id"];
+  auto move = [&](const std::string& id, const char* x) {
+    return json{{"id", id}, {"command", "feature_edit"}, {"arguments", {{"target", cut}, {"inputs", {{"x", x}}}}}};
+  };
+  const json there_and_back = json::array({move("away", "100 mm"), move("back", "3 mm")});
+  {  // each step checked: the first one fails
+    Document doc = base;
+    json output;
+    std::string error;
+    try {
+      agent::model_batch(doc, {{"steps", there_and_back}}, output);
+    } catch (const Error& e) {
+      error = e.what();
+    }
+    CHECK(contains(error, "does not touch"));
+    CHECK_EQ(output.value("failed_step", ""), std::string("away"));
+  }
+  {  // the end state checked: valid, the step that passed through the error says so
+    Document doc = base;
+    json output;
+    std::set<std::string> valid;
+    agent::model_batch(doc, {{"steps", there_and_back}, {"validate", "final"}}, output, {nullptr, nullptr, {}, &valid});
+    CHECK(!output.contains("failed_step"));
+    CHECK_EQ(output["final_check"]["state"], json("valid"));
+    CHECK(contains(output["steps"][0]["result"].value("errors", json::array()).dump(), "does not touch"));
+    const Scene end = resolve(doc);
+    CHECK(end.feature(cut)->error.empty());
+    CHECK_EQ(end.feature(cut)->inputs["x"], json("3 mm"));
+    CHECK_EQ(valid.size(), size_t(1));
+  }
+  {  // an end state that is still broken fails as a whole, naming the feature
+    Document doc = base;
+    json output;
+    std::string error;
+    try {
+      agent::model_batch(doc, {{"steps", json::array({move("away", "100 mm")})}, {"validate", "final"}}, output);
+    } catch (const Error& e) {
+      error = e.what();
+    }
+    CHECK(contains(error, "end state"));
+    CHECK(contains(error, "box 'Pocket' (" + cut + ") failed: the cut does not touch any body"));
+    CHECK_EQ(output.value("failed_step", ""), std::string("final"));
+    CHECK_EQ(output["final_check"]["state"], json("failed"));
+    CHECK_EQ(output["final_check"]["errors"].size(), size_t(1));
+  }
+  // The errors are deferred only inside the batch.
+  CHECK(!design::DeferErrors::active());
+  Document doc = base;
+  json output;
+  CHECK_THROWS(agent::model_batch(doc, {{"steps", there_and_back}, {"validate", "later"}}, output));
 }
 
 CHECK_MAIN()

@@ -369,6 +369,43 @@ TEST(motion_study_checks_clearance_along_its_path) {
   CHECK(error_of([&] { sweep(20, "yes"); }).find("clearance") != std::string::npos);
 }
 
+// A slider driven onto its stop: the joint's upper limit leaves the slider 0.01 mm into the stop block (as a stop drawn
+// flush and meshed comes out). Plain clearance calls it a collision at the limit; contact_tolerance_mm calls it the
+// designed contact, expected because the slide is at its limit.
+TEST(a_hard_stop_is_a_contact_not_a_collision) {
+  Document doc = Document::create();
+  const std::string slider = box(doc, {10, 0, 0}, 10, 10, 10, "Slider");  // x 5..15
+  const std::string stop = box(doc, {55.5, 0, 0}, 10, 10, 10, "Stop");    // x 50.5..60.5
+  const std::string slide = joint(doc, {{"kind", "slider"}, {"name", "Slide"}, {"part", slider}, {"at", {{"origin", {10, 0, 0}}, {"z", {1, 0, 0}}}},
+                                        {"limits", {{"translation", {0, 35.51}}}}})["id"];
+  joint(doc, {{"kind", "ground"}, {"part", stop}, {"at", axis_z({55.5, 0, 0})}});
+  auto run = [&](const json& clearance) {
+    return commands::run("study", {{"kind", "motion"}, {"run", true},
+                                   {"settings", {{"duration", 1}, {"frames", 41}, {"drivers", {{{"joint", slide}, {"to", 40}}}}, {"clearance", clearance}}}},
+                         &doc)["clearance"];
+  };
+  const json hit = run(true);
+  CHECK_EQ(hit["status"].get<std::string>(), std::string("collision"));
+  CHECK(hit["first_collision"]["kind"] == "intersecting");
+  CHECK_NEAR(hit["first_collision"]["depth_mm"].get<double>(), 0.01, 2e-3);
+  CHECK(hit["first_collision"].contains("at_limit") && hit["first_collision"]["at_limit"][0]["limit"] == "upper");
+  CHECK(!hit.contains("contacts"));
+  const json stopped = run(json{{"contact_tolerance_mm", 0.05}});
+  CHECK_EQ(stopped["status"].get<std::string>(), std::string("contact"));
+  CHECK(stopped["first_collision"].is_null());
+  CHECK_EQ(stopped["contact_pairs"].get<int>(), 1);
+  const json& contact = stopped["contacts"][0];
+  CHECK(contact["expected"] == true);
+  CHECK(contact["at_limit"][0]["joint"] == slide);
+  CHECK(contact["kind"] == "intersecting");
+  CHECK_NEAR(contact["depth_mm"].get<double>(), 0.01, 2e-3);
+  CHECK_NEAR(stopped["contact_tolerance_mm"].get<double>(), 0.05, 1e-12);
+  // Deeper than the tolerance is still a collision.
+  const json tight = run(json{{"contact_tolerance_mm", 0.001}});
+  CHECK_EQ(tight["status"].get<std::string>(), std::string("collision"));
+  CHECK(error_of([&] { run(json{{"contact_tolerance_mm", -1}}); }).find("contact_tolerance_mm") != std::string::npos);
+}
+
 TEST(errors_say_what_to_do) {
   SliderCrank m;
   CHECK(error_of([&] { joint(m.doc, {{"kind", "hinge"}, {"part", m.crank}, {"at", axis_z({0, 0, 0})}}); }).find("unknown kind") != std::string::npos);

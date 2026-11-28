@@ -366,9 +366,9 @@
   {
    "id": "file.export",
    "title": "Export",
-   "summary": "Writes the selection or the whole design to STEP, STL, OBJ, GLB, DXF, SVG, DWG, PDF or PNG.",
-   "details": "Choose the format and what to include in the dialog, then where the file goes. Mesh formats are tessellated from the exact shapes; the 2D formats write drawings and sketches, or a 2D view of solids with hidden lines.",
-   "keywords": ["save as step", "stl", "dxf", "svg", "write file", "output"],
+   "summary": "Writes the selection or the whole design to STEP, STL, 3MF, OBJ, PLY, GLB, DXF, SVG, DWG, PDF or PNG.",
+   "details": "Choose the format and what to include in the dialog, then where the file goes. Mesh formats are tessellated from the exact shapes and can be placed for printing: turned so the chosen side is up, or the selected face lies on the bed, dropped onto the bed and centred on it. The 2D formats write drawings and sketches, or a 2D view of solids with hidden lines.",
+   "keywords": ["save as step", "stl", "3mf", "dxf", "svg", "write file", "output", "3d print", "orient", "build plate"],
    "requires": "Open or create a document first."
   },
   {
@@ -1536,7 +1536,7 @@
    "id": "inspect.printcheck",
    "title": "Print check",
    "summary": "Checks a part for 3D printing: overhangs, build-plate contact and thin walls.",
-   "details": "Works on solids and on meshes such as STL and 3MF. It runs as the panel opens and again whenever the model changes, and lists each finding; on the part overhangs turn amber and thin walls red, seen through the model like a selection, until the panel closes. A clicked finding is selected.",
+   "details": "Works on solids and on meshes such as STL and 3MF. It runs as the panel opens and again whenever the model changes, and lists each finding; on the part overhangs turn amber and thin walls red, seen through the model like a selection, until the panel closes. A thin wall names the features whose surfaces come too close, and clicking it selects both sides; the sharp edge where a pocket comes out of a slanted face is not counted as a wall.",
    "keywords": ["3d print", "overhang", "support", "wall thickness", "stl"],
    "requires": "Open or create a document first; not available while a sketch is open."
   },
@@ -2272,8 +2272,8 @@
   {
    "id": "design.scale",
    "title": "Scale",
-   "summary": "Resizes bodies uniformly.",
-   "details": "Set the factor: 2 doubles, 0.5 halves. Scale about the origin or about each body's centre of mass.",
+   "summary": "Resizes bodies and meshes: by a factor, a percentage, per axis or to a size.",
+   "details": "Choose Scale by: a factor (2 doubles, 0.5 halves), a percent, a factor for each axis, or a size in millimetres for X, Y or Z (Lock proportions scales the other axes alike). Scale about the origin, each body's centre, or the middle of its bottom so it stays on the bed. Meshes stay meshes.",
    "keywords": ["resize", "enlarge", "shrink", "factor"],
    "requires": "Open or create a document first."
   },
@@ -2281,7 +2281,7 @@
    "id": "design.combine",
    "title": "Combine",
    "summary": "Joins, cuts or intersects bodies.",
-   "details": "Pick the target body (more through the Target bodies box), then the tool bodies, and choose the operation. Keep tools leaves the tool bodies in place after the cut.",
+   "details": "Pick the target body (more through the Target bodies box), then the tool bodies, and choose the operation. Keep tools leaves the tool bodies in place after the cut. With a mesh among the bodies (an STL, OBJ, 3MF or PLY) the result is a mesh: solids are meshed at Mesh tolerance; a mesh with holes is refused until Repair mesh closes it.",
    "keywords": ["boolean", "union", "subtract", "intersect", "merge"],
    "requires": "Open or create a document first."
   },
@@ -2289,7 +2289,7 @@
    "id": "design.split",
    "title": "Split body",
    "summary": "Cuts bodies in two along a plane.",
-   "details": "Pick the bodies, then click the splitting plane in the view: an origin or a construction plane (a planar face through the Splitting plane box). Each body becomes two bodies in place, which you can then move, hide or delete.",
+   "details": "Pick the bodies, then click the splitting plane in the view: an origin or a construction plane (a planar face through the Splitting plane box). Each body becomes two bodies in place, which you can then move, hide or delete; Keep above or below keeps one side only. A closed mesh's cut is capped, so both halves stay printable.",
    "keywords": ["cut in half", "divide", "separate", "slice"],
    "requires": "Open or create a document first."
   },
@@ -2344,10 +2344,10 @@
   {
    "id": "design.alignScan",
    "title": "Align scan to axes",
-   "summary": "Stands a mesh body, such as a 3D scan, on the XY plane: its base flat down, a wall along X, its box centred on the origin.",
-   "details": "Select the scan and start: OPAD finds its flats from the facets' normals, fits the largest one it stands on as the base and lines its walls up with X; a scan with no flats is aligned by its principal axes. Next base and Next X in the From row offer the other candidates, Flip stands it the other way up and Box centre puts the middle of its box on the origin. Press {fixed:enter} to keep it: it is an Align step, and the fit is kept with it.",
-   "keywords": ["scan", "3d scan", "stl", "mesh", "level", "square up", "orient", "register", "best fit plane", "align to axes"],
-   "requires": "Select a mesh body first (a scan, an STL or an OBJ)."
+   "summary": "Stands a mesh body or point cloud, such as a 3D scan, on the XY plane: its base flat down, the long side of its outline along X, its box centred on the origin.",
+   "details": "Select the scan and start: OPAD finds its flats from the facets' normals, fits the largest one it stands on as the base; when the normals show no flat (a point cloud, a noisy scan) it fits the dominant plane by the points' positions, and a scan with no flat at all is aligned by its principal axes. Square to outline turns it so the smallest rectangle round its outline lies along X and Y, and the From row shows that size and how far it turned; switch it off to line the walls up with X instead. Next base and Next X offer the other candidates, Flip stands it the other way up and Box centre puts the middle of its box on the origin. Press {fixed:enter} to keep it: it is an Align step, and the fit is kept with it.",
+   "keywords": ["scan", "3d scan", "stl", "mesh", "point cloud", "level", "square up", "square to outline", "orient", "register", "best fit plane", "align to axes"],
+   "requires": "Select a mesh body or a point cloud first (a scan, an STL or an OBJ)."
   },
   {
    "id": "design.remove",
@@ -3762,6 +3762,46 @@
    "details": "Each press adds a quarter to its size on screen; the panel says what it spans on the cloud. {key:cloud.edit.smaller} makes it smaller again.",
    "keywords": ["brush size", "radius", "point cloud", "scan", "edit points"],
    "requires": "Only while Edit point cloud is open."
+  },
+  {
+   "id": "design.split_parts",
+   "title": "Split into parts",
+   "summary": "Makes each separate piece of a body its own body.",
+   "details": "Pick the bodies: a mesh is split into its disconnected shells (an STL of several objects becomes one body each), a body of several solids into one body per solid. The largest piece keeps the body's name, the others are numbered after it.",
+   "keywords": ["separate objects", "shells", "disconnected", "explode mesh", "split stl", "parts"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.drop_to_bed",
+   "title": "Drop to bed",
+   "summary": "Moves bodies straight down until they stand on the bed (Z = 0).",
+   "details": "Pick the bodies or components: each moves along Z only, by itself, until its lowest point is at Z = 0, as a slicer drops an object on its plate. Centre on the bed also puts the middle of its box on the origin. The bodies are placed as they are, nothing is rebuilt.",
+   "keywords": ["print bed", "build plate", "z zero", "place on bed", "floor", "3d print"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.mesh_repair",
+   "title": "Repair mesh",
+   "summary": "Makes mesh bodies printable: closed, outward and clean.",
+   "details": "Pick the meshes: vertices are welded (within Weld within, 0 for exact copies only), degenerate and duplicate triangles go, every triangle is turned outward and holes are closed (up to Largest hole edges). The panel says what it found before and what is left: open and non-manifold edges, flipped triangles and self-intersections.",
+   "keywords": ["fix stl", "fix mesh", "watertight", "manifold", "holes", "normals", "make printable", "netfabb"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.mesh_simplify",
+   "title": "Simplify mesh",
+   "summary": "Gives a mesh fewer triangles with the same shape.",
+   "details": "Pick the meshes and how far to go: a percent of the triangles, a number of triangles, or as far as a tolerance in millimetres allows. Edges are collapsed where that moves the surface least; Keep open edges leaves a scan's rim where it is. A closed mesh stays closed.",
+   "keywords": ["decimate", "reduce triangles", "polygon count", "lighter", "optimise mesh", "lod"],
+   "requires": "Open or create a document first."
+  },
+  {
+   "id": "design.layFlat",
+   "title": "Lay flat",
+   "summary": "Turns bodies so a face you click lies flat on the bed, facing down.",
+   "details": "Select the bodies (or start and pick them), then click the face that should touch the bed: on a mesh the flat around the clicked triangle is fitted. It is an Align step, the face put onto the XY plane; press {fixed:enter} to keep it. Drop to bed then only moves the body down.",
+   "keywords": ["place on face", "orient for printing", "face down", "bed", "build plate", "rotate to flat"],
+   "requires": "Open or create a document first."
   }
  ]
 }
