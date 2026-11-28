@@ -107,6 +107,14 @@ void MainWindow::ribbonTable(RibbonLayout& layout) {
   // (one column: the tab keeps every group large at 1600 px).
   group("design.solid", "history", tr("History"),
         {{"design.edit", S, {"design.suppress", "timeline.rollBack"}}, {"design.parameters", S}, {"design.regenerate", S}});
+  // Print prep on meshes (STL, OBJ, 3MF, PLY) as a slicer has it, without turning them into solids: place, combine and
+  // cut, repair. Every tool also takes solids except Repair and Simplify.
+  layout.addTab("design", "design.mesh", tr("Mesh"));
+  group("design.mesh", "place", tr("Place"),
+        {{"design.layFlat"}, {"design.drop_to_bed"}, {"design.scale"}, {"design.mirror", S}, {"design.move", S, {"design.align", "design.alignScan"}}});
+  group("design.mesh", "cut", tr("Cut and join"), {{"design.split"}, {"design.split_parts"}, {"design.combine"}});
+  group("design.mesh", "fix", tr("Fix"), {{"design.mesh_repair"}, {"design.mesh_simplify"}, {"design.mesh_solid", S}});
+  group("design.mesh", "check", tr("Check"), {{"inspect.printcheck"}, {"inspect.deviation", S}});
   layout.addTab("design", "design.assemble", tr("Assemble"));
   group("design.assemble", "components", tr("Components"),
         {{"design.newcomponent", L, {"design.componentFromSelection"}}, {"assembly.activate"}, {"assembly.activateRoot", S}, {"assembly.activeVisibility", S},

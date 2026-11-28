@@ -365,7 +365,8 @@ QString iconFor(const std::string& kind) {
       {"scale", "scale"}, {"combine", "combine"}, {"split", "split"}, {"mirror", "mirror"}, {"pattern_rect", "patternRect"},
       {"pattern_circ", "patternCirc"}, {"pattern_points", "patternPoints"}, {"move", "move"}, {"align", "align"}, {"remove", "delete"},
       {"plane", "plane"}, {"axis", "axis"}, {"box", "box"}, {"cylinder", "cylinder"}, {"sphere", "sphere"}, {"cone", "cone"},
-      {"torus", "torus"}, {"coil", "coil"}, {"gear", "gear"}, {"thicken", "thicken"}, {"interference", "interference"}, {"remove_faces", "delete"}};
+      {"torus", "torus"}, {"coil", "coil"}, {"gear", "gear"}, {"thicken", "thicken"}, {"interference", "interference"}, {"remove_faces", "delete"},
+      {"split_parts", "splitParts"}, {"drop_to_bed", "dropToBed"}, {"mesh_repair", "meshRepair"}, {"mesh_simplify", "meshSimplify"}};
   const auto it = icons.find(kind);
   return it == icons.end() ? QStringLiteral("aiMark") : QString::fromLatin1(it->second);
 }

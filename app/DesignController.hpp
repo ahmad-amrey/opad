@@ -46,6 +46,8 @@ class DesignController : public QObject {
   void startSketchOn(const opad::json& plane, const opad::Frame& frame);
 
   void startFeature(const QString& kind);
+  // Lay flat: Align preset to put a picked face (a mesh triangle becomes a fitted flat) face down on the XY plane.
+  void startLayFlat(const std::vector<std::string>& bodies);
   // A new feature with inputs given (picks as their JSON array, values and flags as typed): Paste's Move / copy (UI-129).
   void startFeature(const QString& kind, const std::vector<std::pair<QString, opad::json>>& given);
   void editOp(const std::string& opId);  // a feature or a sketch, rolled back to when it was made
@@ -246,7 +248,8 @@ class DesignController : public QObject {
   void refreshPairMarkers();   // the picks changed: resolve their points again
   void drawPairMarkers();      // the resolved points, the preview's move and the stray pair
   void pairPreviewed(const opad::json& result);
-  static QString freedomText(const opad::json& free);  // Align 3-2-1's result "free" in words  // a preview's fit (after its motion is drawn); null: none
+  static QString freedomText(const opad::json& free);
+  static QString meshResultText(const opad::json& result);  // Repair / Simplify mesh's report, an uncapped cut  // Align 3-2-1's result "free" in words  // a preview's fit (after its motion is drawn); null: none
   bool pairsWaiting(opad::json& inputs);  // fewer than three whole pairs: true (and says so); else the uneven tail trimmed
   // Creases (DesignPairs section "creases"): the hovered side's crease fitted on a worker, drawn as a guide line, taken by a
   // click on that side; a box over sides gives the line through them.

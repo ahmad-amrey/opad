@@ -6388,6 +6388,903 @@
     {"to": 1.5, "caption": "Press it: the brush gets larger"},
     {"to": 3.6, "caption": "A quarter larger each time"}
    ]
+  },
+  {
+   "id": "design.layFlat",
+   "duration": 4.8,
+   "view": "iso",
+   "items": [
+    {
+     "use": "isoScene",
+     "args": {
+      "area": [
+       -20,
+       -14,
+       20,
+       14
+      ]
+     }
+    },
+    {
+     "el": "plane",
+     "plane": "xy",
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "size": [
+      36,
+      26
+     ],
+     "color": "fg2",
+     "fillOpacity": 0.08
+    },
+    {
+     "el": "solid",
+     "profile": {
+      "rect": [
+       -7,
+       -5,
+       14,
+       10
+      ]
+     },
+     "height": 5,
+     "tone": "sel",
+     "toneAmount": 0,
+     "pivot": [
+      0,
+      0,
+      0
+     ],
+     "keys": [
+      [
+       0,
+       {
+        "offset": [
+         0,
+         0,
+         9
+        ],
+        "rot": 35
+       }
+      ],
+      [
+       0.9,
+       {
+        "toneAmount": 0.35
+       }
+      ],
+      [
+       2.2,
+       {
+        "offset": [
+         0,
+         0,
+         9
+        ],
+        "rot": 35
+       }
+      ],
+      [
+       3.4,
+       {
+        "offset": [
+         0,
+         0,
+         0
+        ],
+        "rot": 0
+       }
+      ],
+      [
+       4.4,
+       {
+        "toneAmount": 0
+       }
+      ]
+     ]
+    },
+    {
+     "el": "key",
+     "fixed": "enter",
+     "press": 3.9,
+     "from": 3.65,
+     "to": 4.4
+    },
+    {
+     "el": "cursor",
+     "keys": [
+      [
+       0,
+       {
+        "pos": [
+         18,
+         -12,
+         0
+        ]
+       }
+      ],
+      [
+       0.9,
+       {
+        "pos": [
+         3,
+         -2,
+         14
+        ],
+        "click": 1
+       }
+      ],
+      [
+       1.9,
+       {
+        "pos": [
+         -2,
+         -6,
+         9
+        ],
+        "click": 1
+       }
+      ],
+      [
+       3.0,
+       {
+        "pos": [
+         14,
+         -12,
+         4
+        ]
+       }
+      ]
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "to": 1.2,
+     "caption": "Select the body and start Lay flat"
+    },
+    {
+     "to": 2.4,
+     "caption": "Click the face that goes on the bed"
+    },
+    {
+     "to": 4.8,
+     "caption": "It turns face down onto the bed; {fixed:enter} keeps it"
+    }
+   ]
+  },
+  {
+   "id": "design.drop_to_bed",
+   "duration": 4.0,
+   "view": "iso",
+   "items": [
+    {
+     "use": "isoScene",
+     "args": {
+      "area": [
+       -20,
+       -14,
+       20,
+       14
+      ]
+     }
+    },
+    {
+     "el": "plane",
+     "plane": "xy",
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "size": [
+      36,
+      26
+     ],
+     "color": "fg2",
+     "fillOpacity": 0.08
+    },
+    {
+     "el": "solid",
+     "profile": {
+      "rect": [
+       -6,
+       -4,
+       12,
+       8
+      ]
+     },
+     "height": 6,
+     "tone": "sel",
+     "toneAmount": 0,
+     "keys": [
+      [
+       0,
+       {
+        "offset": [
+         0,
+         0,
+         10
+        ]
+       }
+      ],
+      [
+       0.8,
+       {
+        "toneAmount": 0.35
+       }
+      ],
+      [
+       1.8,
+       {
+        "offset": [
+         0,
+         0,
+         10
+        ]
+       }
+      ],
+      [
+       2.8,
+       {
+        "offset": [
+         0,
+         0,
+         0
+        ]
+       }
+      ],
+      [
+       3.6,
+       {
+        "toneAmount": 0
+       }
+      ]
+     ]
+    },
+    {
+     "el": "key",
+     "fixed": "enter",
+     "press": 2.0,
+     "from": 1.75,
+     "to": 2.5
+    },
+    {
+     "el": "cursor",
+     "keys": [
+      [
+       0,
+       {
+        "pos": [
+         18,
+         -12,
+         0
+        ]
+       }
+      ],
+      [
+       0.8,
+       {
+        "pos": [
+         1,
+         -1,
+         16
+        ],
+        "click": 1
+       }
+      ],
+      [
+       2.2,
+       {
+        "pos": [
+         14,
+         -10,
+         6
+        ]
+       }
+      ]
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "to": 1.4,
+     "caption": "Select the bodies above (or below) the bed"
+    },
+    {
+     "to": 4.0,
+     "caption": "{fixed:enter}: each moves down until it stands on Z = 0"
+    }
+   ]
+  },
+  {
+   "id": "design.split_parts",
+   "duration": 4.0,
+   "view": "iso",
+   "items": [
+    {
+     "use": "isoScene",
+     "args": {
+      "area": [
+       -20,
+       -14,
+       20,
+       14
+      ]
+     }
+    },
+    {
+     "el": "solid",
+     "profile": {
+      "rect": [
+       -12,
+       -5,
+       10,
+       10
+      ]
+     },
+     "height": 6,
+     "tone": "sel",
+     "toneAmount": 0,
+     "keys": [
+      [
+       0.8,
+       {
+        "toneAmount": 0.35
+       }
+      ],
+      [
+       2.4,
+       {
+        "toneAmount": 0.35
+       }
+      ],
+      [
+       3.4,
+       {
+        "toneAmount": 0
+       }
+      ]
+     ]
+    },
+    {
+     "el": "solid",
+     "profile": {
+      "rect": [
+       3,
+       -4,
+       8,
+       8
+      ]
+     },
+     "height": 9,
+     "tone": "sel",
+     "toneAmount": 0,
+     "keys": [
+      [
+       0.8,
+       {
+        "toneAmount": 0.35
+       }
+      ],
+      [
+       2.3,
+       {
+        "toneAmount": 0.35
+       }
+      ]
+     ],
+     "to": 2.4,
+     "fade": 0
+    },
+    {
+     "el": "solid",
+     "profile": {
+      "rect": [
+       3,
+       -4,
+       8,
+       8
+      ]
+     },
+     "height": 9,
+     "tone": "amber",
+     "toneAmount": 0.35,
+     "keys": [
+      [
+       2.4,
+       {
+        "offset": [
+         0,
+         0,
+         0
+        ]
+       }
+      ],
+      [
+       3.0,
+       {
+        "offset": [
+         3,
+         0,
+         0
+        ]
+       }
+      ],
+      [
+       3.4,
+       {
+        "toneAmount": 0
+       }
+      ]
+     ],
+     "from": 2.4,
+     "fade": 0
+    },
+    {
+     "el": "key",
+     "fixed": "enter",
+     "press": 2.2,
+     "from": 1.9500000000000002,
+     "to": 2.7
+    },
+    {
+     "el": "cursor",
+     "keys": [
+      [
+       0,
+       {
+        "pos": [
+         18,
+         -12,
+         0
+        ]
+       }
+      ],
+      [
+       0.8,
+       {
+        "pos": [
+         -7,
+         0,
+         6
+        ],
+        "click": 1
+       }
+      ],
+      [
+       2.4,
+       {
+        "pos": [
+         16,
+         -10,
+         6
+        ]
+       }
+      ]
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "to": 1.4,
+     "caption": "Select a mesh of several separate pieces"
+    },
+    {
+     "to": 4.0,
+     "caption": "{fixed:enter}: each piece becomes a body of its own"
+    }
+   ]
+  },
+  {
+   "id": "design.mesh_repair",
+   "duration": 4.4,
+   "view": "iso",
+   "items": [
+    {
+     "use": "isoScene",
+     "args": {
+      "area": [
+       -20,
+       -14,
+       20,
+       14
+      ]
+     }
+    },
+    {
+     "el": "solid",
+     "profile": {
+      "rect": [
+       -8,
+       -6,
+       16,
+       12
+      ]
+     },
+     "height": 8,
+     "tone": "amber",
+     "toneAmount": 0.35,
+     "to": 2.6,
+     "fade": 0.2
+    },
+    {
+     "el": "plane",
+     "plane": "xy",
+     "center": [
+      2,
+      1,
+      8
+     ],
+     "size": [
+      6,
+      5
+     ],
+     "color": "amber",
+     "fillOpacity": 0.5,
+     "to": 2.6,
+     "fade": 0.2
+    },
+    {
+     "el": "solid",
+     "profile": {
+      "rect": [
+       -8,
+       -6,
+       16,
+       12
+      ]
+     },
+     "height": 8,
+     "tone": "sel",
+     "toneAmount": 0.35,
+     "keys": [
+      [
+       2.6,
+       {
+        "toneAmount": 0.35
+       }
+      ],
+      [
+       3.8,
+       {
+        "toneAmount": 0
+       }
+      ]
+     ],
+     "from": 2.6,
+     "fade": 0.2
+    },
+    {
+     "el": "key",
+     "fixed": "enter",
+     "press": 2.4,
+     "from": 2.15,
+     "to": 2.9
+    },
+    {
+     "el": "cursor",
+     "keys": [
+      [
+       0,
+       {
+        "pos": [
+         18,
+         -12,
+         0
+        ]
+       }
+      ],
+      [
+       0.8,
+       {
+        "pos": [
+         -4,
+         -2,
+         8
+        ],
+        "click": 1
+       }
+      ],
+      [
+       2.6,
+       {
+        "pos": [
+         15,
+         -10,
+         6
+        ]
+       }
+      ]
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "to": 1.4,
+     "caption": "Select a mesh with a hole or flipped triangles"
+    },
+    {
+     "to": 2.6,
+     "caption": "The panel says what is wrong with it"
+    },
+    {
+     "to": 4.4,
+     "caption": "{fixed:enter}: welded, turned outward and closed"
+    }
+   ]
+  },
+  {
+   "id": "design.mesh_simplify",
+   "duration": 4.2,
+   "view": "iso",
+   "items": [
+    {
+     "use": "isoScene",
+     "args": {
+      "area": [
+       -18,
+       -14,
+       18,
+       14
+      ]
+     }
+    },
+    {
+     "el": "solid",
+     "profile": {
+      "points": [
+       [
+        9.0,
+        0.0
+       ],
+       [
+        8.77,
+        2.0
+       ],
+       [
+        8.11,
+        3.9
+       ],
+       [
+        7.04,
+        5.61
+       ],
+       [
+        5.61,
+        7.04
+       ],
+       [
+        3.9,
+        8.11
+       ],
+       [
+        2.0,
+        8.77
+       ],
+       [
+        0.0,
+        9.0
+       ],
+       [
+        -2.0,
+        8.77
+       ],
+       [
+        -3.9,
+        8.11
+       ],
+       [
+        -5.61,
+        7.04
+       ],
+       [
+        -7.04,
+        5.61
+       ],
+       [
+        -8.11,
+        3.9
+       ],
+       [
+        -8.77,
+        2.0
+       ],
+       [
+        -9.0,
+        0.0
+       ],
+       [
+        -8.77,
+        -2.0
+       ],
+       [
+        -8.11,
+        -3.9
+       ],
+       [
+        -7.04,
+        -5.61
+       ],
+       [
+        -5.61,
+        -7.04
+       ],
+       [
+        -3.9,
+        -8.11
+       ],
+       [
+        -2.0,
+        -8.77
+       ],
+       [
+        -0.0,
+        -9.0
+       ],
+       [
+        2.0,
+        -8.77
+       ],
+       [
+        3.9,
+        -8.11
+       ],
+       [
+        5.61,
+        -7.04
+       ],
+       [
+        7.04,
+        -5.61
+       ],
+       [
+        8.11,
+        -3.9
+       ],
+       [
+        8.77,
+        -2.0
+       ]
+      ]
+     },
+     "height": 8,
+     "tone": "sel",
+     "toneAmount": 0,
+     "keys": [
+      [
+       0.8,
+       {
+        "toneAmount": 0.35
+       }
+      ]
+     ],
+     "to": 2.4,
+     "fade": 0.3
+    },
+    {
+     "el": "solid",
+     "profile": {
+      "points": [
+       [
+        9.0,
+        0.0
+       ],
+       [
+        7.28,
+        5.29
+       ],
+       [
+        2.78,
+        8.56
+       ],
+       [
+        -2.78,
+        8.56
+       ],
+       [
+        -7.28,
+        5.29
+       ],
+       [
+        -9.0,
+        0.0
+       ],
+       [
+        -7.28,
+        -5.29
+       ],
+       [
+        -2.78,
+        -8.56
+       ],
+       [
+        2.78,
+        -8.56
+       ],
+       [
+        7.28,
+        -5.29
+       ]
+      ]
+     },
+     "height": 8,
+     "tone": "sel",
+     "toneAmount": 0.35,
+     "keys": [
+      [
+       2.4,
+       {
+        "toneAmount": 0.35
+       }
+      ],
+      [
+       3.6,
+       {
+        "toneAmount": 0
+       }
+      ]
+     ],
+     "from": 2.4,
+     "fade": 0.3
+    },
+    {
+     "el": "key",
+     "fixed": "enter",
+     "press": 2.2,
+     "from": 1.9500000000000002,
+     "to": 2.7
+    },
+    {
+     "el": "cursor",
+     "keys": [
+      [
+       0,
+       {
+        "pos": [
+         16,
+         -12,
+         0
+        ]
+       }
+      ],
+      [
+       0.8,
+       {
+        "pos": [
+         3,
+         -3,
+         8
+        ],
+        "click": 1
+       }
+      ],
+      [
+       2.4,
+       {
+        "pos": [
+         15,
+         -10,
+         6
+        ]
+       }
+      ]
+     ]
+    }
+   ],
+   "steps": [
+    {
+     "to": 1.4,
+     "caption": "Select the mesh and choose how far: a percent, a count or a tolerance"
+    },
+    {
+     "to": 4.2,
+     "caption": "{fixed:enter}: fewer triangles, the same shape"
+    }
+   ]
   }
  ]
 }

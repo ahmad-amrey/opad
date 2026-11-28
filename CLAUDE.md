@@ -446,6 +446,31 @@ sides (chord sagitta limited by `mesh_sagitta`); arcs need their centre on the e
 not close. `OPAD_MESHSOLID_DEBUG=1` traces why a profile or attempt was refused. `ctest -R mesh_solid`; bench
 `mesh-to-solid` (OPAD_BENCH_MESHSOLID).
 
+## Mesh editing for printing (`core/src/mesh/`, `opad/mesh_edit.hpp`, `design/mesh_features.cpp`)
+
+Meshes stay meshes: `meshops::Mesh` (double xyz, uint32 triangles; `from_shape` welds exact duplicates, so an import's
+crease-split nodes join; `to_shape` splits them again at 30 degrees for shading; `to_brep` = the mesh body text
+`store_body`/`persist_body` write too). The engine's `materialize` has a mesh branch beside the points one (nodes mapped
+by hand into the entry's frame, `representation: "mesh"` on the entry, read back from its text: BRep text keeps 15
+digits whatever the stream asks, so later features see what a reopened file has); `scene.cpp` takes an entry's
+representation for an existing node too (a solid a mesh Boolean made into a mesh). `Ctx::node_shape` still refuses
+meshes; `Ctx::any_shape` / `is_mesh` serve the features that take them: `compute_mesh_feature` (one line in
+`compute_feature`) handles scale (solids too: per axis by GTransform), drop_to_bed (Out::placed), split_parts,
+mesh_repair, mesh_simplify, and combine/split when a mesh is among the bodies; mirror, patterns (operation new) and
+move copies map meshes in features.cpp. Booleans and capped plane cuts: Manifold 3.5.5, simplify: meshoptimizer 1.3,
+both fetched by `cmake/mesh_libs.cmake` into `build/<preset>/meshlibs` and compiled static from their own source lists,
+Manifold serial (`MANIFOLD_PAR=-1`, no TBB: a result must not depend on the build) with `-ffp-contract=off`. Manifold
+takes closed oriented manifolds only: refusals name the open/non-manifold edges and send to Repair mesh; an open mesh is
+cut by our clipper uncapped. A solid in a mesh Boolean is meshed on a copy (`mesh_solid_copy`, its poles' repeated-corner
+slivers dropped). Repair: weld, degenerate/duplicate (a folded pair, same corners opposite ways, goes whole), BFS
+orientation + outward volume, holes by earcut on the loop's Newell plane; check: sorted sides, union-find shells/holes,
+box tree + interval test for crossings. Simplify ends in that clean-up (meshopt can fold a pair). Timings (2 x 1.26M
+triangles): union 5-6 s, capped split 4.5 s, check 2.5 s (`OPAD_TEST_MESH_HEAVY=1 ctest -R mesh-edit`). Lay flat =
+`design.layFlat` (Align preset, `startLayFlat`); the panel note of Repair/Simplify is `meshResultText`. Command
+`mesh_check`. `ctest -R mesh-edit`; gui case `mesh-edit` (OPAD_BENCH_MESHEDIT, tools/bench_cases/mesh_edit.py).
+Print export's own placement (ExportOptions print_up/drop_to_bed/center_xy) leaves the model alone; `meshops::tight_box`
+(a mesh's nodes, else BRepBndLib's optimal box) is the lowest-point helper for both.
+
 ## Fitted references on meshes (`core/src/scan_fit.cpp`, `core/src/design/fit_refs.cpp`, `app/FitPick.*`)
 
 A scan's "faces" are triangles, so planes and axes on a mesh body are fitted: `{"fit": {body, seed | triangles | points |

@@ -67,6 +67,7 @@
 
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
+#include "opad/mesh_edit.hpp"
 #include "import_common.hpp"
 #include "opad/point_cloud.hpp"
 #include "zip.hpp"
@@ -656,13 +657,7 @@ std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const Impor
     if (meta.value("representation", "") == "points") {
       brep = cloud::to_brep(shape);  // a point cloud: its nodes, normals and colours are the geometry
     } else if (mesh) {
-      // A mesh has no surfaces: its triangulation is the geometry, so it goes into the text.
-      std::ostringstream ss;
-      ss.precision(17);
-      BRepTools::Write(shape, ss, Standard_True, Standard_False, TopTools_FormatVersion_VERSION_1);
-      for (char c : ss.str())
-        if (c != '\r') brep.push_back(c);
-      if (brep.empty() || brep.back() != '\n') brep.push_back('\n');
+      brep = meshops::to_brep(shape);  // a mesh has no surfaces: its triangulation is the geometry, so it goes into the text
     } else {
       if (opt.heal) {
         BRepCheck_Analyzer ana(shape);
@@ -688,16 +683,7 @@ std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const Impor
 std::string persist_body(TopoDS_Shape& shape, json& meta, bool& healed) {
   const std::string representation = meta.value("representation", "solid");
   if (representation == "points") return cloud::to_brep(shape);
-  if (representation == "mesh") {  // the triangulation is the geometry
-    std::ostringstream ss;
-    ss.precision(17);
-    BRepTools::Write(shape, ss, Standard_True, Standard_False, TopTools_FormatVersion_VERSION_1);
-    std::string brep;
-    for (char c : ss.str())
-      if (c != '\r') brep.push_back(c);
-    if (brep.empty() || brep.back() != '\n') brep.push_back('\n');
-    return brep;
-  }
+  if (representation == "mesh") return meshops::to_brep(shape);  // the triangulation is the geometry
   if (representation == "solid") {
     BRepCheck_Analyzer ana(shape);
     if (!ana.IsValid()) {

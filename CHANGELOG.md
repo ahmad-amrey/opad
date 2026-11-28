@@ -8,6 +8,14 @@ as a commit log.
 ## [Unreleased]
 
 ### Added
+- **Prepare STL, OBJ, 3MF and PLY meshes for printing without leaving OPAD.** A new *Mesh* tab in Design has the
+  tools a slicer has, working on the mesh itself: **Scale** by a factor, a percentage, per axis or to a size in
+  millimetres (lock proportions, about the origin, the centre or the bed); **Combine** joins, cuts and intersects meshes,
+  and a mesh with a solid; **Split** cuts along a plane with the cut faces closed, keeping both halves or one;
+  **Split into parts** makes each separate piece its own body; **Mirror** and the patterns copy meshes; **Lay flat**
+  turns a body so the face you click lies on the bed, and **Drop to bed** sets it down. **Repair mesh** welds,
+  cleans, turns triangles outward and closes holes, and says what it found and what is left; **Simplify mesh**
+  takes it to fewer triangles with the same shape. AI assistants get the same tools and a `mesh_check` report.
 - **Export straight to the printer's bed.** Export now writes 3MF and PLY meshes as well as STL and OBJ, and places
   them for printing: turn the part so the side you choose is up (or the selected face lies on the bed), drop it onto
   the bed and centre it there, so the slicer opens it ready to print. With one STL file per body, each part lands on
